@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   UserProfile,
   AccountStatus,
   SiteSettings,
-  DEFAULT_SITE_SETTINGS,
   ShortLinkRecord,
   AppointmentRecord,
   DocumentVerificationRecord,
+  DEFAULT_SITE_SETTINGS,
 } from '../constants';
 
 interface AdminPanelProps {
@@ -19,15 +19,31 @@ interface AdminPanelProps {
   onUpdateUserStatus: (uid: string, status: AccountStatus) => Promise<void>;
   onUpdateUserRole: (uid: string, role: 'user' | 'admin') => Promise<void>;
   onDeleteUserRecord: (uid: string) => Promise<void>;
-  onCreateManagedUser: (displayName: string, email: string, phone: string, role: 'user' | 'admin', status: AccountStatus) => Promise<void>;
+  onCreateManagedUser: (
+    displayName: string,
+    email: string,
+    phone: string,
+    role: 'user' | 'admin',
+    status: AccountStatus
+  ) => Promise<void>;
   onSaveSiteSettings: (newSettings: SiteSettings) => Promise<void>;
   onToggleShortLinkStatus: (slug: string, currentActive: boolean) => Promise<void>;
   onDeleteShortLink: (slug: string) => Promise<void>;
-  onUpdateAppointmentStatus: (id: string, status: AppointmentRecord['status'], notes: string) => Promise<void>;
-  onUpdateVerificationStatus: (id: string, status: DocumentVerificationRecord['status'], remarks: string) => Promise<void>;
+  onUpdateAppointmentStatus: (
+    id: string,
+    status: AppointmentRecord['status'],
+    notes: string
+  ) => Promise<void>;
+  onUpdateVerificationStatus: (
+    id: string,
+    status: DocumentVerificationRecord['status'],
+    remarks: string
+  ) => Promise<void>;
   onNavigateToStudio: () => void;
   showToast: (msg: string) => void;
 }
+
+type AdminTab = 'users' | 'branding' | 'links' | 'operations';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentUserProfile,
@@ -48,11 +64,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onNavigateToStudio,
   showToast,
 }) => {
-  const [adminTab, setAdminTab] = useState<'users' | 'settings' | 'links' | 'operations'>('users');
+  const [adminTab, setAdminTab] = useState<AdminTab>('users');
 
-  // User Management Search & Filter State
+  // User Management Filters & Modal
   const [userSearch, setUserSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'blocked' | 'removed' | 'admin'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | AccountStatus>('all');
   const [selectedUserModal, setSelectedUserModal] = useState<UserProfile | null>(null);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
 
@@ -63,87 +79,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
   const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('pending');
 
-  // Website Brand & Footer Settings Form State
+  // Branding & Footer Credit Form State
   const [formSettings, setFormSettings] = useState<SiteSettings>(siteSettings);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Sync form when siteSettings prop updates externally
-  React.useEffect(() => {
+  useEffect(() => {
     setFormSettings(siteSettings);
   }, [siteSettings]);
 
-  // Normalize user status helper (maps legacy 'active' to 'approved' and 'suspended' to 'blocked')
-  const normalizeStatus = (s: AccountStatus): 'pending' | 'approved' | 'blocked' | 'removed' => {
-    if (s === 'approved' || s === 'active') return 'approved';
-    if (s === 'blocked' || s === 'suspended') return 'blocked';
-    if (s === 'removed') return 'removed';
-    return 'pending';
-  };
-
-  // Computed User KPIs
   const totalUsersCount = users.length;
-  const approvedUsersCount = users.filter((u) => normalizeStatus(u.status) === 'approved').length;
-  const pendingUsersCount = users.filter((u) => normalizeStatus(u.status) === 'pending').length;
-  const removedOrBlockedCount = users.filter((u) => {
-    const st = normalizeStatus(u.status);
-    return st === 'blocked' || st === 'removed';
-  }).length;
+  const approvedUsersCount = users.filter((u) => u.status === 'approved').length;
+  const pendingUsersCount = users.filter((u) => u.status === 'pending').length;
+  const blockedUsersCount = users.filter(
+    (u) => u.status === 'blocked' || u.status === 'removed'
+  ).length;
 
   const filteredUsers = users.filter((u) => {
+    const matchesStatus = statusFilter === 'all' || u.status === statusFilter;
     const q = userSearch.trim().toLowerCase();
     const matchesSearch =
       !q ||
-      u.displayName.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      (u.phone && u.phone.toLowerCase().includes(q));
-
-    if (!matchesSearch) return false;
-    if (statusFilter === 'all') return true;
-    if (statusFilter === 'admin') return u.role === 'admin';
-    return normalizeStatus(u.status) === statusFilter;
+      u.displayName?.toLowerCase().includes(q) ||
+      u.email?.toLowerCase().includes(q) ||
+      u.phone?.toLowerCase().includes(q) ||
+      u.uid?.toLowerCase().includes(q);
+    return matchesStatus && matchesSearch;
   });
-
-  const formatDateString = (ts: any): string => {
-    if (!ts) return 'Recent';
-    try {
-      if (typeof ts === 'string') return new Date(ts).toLocaleDateString();
-      if (typeof ts?.toDate === 'function') return ts.toDate().toLocaleDateString();
-      if (typeof ts?.seconds === 'number') return new Date(ts.seconds * 1000).toLocaleDateString();
-    } catch {
-      // fallback
-    }
-    return 'Recent';
-  };
-
-  const getStatusBadge = (status: AccountStatus) => {
-    const norm = normalizeStatus(status);
-    if (norm === 'approved') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-          <i className="fa-solid fa-circle-check text-[10px]"></i> Approved
-        </span>
-      );
-    }
-    if (norm === 'pending') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 text-[11px] font-bold">
-          <i className="fa-solid fa-clock text-[10px]"></i> Pending Approval
-        </span>
-      );
-    }
-    if (norm === 'blocked') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 text-[11px] font-bold">
-          <i className="fa-solid fa-ban text-[10px]"></i> Blocked
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-200 text-slate-700 text-[11px] font-bold">
-        <i className="fa-solid fa-user-slash text-[10px]"></i> Removed
-      </span>
-    );
-  };
 
   const handleAddUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,95 +120,221 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNewUserName('');
     setNewUserEmail('');
     setNewUserPhone('');
+    setNewUserRole('user');
+    setNewUserStatus('pending');
     setShowAddUserForm(false);
   };
 
-  const handleSettingsFormSubmit = async (e: React.FormEvent) => {
+  const handleSettingsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSettings(true);
     try {
       await onSaveSiteSettings(formSettings);
-      showToast('Website Branding, Theme & Footer Credit Saved!');
+      showToast('Brand & Footer Settings Saved!');
     } finally {
       setIsSavingSettings(false);
     }
   };
 
-  const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
+  const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (dataUrl) {
+        setFormSettings((prev) => ({
+          ...prev,
+          logoType: 'url',
+          logoUrl: dataUrl,
+        }));
+        showToast('Logo image loaded! Click Save to apply.');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const getStatusBadge = (status: AccountStatus) => {
+    switch (status) {
+      case 'approved':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <i className="fa-solid fa-circle-check text-emerald-600"></i> Approved (Active)
+          </span>
+        );
+      case 'pending':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+            <i className="fa-solid fa-clock text-amber-600"></i> Pending Approval
+          </span>
+        );
+      case 'blocked':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+            <i className="fa-solid fa-ban text-rose-600"></i> Blocked
+          </span>
+        );
+      case 'removed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+            <i className="fa-solid fa-user-slash text-slate-600"></i> Removed
+          </span>
+        );
+    }
+  };
+
+  const formatDateString = (createdAt: any) => {
+    if (!createdAt) return 'Recent';
+    if (typeof createdAt === 'string') {
+      const d = new Date(createdAt);
+      if (!isNaN(d.getTime())) return d.toLocaleDateString();
+      return createdAt;
+    }
+    if (createdAt?.seconds) {
+      return new Date(createdAt.seconds * 1000).toLocaleDateString();
+    }
+    return 'Active';
+  };
+
+  const baseOrigin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 pb-24 space-y-5">
-      {/* Admin Header Banner */}
-      <div className="bg-slate-900 text-white rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+      {/* Top Admin Header Banner — MALNADU MEDIA Butterfly-Camera Logo Theme */}
+      <div className="bg-[#070a14] text-white rounded-3xl p-4 sm:p-6 shadow-md border border-cyan-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white font-extrabold text-lg flex items-center justify-center shrink-0 shadow-sm">
-            <i className="fa-solid fa-shield-halved"></i>
+          <div className="h-12 px-2 py-1 rounded-2xl bg-[#070a14] border border-cyan-400/40 flex items-center justify-center shrink-0 shadow-md overflow-hidden">
+            <img
+              src={siteSettings.logoUrl || '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg'}
+              alt={siteSettings.brandName}
+              className="h-full w-auto max-w-[110px] object-contain"
+            />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-teal-400">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-xl font-extrabold tracking-tight">
                 {siteSettings.brandName} — Admin Control Center
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border border-cyan-400/30">
+                Super Admin
               </span>
             </div>
-            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight">
-              User Approvals, Brand Identity & Platform Settings
-            </h1>
-            <p className="text-xs text-slate-400">
-              Signed in as {currentUserProfile?.email || 'Administrator'}
+            <p className="text-xs text-slate-400 mt-0.5">
+              Manage user account approvals, brand identity, configurable footer credit, and short links.
             </p>
           </div>
         </div>
 
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onNavigateToStudio}
+            className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-bold shadow-sm transition flex items-center gap-2"
+          >
+            <i className="fa-solid fa-camera"></i>
+            <span>Return to Studio</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Summary Statistics Cards (Total, Approved, Pending, Blocked) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <button
-          onClick={onNavigateToStudio}
-          className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition flex items-center gap-2 shrink-0"
+          onClick={() => {
+            setAdminTab('users');
+            setStatusFilter('all');
+          }}
+          className="bg-white rounded-3xl p-4 border border-slate-200 text-left hover:border-cyan-400 transition shadow-2xs"
         >
-          <i className="fa-solid fa-camera"></i>
-          <span>Back to Studio</span>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">Total Users</span>
+            <span className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center text-xs">
+              <i className="fa-solid fa-users"></i>
+            </span>
+          </div>
+          <div className="text-2xl font-extrabold font-mono text-slate-900 mt-2">
+            {totalUsersCount}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Registered accounts</div>
+        </button>
+
+        <button
+          onClick={() => {
+            setAdminTab('users');
+            setStatusFilter('approved');
+          }}
+          className="bg-white rounded-3xl p-4 border border-slate-200 text-left hover:border-emerald-400 transition shadow-2xs"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">Approved Users</span>
+            <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">
+              <i className="fa-solid fa-user-check"></i>
+            </span>
+          </div>
+          <div className="text-2xl font-extrabold font-mono text-emerald-700 mt-2">
+            {approvedUsersCount}
+          </div>
+          <div className="text-[11px] text-emerald-600 font-semibold mt-0.5">Active studio access</div>
+        </button>
+
+        <button
+          onClick={() => {
+            setAdminTab('users');
+            setStatusFilter('pending');
+          }}
+          className="bg-white rounded-3xl p-4 border border-slate-200 text-left hover:border-amber-400 transition shadow-2xs"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">Pending Approval</span>
+            <span className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xs">
+              <i className="fa-solid fa-user-clock"></i>
+            </span>
+          </div>
+          <div className="text-2xl font-extrabold font-mono text-amber-600 mt-2">
+            {pendingUsersCount}
+          </div>
+          <div className="text-[11px] text-amber-700 font-semibold mt-0.5">Awaiting admin review</div>
+        </button>
+
+        <button
+          onClick={() => {
+            setAdminTab('users');
+            setStatusFilter('blocked');
+          }}
+          className="bg-white rounded-3xl p-4 border border-slate-200 text-left hover:border-rose-400 transition shadow-2xs"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">Blocked / Removed</span>
+            <span className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
+              <i className="fa-solid fa-user-lock"></i>
+            </span>
+          </div>
+          <div className="text-2xl font-extrabold font-mono text-rose-600 mt-2">
+            {blockedUsersCount}
+          </div>
+          <div className="text-[11px] text-rose-600 font-semibold mt-0.5">Restricted accounts</div>
         </button>
       </div>
 
       {/* Admin Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar bg-[#070a14] p-2 rounded-2xl border border-cyan-500/30">
         {[
-          {
-            id: 'users',
-            label: `User Management (${totalUsersCount})`,
-            icon: 'fa-users-gear',
-            badge: pendingUsersCount > 0 ? `${pendingUsersCount} Pending` : undefined,
-          },
-          {
-            id: 'settings',
-            label: 'Brand, Theme & Footer Settings',
-            icon: 'fa-sliders',
-          },
-          {
-            id: 'links',
-            label: `Short Links (${shortLinks.length})`,
-            icon: 'fa-link',
-          },
-          {
-            id: 'operations',
-            label: `Bookings & ID Reviews (${appointments.length + verifications.length})`,
-            icon: 'fa-clipboard-check',
-          },
-        ].map((tab) => (
+          { id: 'users', label: 'User Management & Approval', icon: 'fa-users-gear' },
+          { id: 'branding', label: 'Brand, Theme & Footer Credit', icon: 'fa-palette' },
+          { id: 'links', label: `Short Links (${shortLinks.length})`, icon: 'fa-link' },
+          { id: 'operations', label: 'Appointments & IDs', icon: 'fa-calendar-check' },
+        ].map((t) => (
           <button
-            key={tab.id}
-            onClick={() => setAdminTab(tab.id as any)}
-            className={`min-h-[44px] px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap shrink-0 ${
-              adminTab === tab.id
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+            key={t.id}
+            onClick={() => setAdminTab(t.id as AdminTab)}
+            className={`min-h-[42px] px-4 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
+              adminTab === t.id
+                ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
             }`}
           >
-            <i className={`fa-solid ${tab.icon}`}></i>
-            <span>{tab.label}</span>
-            {tab.badge && (
-              <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-extrabold">
-                {tab.badge}
-              </span>
-            )}
+            <i className={`fa-solid ${t.icon}`}></i>
+            <span>{t.label}</span>
           </button>
         ))}
       </div>
@@ -255,320 +343,306 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           TAB 1: USER MANAGEMENT & ACCOUNT APPROVAL SYSTEM
          ===================================================================== */}
       {adminTab === 'users' && (
-        <div className="space-y-5">
-          {/* 4 KPI Stat Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-            <button
-              onClick={() => setStatusFilter('all')}
-              className={`bg-white rounded-2xl border p-4 text-left transition ${
-                statusFilter === 'all' ? 'border-teal-600 ring-2 ring-teal-500/15' : 'border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-semibold text-slate-500">Total Registered Users</div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-mono mt-1">
-                {totalUsersCount}
-              </div>
-              <div className="text-[11px] text-teal-600 font-bold mt-1">View all accounts →</div>
-            </button>
+        <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+                User Account Approval & Access Control
+              </h2>
+              <p className="text-xs text-slate-500">
+                Approve pending registrations, block/unblock accounts, or remove users permanently.
+              </p>
+            </div>
 
             <button
-              onClick={() => setStatusFilter('approved')}
-              className={`bg-white rounded-2xl border p-4 text-left transition ${
-                statusFilter === 'approved' ? 'border-emerald-600 ring-2 ring-emerald-500/15' : 'border-slate-200'
-              }`}
+              onClick={() => setShowAddUserForm((v) => !v)}
+              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-bold transition flex items-center gap-2 self-start sm:self-auto"
             >
-              <div className="text-xs font-semibold text-slate-500">Approved Users</div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 font-mono mt-1">
-                {approvedUsersCount}
-              </div>
-              <div className="text-[11px] text-emerald-700 font-bold mt-1">Active studio access</div>
-            </button>
-
-            <button
-              onClick={() => setStatusFilter('pending')}
-              className={`bg-white rounded-2xl border p-4 text-left transition ${
-                statusFilter === 'pending' ? 'border-amber-500 ring-2 ring-amber-500/15' : 'border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-semibold text-slate-500">Pending Approval Users</div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-amber-600 font-mono mt-1">
-                {pendingUsersCount}
-              </div>
-              <div className="text-[11px] text-amber-700 font-bold mt-1">Awaiting admin review</div>
-            </button>
-
-            <button
-              onClick={() => setStatusFilter('blocked')}
-              className={`bg-white rounded-2xl border p-4 text-left transition ${
-                statusFilter === 'blocked' ? 'border-rose-600 ring-2 ring-rose-500/15' : 'border-slate-200'
-              }`}
-            >
-              <div className="text-xs font-semibold text-slate-500">Removed / Blocked Users</div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-rose-600 font-mono mt-1">
-                {removedOrBlockedCount}
-              </div>
-              <div className="text-[11px] text-rose-600 font-bold mt-1">Restricted accounts</div>
+              <i className="fa-solid fa-user-plus"></i>
+              <span>{showAddUserForm ? 'Close Form' : 'Add User Account'}</span>
             </button>
           </div>
 
-          {/* Search, Filter & Add User Controls */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="relative flex-1">
-                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+          {/* Add New User Form */}
+          {showAddUserForm && (
+            <form
+              onSubmit={handleAddUserSubmit}
+              className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end"
+            >
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Full Name</label>
                 <input
                   type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search users by name, email, or phone..."
-                  className="w-full min-h-[44px] pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  required
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Ramesh Gowda"
+                  className="w-full min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
                 />
               </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  placeholder="ramesh@malnadumedia.com"
+                  className="w-full min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Initial Status</label>
                 <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as any)}
-                  className="min-h-[44px] px-3.5 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-2xl text-slate-700"
+                  value={newUserStatus}
+                  onChange={(e) => setNewUserStatus(e.target.value as AccountStatus)}
+                  className="w-full min-h-[42px] px-2.5 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl"
                 >
-                  <option value="all">All Statuses ({totalUsersCount})</option>
-                  <option value="pending">Pending Approval ({pendingUsersCount})</option>
-                  <option value="approved">Approved ({approvedUsersCount})</option>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
                   <option value="blocked">Blocked</option>
-                  <option value="removed">Removed</option>
-                  <option value="admin">Admins Only</option>
                 </select>
-
+              </div>
+              <div>
                 <button
-                  onClick={() => setShowAddUserForm(!showAddUserForm)}
-                  className="min-h-[44px] px-4 py-2 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 transition"
+                  type="submit"
+                  className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold hover:bg-slate-800 transition"
                 >
-                  <i className="fa-solid fa-user-plus"></i>
-                  <span>Add User</span>
+                  Create User
                 </button>
               </div>
+            </form>
+          )}
+
+          {/* Search & Status Filter Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+              <input
+                type="text"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search users by name, email, phone, or UID..."
+                className="w-full min-h-[44px] pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
             </div>
 
-            {/* Optional Add User Form */}
-            {showAddUserForm && (
-              <form
-                onSubmit={handleAddUserSubmit}
-                className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-slate-900">
-                    Register New User Account
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddUserForm(false)}
-                    className="text-xs text-slate-400 hover:text-slate-600"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
-                  <input
-                    type="text"
-                    required
-                    value={newUserName}
-                    onChange={(e) => setNewUserName(e.target.value)}
-                    placeholder="Full Name"
-                    className="min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                  />
-                  <input
-                    type="email"
-                    required
-                    value={newUserEmail}
-                    onChange={(e) => setNewUserEmail(e.target.value)}
-                    placeholder="Email Address"
-                    className="min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                  />
-                  <input
-                    type="tel"
-                    value={newUserPhone}
-                    onChange={(e) => setNewUserPhone(e.target.value)}
-                    placeholder="+91 Phone"
-                    className="min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                  />
-                  <select
-                    value={newUserStatus}
-                    onChange={(e) => setNewUserStatus(e.target.value as AccountStatus)}
-                    className="min-h-[42px] px-3 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl"
-                  >
-                    <option value="pending">Pending Approval</option>
-                    <option value="approved">Approved</option>
-                    <option value="blocked">Blocked</option>
-                  </select>
-                  <button
-                    type="submit"
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
-                  >
-                    Create User
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* User Management Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
-                    <th className="py-3 px-3">User Name</th>
-                    <th className="py-3 px-3">Email</th>
-                    <th className="py-3 px-3">Registration Date</th>
-                    <th className="py-3 px-3">Account Status</th>
-                    <th className="py-3 px-3">User Role</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-10 text-center text-slate-400">
-                        No users match the current filter.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map((u) => {
-                      const normStatus = normalizeStatus(u.status);
-                      return (
-                        <tr key={u.uid} className="hover:bg-slate-50/80 transition">
-                          <td className="py-3.5 px-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-xl bg-teal-600/10 text-teal-700 font-extrabold text-xs flex items-center justify-center shrink-0">
-                                {(u.displayName || 'U').charAt(0).toUpperCase()}
-                              </div>
-                              <div>
-                                <div className="font-extrabold text-slate-900">{u.displayName}</div>
-                                {u.phone && (
-                                  <div className="text-[11px] text-slate-400 font-mono">{u.phone}</div>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3.5 px-3 font-mono text-slate-600">{u.email}</td>
-                          <td className="py-3.5 px-3 font-mono text-slate-500">
-                            {formatDateString(u.createdAt)}
-                          </td>
-                          <td className="py-3.5 px-3">{getStatusBadge(u.status)}</td>
-                          <td className="py-3.5 px-3">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-bold uppercase ${
-                                u.role === 'admin'
-                                  ? 'bg-indigo-100 text-indigo-800'
-                                  : 'bg-slate-100 text-slate-700'
-                              }`}
-                            >
-                              {u.role}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-3">
-                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                              {normStatus !== 'approved' && (
-                                <button
-                                  onClick={() => onUpdateUserStatus(u.uid, 'approved')}
-                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition"
-                                  title="Approve / Activate User"
-                                >
-                                  {normStatus === 'pending' ? 'Approve' : 'Activate'}
-                                </button>
-                              )}
-
-                              {normStatus !== 'blocked' && (
-                                <button
-                                  onClick={() => onUpdateUserStatus(u.uid, 'blocked')}
-                                  className="px-2.5 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[11px] transition"
-                                  title="Block User"
-                                >
-                                  Block
-                                </button>
-                              )}
-
-                              {normStatus !== 'removed' && (
-                                <button
-                                  onClick={() => onUpdateUserStatus(u.uid, 'removed')}
-                                  className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[11px] transition"
-                                  title="Remove User"
-                                >
-                                  Remove
-                                </button>
-                              )}
-
-                              <button
-                                onClick={() =>
-                                  onUpdateUserRole(u.uid, u.role === 'admin' ? 'user' : 'admin')
-                                }
-                                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition"
-                                title="Toggle Admin / User Role"
-                              >
-                                {u.role === 'admin' ? 'Make User' : 'Make Admin'}
-                              </button>
-
-                              <button
-                                onClick={() => setSelectedUserModal(u)}
-                                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-[11px] transition"
-                              >
-                                Details
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              {(['all', 'pending', 'approved', 'blocked', 'removed'] as const).map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition whitespace-nowrap ${
+                    statusFilter === st
+                      ? 'bg-[#070a14] text-cyan-300'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {st === 'all' ? `All (${users.length})` : st}
+                </button>
+              ))}
             </div>
           </div>
+
+          {/* Users Table / Responsive Cards */}
+          {filteredUsers.length === 0 ? (
+            <div className="py-12 text-center bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+              <i className="fa-solid fa-users-slash text-2xl text-slate-300"></i>
+              <p className="text-xs font-bold text-slate-600">No matching users found</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredUsers.map((u) => (
+                <div
+                  key={u.uid}
+                  className="p-4 rounded-2xl border border-slate-200 hover:border-cyan-300 transition bg-slate-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                >
+                  <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 via-blue-600 to-purple-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                      {(u.displayName || u.email || 'U').charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-extrabold text-slate-900 truncate">
+                          {u.displayName || 'Unnamed User'}
+                        </span>
+                        {getStatusBadge(u.status)}
+                        <span
+                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                            u.role === 'admin'
+                              ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {u.role}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span>
+                          <i className="fa-regular fa-envelope mr-1 text-slate-400"></i>
+                          {u.email}
+                        </span>
+                        {u.phone && (
+                          <span>
+                            <i className="fa-solid fa-phone mr-1 text-slate-400"></i>
+                            {u.phone}
+                          </span>
+                        )}
+                        <span className="font-mono text-[11px] text-slate-400">
+                          Joined: {formatDateString(u.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Admin Account Action Buttons */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {u.status !== 'approved' && (
+                      <button
+                        onClick={() => onUpdateUserStatus(u.uid, 'approved')}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                        title="Approve User Account"
+                      >
+                        <i className="fa-solid fa-check"></i>
+                        <span>Approve</span>
+                      </button>
+                    )}
+
+                    {u.status === 'pending' && (
+                      <button
+                        onClick={() => onUpdateUserStatus(u.uid, 'removed')}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold transition flex items-center gap-1.5"
+                        title="Reject User Registration"
+                      >
+                        <i className="fa-solid fa-xmark"></i>
+                        <span>Reject</span>
+                      </button>
+                    )}
+
+                    {u.status !== 'blocked' ? (
+                      <button
+                        onClick={() => onUpdateUserStatus(u.uid, 'blocked')}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold transition flex items-center gap-1.5"
+                        title="Block User Account"
+                      >
+                        <i className="fa-solid fa-ban"></i>
+                        <span>Block</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onUpdateUserStatus(u.uid, 'approved')}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-100 hover:bg-cyan-200 text-cyan-900 text-xs font-bold transition flex items-center gap-1.5"
+                        title="Unblock User Account"
+                      >
+                        <i className="fa-solid fa-unlock"></i>
+                        <span>Unblock</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() =>
+                        onUpdateUserRole(u.uid, u.role === 'admin' ? 'user' : 'admin')
+                      }
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition"
+                      title="Toggle Admin / User Role"
+                    >
+                      {u.role === 'admin' ? 'Make User' : 'Make Admin'}
+                    </button>
+
+                    <button
+                      onClick={() => setSelectedUserModal(u)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition"
+                      title="View Full User Details"
+                    >
+                      Details
+                    </button>
+
+                    <button
+                      onClick={() => onDeleteUserRecord(u.uid)}
+                      className="min-h-[38px] min-w-[38px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center transition"
+                      title="Remove / Delete User Account"
+                    >
+                      <i className="fa-solid fa-trash-can text-xs"></i>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* =====================================================================
-          TAB 2: BRANDING, THEME & CONFIGURABLE FOOTER CREDIT SETTINGS
+          TAB 2: BRAND IDENTITY, COLOR CUSTOMIZATION & FOOTER CREDIT
          ===================================================================== */}
-      {adminTab === 'settings' && (
+      {adminTab === 'branding' && (
         <form
-          onSubmit={handleSettingsFormSubmit}
+          onSubmit={handleSettingsSubmit}
           className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-6 shadow-xs"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
-                Website Branding, Theme Colors & Footer Credit Configuration
+                Brand Name, Logo, Theme Colors & Footer Credit
               </h2>
               <p className="text-xs text-slate-500">
-                Changes saved here update the header, logo, colors, SEO metadata, and footer credit across the entire platform.
+                Customize the MALNADU MEDIA brand identity, logo image, theme colors, and footer credit text dynamically.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setFormSettings(DEFAULT_SITE_SETTINGS);
-                  onSaveSiteSettings(DEFAULT_SITE_SETTINGS);
-                }}
-                className="min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"
-              >
-                Reset Defaults
-              </button>
-              <button
-                type="submit"
-                disabled={isSavingSettings}
-                className="min-h-[42px] px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-sm"
-              >
-                {isSavingSettings ? 'Saving...' : 'Save Settings'}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setFormSettings(DEFAULT_SITE_SETTINGS);
+                showToast('Restored default MALNADU MEDIA settings');
+              }}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold self-start sm:self-auto"
+            >
+              Reset to Default
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Brand Identity */}
+            {/* Brand Name & Logo Settings */}
             <div className="space-y-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-                1. Brand Name & Logo Identity
+                1. Brand Identity & Logo
               </h3>
+
+              {/* Live Logo Preview Banner */}
+              <div className="p-3 rounded-2xl bg-[#070a14] border border-cyan-500/30 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-11 px-2 py-0.5 rounded-xl bg-[#070a14] border border-cyan-400/40 flex items-center justify-center overflow-hidden">
+                    <img
+                      src={formSettings.logoUrl || '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg'}
+                      alt="Logo Preview"
+                      className="h-full w-auto max-w-[110px] object-contain"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-extrabold text-white">
+                      {formSettings.brandName || 'MALNADU MEDIA'}
+                    </div>
+                    <div className="text-[10px] text-cyan-300">
+                      {formSettings.brandTagline || 'CAPTURING | CREATING | CONNECTING'}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => logoFileInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-[11px] font-bold"
+                >
+                  Upload Logo
+                </button>
+                <input
+                  ref={logoFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoFileUpload}
+                  className="hidden"
+                />
+              </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -588,7 +662,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Brand Tagline / Subtitle
+                  Brand Subtitle / Tagline
                 </label>
                 <input
                   type="text"
@@ -596,7 +670,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) =>
                     setFormSettings({ ...formSettings, brandTagline: e.target.value })
                   }
-                  placeholder="AI Photo Studio & Smart Media Suite"
+                  placeholder="CAPTURING | CREATING | CONNECTING"
                   className="w-full min-h-[44px] px-3.5 py-2 text-sm bg-white border border-slate-200 rounded-xl"
                 />
               </div>
@@ -616,47 +690,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     }
                     className="w-full min-h-[44px] px-3 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl"
                   >
-                    <option value="svg">Clean SVG Monogram + Icon</option>
-                    <option value="url">Custom Image URL</option>
+                    <option value="url">Image Logo (Butterfly Camera)</option>
+                    <option value="svg">Monogram Badge (MM)</option>
                   </select>
                 </div>
 
-                {formSettings.logoType === 'svg' ? (
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Emblem Monogram
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={3}
-                      value={formSettings.logoText}
-                      onChange={(e) =>
-                        setFormSettings({ ...formSettings, logoText: e.target.value.toUpperCase() })
-                      }
-                      placeholder="MM"
-                      className="w-full min-h-[44px] px-3.5 py-2 text-sm font-extrabold font-mono bg-white border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Custom Logo Image URL
-                    </label>
-                    <input
-                      type="url"
-                      value={formSettings.logoUrl}
-                      onChange={(e) =>
-                        setFormSettings({ ...formSettings, logoUrl: e.target.value })
-                      }
-                      placeholder="https://example.com/logo.png"
-                      className="w-full min-h-[44px] px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Logo Monogram Text
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={formSettings.logoText}
+                    onChange={(e) =>
+                      setFormSettings({ ...formSettings, logoText: e.target.value })
+                    }
+                    placeholder="MM"
+                    className="w-full min-h-[44px] px-3.5 py-2 text-sm font-bold bg-white border border-slate-200 rounded-xl"
+                  />
+                </div>
               </div>
+
+              {formSettings.logoType === 'url' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Logo Image Path / URL
+                  </label>
+                  <input
+                    type="text"
+                    value={formSettings.logoUrl}
+                    onChange={(e) =>
+                      setFormSettings({ ...formSettings, logoUrl: e.target.value })
+                    }
+                    placeholder="/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg"
+                    className="w-full min-h-[44px] px-3.5 py-2 text-xs font-mono bg-white border border-slate-200 rounded-xl"
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Theme Colors & Configurable Footer Credit */}
+            {/* Theme Color Customization & Configurable Footer Credit */}
             <div className="space-y-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
                 2. Theme Colors & Configurable Footer Credit
@@ -676,20 +750,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       }
                       className="w-7 h-7 rounded cursor-pointer border-0"
                     />
-                    <input
-                      type="text"
-                      value={formSettings.primaryColor}
-                      onChange={(e) =>
-                        setFormSettings({ ...formSettings, primaryColor: e.target.value })
-                      }
-                      className="w-full text-xs font-mono font-bold focus:outline-none"
-                    />
+                    <span className="text-xs font-mono font-bold text-slate-700">
+                      {formSettings.primaryColor}
+                    </span>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Secondary Dark Accent
+                    Header / Dark Accent
                   </label>
                   <div className="flex items-center gap-2 h-[44px] px-3 bg-white border border-slate-200 rounded-xl">
                     <input
@@ -700,21 +769,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       }
                       className="w-7 h-7 rounded cursor-pointer border-0"
                     />
-                    <input
-                      type="text"
-                      value={formSettings.secondaryColor}
-                      onChange={(e) =>
-                        setFormSettings({ ...formSettings, secondaryColor: e.target.value })
-                      }
-                      className="w-full text-xs font-mono font-bold focus:outline-none"
-                    />
+                    <span className="text-xs font-mono font-bold text-slate-700">
+                      {formSettings.secondaryColor}
+                    </span>
                   </div>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Footer Credit Text (Dynamic & Persistent)
+                  Configurable Footer Credit Text
                 </label>
                 <input
                   type="text"
@@ -723,17 +787,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) =>
                     setFormSettings({ ...formSettings, footerCredit: e.target.value })
                   }
-                  placeholder="© 2026 MALNADU MEDIA. All rights reserved."
-                  className="w-full min-h-[44px] px-3.5 py-2 text-sm bg-white border border-slate-200 rounded-xl font-medium"
+                  placeholder="Designed & Developed by MALNADU MEDIA"
+                  className="w-full min-h-[44px] px-3.5 py-2 text-sm font-bold bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500"
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Displayed dynamically in the website footer across desktop and mobile.
+                  This credit text is displayed dynamically in the website footer across all pages.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* SEO & Feature Toggles */}
+          {/* SEO Metadata & Feature Toggles */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="space-y-3 p-4 rounded-2xl bg-slate-50 border border-slate-200">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
@@ -793,7 +857,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           [feat.key]: e.target.checked,
                         })
                       }
-                      className="w-4 h-4 accent-teal-600 rounded"
+                      className="w-4 h-4 accent-cyan-600 rounded"
                     />
                   </label>
                 ))}
@@ -805,7 +869,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <button
               type="submit"
               disabled={isSavingSettings}
-              className="min-h-[48px] px-6 py-3 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-sm transition flex items-center gap-2"
+              className="min-h-[48px] px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm transition flex items-center gap-2"
             >
               <i className="fa-solid fa-floppy-disk"></i>
               <span>{isSavingSettings ? 'Saving Configuration...' : 'Save All Website Settings'}</span>
@@ -850,7 +914,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {shortLinks.map((l) => (
                     <tr key={l.slug} className="hover:bg-slate-50">
-                      <td className="py-3 px-3 font-mono font-bold text-teal-700">
+                      <td className="py-3 px-3 font-mono font-bold text-cyan-700">
                         {baseOrigin}/{l.slug}
                       </td>
                       <td className="py-3 px-3 max-w-xs truncate text-slate-600">
@@ -913,7 +977,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <span className="text-xs font-extrabold text-slate-900">
                         {apt.userName} ({apt.userEmail})
                       </span>
-                      <span className="text-[11px] font-mono font-bold uppercase text-teal-700">
+                      <span className="text-[11px] font-mono font-bold uppercase text-cyan-700">
                         {apt.status}
                       </span>
                     </div>
@@ -955,7 +1019,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <span className="text-xs font-extrabold text-slate-900">
                         {ver.userName} · {ver.documentType} ({ver.documentNumber})
                       </span>
-                      <span className="text-[11px] font-mono font-bold uppercase text-teal-700">
+                      <span className="text-[11px] font-mono font-bold uppercase text-cyan-700">
                         {ver.status}
                       </span>
                     </div>

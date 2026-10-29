@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  COUNTRY_PRESETS,
-  SERVICE_TYPES,
-  BRANCH_LOCATIONS,
-  TIME_SLOTS,
-  DOCUMENT_TYPES,
   UserProfile,
   AppointmentRecord,
   DocumentVerificationRecord,
   SavedPhotoRecord,
+  SERVICE_TYPES,
+  BRANCH_LOCATIONS,
+  TIME_SLOTS,
+  DOCUMENT_TYPES,
+  COUNTRY_PRESETS,
 } from '../constants';
 
 interface UserDashboardProps {
-  brandName?: string;
+  brandName: string;
+  logoUrl?: string;
   userProfile: UserProfile;
   appointments: AppointmentRecord[];
   verifications: DocumentVerificationRecord[];
@@ -28,7 +29,7 @@ interface UserDashboardProps {
     timeSlot: (typeof TIME_SLOTS)[number];
     notes: string;
   }) => Promise<void>;
-  onCancelAppointment: (appointment: AppointmentRecord) => Promise<void>;
+  onCancelAppointment: (apt: AppointmentRecord) => Promise<void>;
   onSubmitVerification: (data: {
     documentType: (typeof DOCUMENT_TYPES)[number];
     documentNumber: string;
@@ -40,13 +41,15 @@ interface UserDashboardProps {
   onDeleteSavedPhoto: (id: string) => Promise<void>;
   onUpdateProfile: (displayName: string, phone: string) => Promise<void>;
   onNavigateToStudio: () => void;
+  onLoadSavedPhotoInStudio?: (dataUrl: string) => void;
   onOpenAdminPanel?: () => void;
   onSelfApproveForDemo?: () => Promise<void>;
   onSignOut: () => void;
 }
 
 export const UserDashboard: React.FC<UserDashboardProps> = ({
-  brandName = 'MALNADU MEDIA',
+  brandName,
+  logoUrl,
   userProfile,
   appointments,
   verifications,
@@ -60,16 +63,23 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onDeleteSavedPhoto,
   onUpdateProfile,
   onNavigateToStudio,
+  onLoadSavedPhotoInStudio,
   onOpenAdminPanel,
   onSelfApproveForDemo,
   onSignOut,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'appointments' | 'verifications' | 'photos' | 'profile'>(initialSubTab);
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'appointments' | 'verifications' | 'photos' | 'profile'
+  >(initialSubTab);
+
+  useEffect(() => {
+    setActiveTab(initialSubTab);
+  }, [initialSubTab]);
 
   // Appointment Form State
-  const [aptPhone, setAptPhone] = useState(userProfile.phone || '+91 9876543210');
+  const [aptPhone, setAptPhone] = useState(userProfile.phone || '+91 ');
   const [aptService, setAptService] = useState<(typeof SERVICE_TYPES)[number]>(SERVICE_TYPES[0]);
-  const [aptCountry, setAptCountry] = useState(COUNTRY_PRESETS[0].country);
+  const [aptCountry, setAptCountry] = useState('India (Passport / Stamp — 35×45 mm)');
   const [aptBranch, setAptBranch] = useState<(typeof BRANCH_LOCATIONS)[number]>(BRANCH_LOCATIONS[0]);
   const [aptDate, setAptDate] = useState(() => {
     const tomorrow = new Date(Date.now() + 86400000);
@@ -77,48 +87,60 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   });
   const [aptTime, setAptTime] = useState<(typeof TIME_SLOTS)[number]>(TIME_SLOTS[1]);
   const [aptNotes, setAptNotes] = useState('');
-  const [isBooking, setIsBooking] = useState(false);
+  const [isSubmittingApt, setIsSubmittingApt] = useState(false);
 
   // Document Verification Form State
   const [docType, setDocType] = useState<(typeof DOCUMENT_TYPES)[number]>(DOCUMENT_TYPES[0]);
   const [docNumber, setDocNumber] = useState('');
-  const [docCountry, setDocCountry] = useState(COUNTRY_PRESETS[0].country);
-  const [docPreview, setDocPreview] = useState(currentStudioPreviewUrl || '');
+  const [docCountry, setDocCountry] = useState('India');
   const [docRemarks, setDocRemarks] = useState('');
+  const [docPreview, setDocPreview] = useState(currentStudioPreviewUrl || '');
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
 
   // Profile Edit State
   const [editName, setEditName] = useState(userProfile.displayName);
-  const [editPhone, setEditPhone] = useState(userProfile.phone || '');
+  const [editPhone, setEditPhone] = useState(userProfile.phone);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  const isApproved =
-    userProfile.role === 'admin' ||
-    userProfile.status === 'approved' ||
-    userProfile.status === 'active';
-  const isBlockedOrRemoved =
-    userProfile.status === 'blocked' ||
-    userProfile.status === 'removed' ||
-    userProfile.status === 'suspended';
+  const isApproved = userProfile.status === 'approved' || userProfile.role === 'admin';
+  const isBlocked = userProfile.status === 'blocked' || userProfile.status === 'removed';
 
-  const handleBookSubmit = async (e: React.FormEvent) => {
+  const handleAppointmentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isApproved) return;
-    if (!aptPhone.trim() || aptPhone.trim().length < 5) return;
-    setIsBooking(true);
+    if (!aptPhone.trim() || !aptDate || !isApproved) return;
+    setIsSubmittingApt(true);
     try {
       await onBookAppointment({
-        phone: aptPhone.trim().slice(0, 30),
+        phone: aptPhone.trim(),
         serviceType: aptService,
-        countrySpec: aptCountry.slice(0, 100),
+        countrySpec: aptCountry,
         branchLocation: aptBranch,
         appointmentDate: aptDate,
         timeSlot: aptTime,
-        notes: aptNotes.trim().slice(0, 500),
+        notes: aptNotes.trim(),
       });
       setAptNotes('');
     } finally {
-      setIsBooking(false);
+      setIsSubmittingApt(false);
+    }
+  };
+
+  const handleVerificationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!docNumber.trim() || !isApproved) return;
+    setIsSubmittingDoc(true);
+    try {
+      await onSubmitVerification({
+        documentType: docType,
+        documentNumber: docNumber.trim().toUpperCase(),
+        country: docCountry,
+        photoPreviewDataUrl: docPreview || currentStudioPreviewUrl,
+        remarks: docRemarks.trim(),
+      });
+      setDocNumber('');
+      setDocRemarks('');
+    } finally {
+      setIsSubmittingDoc(false);
     }
   };
 
@@ -129,47 +151,18 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const c = document.createElement('canvas');
-        const maxDim = 320;
-        let w = img.width;
-        let h = img.height;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-        }
-        c.width = w;
-        c.height = h;
-        c.getContext('2d')!.drawImage(img, 0, 0, w, h);
-        setDocPreview(c.toDataURL('image/jpeg', 0.8));
+        const canvas = document.createElement('canvas');
+        const maxW = 360;
+        const scale = Math.min(1, maxW / img.width);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setDocPreview(canvas.toDataURL('image/jpeg', 0.8));
       };
       img.src = ev.target?.result as string;
     };
     reader.readAsDataURL(file);
-  };
-
-  const handleDocSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isApproved) return;
-    if (!docNumber.trim() || docNumber.trim().length < 3) return;
-    setIsSubmittingDoc(true);
-    try {
-      await onSubmitVerification({
-        documentType: docType,
-        documentNumber: docNumber.trim().toUpperCase().slice(0, 50),
-        country: docCountry.trim().slice(0, 80),
-        photoPreviewDataUrl: (docPreview || currentStudioPreviewUrl || '').slice(0, 240000),
-        remarks: docRemarks.trim().slice(0, 500),
-      });
-      setDocNumber('');
-      setDocRemarks('');
-    } finally {
-      setIsSubmittingDoc(false);
-    }
   };
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
@@ -177,7 +170,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     if (!editName.trim()) return;
     setIsSavingProfile(true);
     try {
-      await onUpdateProfile(editName.trim().slice(0, 100), editPhone.trim().slice(0, 30));
+      await onUpdateProfile(editName.trim(), editPhone.trim());
     } finally {
       setIsSavingProfile(false);
     }
@@ -186,114 +179,55 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const getStatusText = (status: string) => {
     switch (status) {
       case 'confirmed':
-      case 'completed':
       case 'verified':
+      case 'completed':
+      case 'approved':
         return 'text-emerald-700 font-bold';
-      case 'pending':
       case 'under_review':
-        return 'text-amber-700 font-bold';
+        return 'text-cyan-700 font-bold';
       case 'cancelled':
       case 'rejected':
+      case 'blocked':
+      case 'removed':
         return 'text-rose-700 font-bold';
       default:
-        return 'text-slate-600 font-bold';
+        return 'text-amber-700 font-bold';
     }
   };
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 pb-24 space-y-5">
-      {/* Compact Mobile-First User Card */}
-      <div className="bg-slate-900 text-white rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white font-extrabold text-lg flex items-center justify-center shrink-0">
-            {userProfile.displayName.charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs text-teal-400 font-bold truncate">
-              {brandName} · {userProfile.email}
+    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+      {/* Account Approval Status Notice Banner */}
+      {!isApproved && !isBlocked && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 font-extrabold">
+              <i className="fa-solid fa-user-clock"></i>
             </div>
-            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight truncate">
-              {userProfile.displayName}
-            </h1>
-            <p className="text-[11px] text-slate-400">
-              Account Role: <span className="uppercase font-bold text-white">{userProfile.role}</span> · Status:{' '}
-              <span className="uppercase font-bold text-teal-300">{userProfile.status}</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
-          {onOpenAdminPanel && (
-            <button
-              onClick={onOpenAdminPanel}
-              className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-teal-500/40 text-teal-300 text-xs font-bold active:scale-[0.98] transition flex items-center justify-center gap-2 whitespace-nowrap"
-            >
-              <i className="fa-solid fa-shield-halved"></i>
-              <span>Admin Panel</span>
-            </button>
-          )}
-          <button
-            onClick={onNavigateToStudio}
-            className="flex-1 sm:flex-initial min-h-[44px] px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold active:scale-[0.98] transition flex items-center justify-center gap-2 whitespace-nowrap"
-          >
-            <i className="fa-solid fa-camera"></i>
-            <span>Create New Photo</span>
-          </button>
-          <button
-            onClick={onSignOut}
-            className="min-h-[44px] px-3.5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-bold active:scale-[0.98] transition flex items-center justify-center gap-1.5 whitespace-nowrap"
-          >
-            <i className="fa-solid fa-right-from-bracket"></i>
-            <span>Logout</span>
-          </button>
-        </div>
-      </div>
-
-      {/* ACCOUNT APPROVAL / RESTRICTION BANNER */}
-      {isBlockedOrRemoved && (
-        <div className="p-5 rounded-3xl bg-rose-50 border-2 border-rose-200 text-rose-900 space-y-2">
-          <div className="flex items-center gap-2 font-extrabold text-sm">
-            <i className="fa-solid fa-ban text-rose-600"></i>
-            <span>Account Access Restricted ({userProfile.status.toUpperCase()})</span>
-          </div>
-          <p className="text-xs text-rose-700">
-            Your account has been blocked or removed by the {brandName} administrator. Protected dashboard services are currently disabled.
-          </p>
-          {onSelfApproveForDemo && (
-            <button
-              onClick={onSelfApproveForDemo}
-              className="mt-2 px-4 py-2 rounded-xl bg-rose-700 text-white text-xs font-bold"
-            >
-              Restore & Approve Account (Admin Action)
-            </button>
-          )}
-        </div>
-      )}
-
-      {!isApproved && !isBlockedOrRemoved && (
-        <div className="p-5 rounded-3xl bg-amber-50 border-2 border-amber-200 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 font-extrabold text-sm text-amber-900">
-              <i className="fa-solid fa-clock text-amber-600"></i>
-              <span>Account Pending Admin Approval</span>
+            <div>
+              <h2 className="text-sm font-extrabold text-amber-950">
+                Your Account Is Pending Administrator Approval
+              </h2>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Welcome to {brandName}! Your registration has been recorded with status{' '}
+                <span className="font-mono font-bold uppercase">Pending</span>. Once an administrator approves your account in the Admin Panel, full appointment booking and verification features will unlock.
+              </p>
             </div>
-            <p className="text-xs text-amber-800">
-              Your registration has been received and is awaiting approval in the {brandName} Admin Panel before studio booking and ID verification are unlocked.
-            </p>
           </div>
+
           <div className="flex items-center gap-2 shrink-0">
             {onSelfApproveForDemo && (
               <button
                 onClick={onSelfApproveForDemo}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold whitespace-nowrap"
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition whitespace-nowrap"
               >
-                Approve Account Now
+                Instant Approve (Demo)
               </button>
             )}
             {onOpenAdminPanel && (
               <button
                 onClick={onOpenAdminPanel}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold whitespace-nowrap"
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold transition whitespace-nowrap"
               >
                 Open Admin Panel
               </button>
@@ -302,86 +236,99 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
-      {/* 2x2 Mobile Metric Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <button
-          onClick={() => setActiveTab('appointments')}
-          className="bg-white rounded-2xl border border-slate-200 p-4 text-left active:scale-[0.98] transition"
-        >
-          <div className="text-[11px] font-medium text-slate-500">Appointments</div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums mt-0.5">
-            {appointments.length}
-          </div>
-          <div className="text-[11px] text-teal-600 font-semibold mt-1">
-            Tap to book slot →
-          </div>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('verifications')}
-          className="bg-white rounded-2xl border border-slate-200 p-4 text-left active:scale-[0.98] transition"
-        >
-          <div className="text-[11px] font-medium text-slate-500">Verifications</div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums mt-0.5">
-            {verifications.length}
-          </div>
-          <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            Submit ID proof →
-          </div>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('photos')}
-          className="bg-white rounded-2xl border border-slate-200 p-4 text-left active:scale-[0.98] transition"
-        >
-          <div className="text-[11px] font-medium text-slate-500">Saved Photos</div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums mt-0.5">
-            {savedPhotos.length}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">300 DPI Gallery →</div>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('profile')}
-          className="bg-white rounded-2xl border border-slate-200 p-4 text-left active:scale-[0.98] transition"
-        >
-          <div className="text-[11px] font-medium text-slate-500">Account Status</div>
-          {isApproved ? (
-            <div className="text-base font-extrabold text-emerald-700 mt-1 flex items-center gap-1.5">
-              <i className="fa-solid fa-circle-check"></i>
-              <span>Approved</span>
-            </div>
-          ) : isBlockedOrRemoved ? (
-            <div className="text-base font-extrabold text-rose-600 mt-1 flex items-center gap-1.5">
+      {isBlocked && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 border border-rose-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0">
               <i className="fa-solid fa-ban"></i>
-              <span className="capitalize">{userProfile.status}</span>
             </div>
-          ) : (
-            <div className="text-base font-extrabold text-amber-600 mt-1 flex items-center gap-1.5">
-              <i className="fa-solid fa-clock"></i>
-              <span>Pending</span>
+            <div>
+              <h2 className="text-sm font-extrabold text-rose-950">
+                Account Restricted ({userProfile.status.toUpperCase()})
+              </h2>
+              <p className="text-xs text-rose-800 mt-0.5">
+                Your account access has been restricted by the {brandName} administrator.
+              </p>
             </div>
+          </div>
+          {onOpenAdminPanel && (
+            <button
+              onClick={onOpenAdminPanel}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-rose-700 text-white text-xs font-bold"
+            >
+              Manage in Admin Panel
+            </button>
           )}
-          <div className="text-[11px] text-slate-500 mt-1">Edit profile →</div>
-        </button>
+        </div>
+      )}
+
+      {/* User Profile Banner — MALNADU MEDIA Butterfly-Camera Logo Theme */}
+      <div className="bg-[#070a14] rounded-3xl border border-cyan-500/30 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md text-white">
+        <div className="flex items-center gap-3.5">
+          <div className="h-12 px-2 py-1 rounded-2xl bg-[#070a14] border border-cyan-400/40 flex items-center justify-center shrink-0 overflow-hidden">
+            <img
+              src={logoUrl || '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg'}
+              alt={brandName}
+              className="h-full w-auto max-w-[100px] object-contain"
+            />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-lg font-extrabold text-white truncate">
+                {userProfile.displayName}
+              </h1>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
+                  isApproved
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : isBlocked
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}
+              >
+                {userProfile.status}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 truncate">
+              {userProfile.email} {userProfile.phone ? `· ${userProfile.phone}` : ''}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:flex items-center gap-2">
+          <button
+            onClick={onNavigateToStudio}
+            className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-bold active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+          >
+            <i className="fa-solid fa-camera"></i>
+            <span>Photo Studio</span>
+          </button>
+          <button
+            onClick={onSignOut}
+            className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/15 text-slate-200 text-xs font-bold active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+          >
+            <i className="fa-solid fa-right-from-bracket text-rose-400"></i>
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
 
-      {/* Horizontal Touch Scroller Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+      {/* Sub-Navigation Pills */}
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar bg-[#070a14] p-1.5 rounded-2xl border border-cyan-500/30">
         {[
-          { id: 'overview', label: 'Summary', icon: 'fa-layer-group' },
-          { id: 'appointments', label: 'Book Appointment', icon: 'fa-calendar-check' },
-          { id: 'verifications', label: 'ID Verification', icon: 'fa-file-shield' },
-          { id: 'photos', label: 'Saved Photos', icon: 'fa-images' },
-          { id: 'profile', label: 'My Profile', icon: 'fa-user-pen' },
+          { id: 'overview', label: 'Overview', icon: 'fa-chart-pie' },
+          { id: 'appointments', label: `Appointments (${appointments.length})`, icon: 'fa-calendar-check' },
+          { id: 'verifications', label: `ID Verify (${verifications.length})`, icon: 'fa-id-card-clip' },
+          { id: 'photos', label: `Saved Photos (${savedPhotos.length})`, icon: 'fa-images' },
+          { id: 'profile', label: 'Profile', icon: 'fa-user-pen' },
         ].map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id as any)}
-            className={`min-h-[44px] px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap shrink-0 active:scale-[0.98] ${
+            className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === t.id
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+                ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
             }`}
           >
             <i className={`fa-solid ${t.icon}`}></i>
@@ -392,136 +339,148 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* Interactive Tap List: Appointments */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900">Studio Appointments</h2>
-                <p className="text-xs text-slate-500">Scheduled photo shoots & express slots</p>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <button
+              onClick={() => setActiveTab('appointments')}
+              className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 text-left hover:border-cyan-400 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">Appointments</span>
+                <span className="w-8 h-8 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center text-xs">
+                  <i className="fa-solid fa-calendar-day"></i>
+                </span>
               </div>
-              <button
-                onClick={() => setActiveTab('appointments')}
-                className="min-h-[40px] px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 text-xs font-bold whitespace-nowrap"
-              >
-                + Book New
-              </button>
-            </div>
+              <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 mt-2">
+                {appointments.length}
+              </div>
+              <div className="text-[11px] font-semibold text-cyan-700 mt-1">
+                Book or view studio slots →
+              </div>
+            </button>
 
-            {appointments.length === 0 ? (
-              <div className="py-8 text-center space-y-3 bg-slate-50 rounded-2xl p-4">
-                <p className="text-xs text-slate-500">No appointments booked yet.</p>
-                <button
-                  onClick={() => setActiveTab('appointments')}
-                  className="min-h-[44px] px-4 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
-                >
-                  Schedule Studio Slot
-                </button>
+            <button
+              onClick={() => setActiveTab('verifications')}
+              className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 text-left hover:border-purple-400 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">ID Verifications</span>
+                <span className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-xs">
+                  <i className="fa-solid fa-file-shield"></i>
+                </span>
               </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {appointments.slice(0, 4).map((apt) => (
-                  <div
-                    key={apt.id}
-                    className="py-3.5 flex items-center justify-between gap-3 min-h-[60px]"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
-                        <i className="fa-solid fa-calendar-day"></i>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                          {apt.serviceType}
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                          <span className="font-mono tabular-nums">{apt.appointmentDate}</span> ·{' '}
-                          <span className="font-mono tabular-nums">{apt.timeSlot}</span> ·{' '}
-                          <span className={getStatusText(apt.status)}>{apt.status.toUpperCase()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 mt-2">
+                {verifications.length}
               </div>
-            )}
+              <div className="text-[11px] font-semibold text-purple-700 mt-1">
+                Check biometric status →
+              </div>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('photos')}
+              className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 text-left hover:border-amber-400 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">Saved Photos</span>
+                <span className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xs">
+                  <i className="fa-solid fa-camera-retro"></i>
+                </span>
+              </div>
+              <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 mt-2">
+                {savedPhotos.length}
+              </div>
+              <div className="text-[11px] font-semibold text-amber-700 mt-1">
+                Download 300 DPI files →
+              </div>
+            </button>
           </div>
 
-          {/* Interactive Tap List: Document Verifications */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-extrabold text-slate-900">Document Verifications</h2>
-                <p className="text-xs text-slate-500">Biometric & embassy compliance status</p>
-              </div>
-              <button
-                onClick={() => setActiveTab('verifications')}
-                className="min-h-[40px] px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 text-xs font-bold whitespace-nowrap"
-              >
-                + Submit ID
-              </button>
-            </div>
-
-            {verifications.length === 0 ? (
-              <div className="py-8 text-center space-y-3 bg-slate-50 rounded-2xl p-4">
-                <p className="text-xs text-slate-500">No documents submitted for verification.</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Recent Appointments */}
+            <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-extrabold text-slate-900">Recent Appointments</h2>
                 <button
-                  onClick={() => setActiveTab('verifications')}
-                  className="min-h-[44px] px-4 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
+                  onClick={() => setActiveTab('appointments')}
+                  className="text-xs font-bold text-cyan-700"
                 >
-                  Submit First Document
+                  + Book Slot
                 </button>
               </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {verifications.slice(0, 4).map((ver) => (
-                  <div
-                    key={ver.id}
-                    className="py-3.5 flex items-center justify-between gap-3 min-h-[60px]"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {ver.photoPreviewDataUrl ? (
-                        <img
-                          src={ver.photoPreviewDataUrl}
-                          alt={ver.documentType}
-                          referrerPolicy="no-referrer"
-                          className="w-10 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-10 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
-                          <i className="fa-solid fa-id-card"></i>
-                        </div>
-                      )}
+              {appointments.length === 0 ? (
+                <p className="text-xs text-slate-500 py-6 text-center bg-slate-50 rounded-2xl">
+                  No studio appointments booked yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {appointments.slice(0, 3).map((apt) => (
+                    <div key={apt.id} className="py-3 flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                          {ver.documentType} (<span className="font-mono">{ver.documentNumber}</span>)
+                        <div className="text-xs font-bold text-slate-900 truncate">
+                          {apt.serviceType}
                         </div>
-                        <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                          {ver.country} ·{' '}
-                          <span className={getStatusText(ver.status)}>
-                            {ver.status.replace('_', ' ').toUpperCase()}
-                          </span>
+                        <div className="text-[11px] text-slate-500 font-mono">
+                          {apt.appointmentDate} · {apt.timeSlot}
                         </div>
                       </div>
+                      <span className={`text-xs capitalize shrink-0 ${getStatusText(apt.status)}`}>
+                        {apt.status}
+                      </span>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent ID Verifications */}
+            <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-extrabold text-slate-900">Document Verifications</h2>
+                <button
+                  onClick={() => setActiveTab('verifications')}
+                  className="text-xs font-bold text-cyan-700"
+                >
+                  + Submit ID
+                </button>
               </div>
-            )}
+              {verifications.length === 0 ? (
+                <p className="text-xs text-slate-500 py-6 text-center bg-slate-50 rounded-2xl">
+                  No documents submitted for verification yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {verifications.slice(0, 3).map((ver) => (
+                    <div key={ver.id} className="py-3 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 truncate">
+                          {ver.documentType} ({ver.documentNumber})
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate">{ver.country}</div>
+                      </div>
+                      <span className={`text-xs capitalize shrink-0 ${getStatusText(ver.status)}`}>
+                        {ver.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* TAB 2: APPOINTMENTS */}
+      {/* TAB 2: STUDIO APPOINTMENTS */}
       {activeTab === 'appointments' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <form
-            onSubmit={handleBookSubmit}
+            onSubmit={handleAppointmentSubmit}
             className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4"
           >
             <div>
-              <h2 className="text-base font-extrabold text-slate-900">Book Studio Slot</h2>
+              <h2 className="text-base font-extrabold text-slate-900">Book Studio Appointment</h2>
               <p className="text-xs text-slate-500">
-                Schedule an express photo shoot or verification appointment
+                Schedule an in-person biometric capture or print pickup at {brandName}
               </p>
             </div>
 
@@ -542,15 +501,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Country Size Spec</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Target Country Preset
+                </label>
                 <select
                   value={aptCountry}
                   onChange={(e) => setAptCountry(e.target.value)}
                   className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl font-medium"
                 >
                   {COUNTRY_PRESETS.map((c) => (
-                    <option key={c.id} value={c.country}>
-                      {c.flag} {c.country}
+                    <option key={c.id} value={`${c.country} (${c.desc})`}>
+                      {c.country} — {c.desc}
                     </option>
                   ))}
                 </select>
@@ -606,17 +567,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   value={aptPhone}
                   onChange={(e) => setAptPhone(e.target.value)}
                   placeholder="+91 98765 43210"
-                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl"
+                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl font-medium"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Notes (Optional)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Notes (Optional)
+                </label>
                 <textarea
                   rows={2}
                   value={aptNotes}
                   onChange={(e) => setAptNotes(e.target.value)}
-                  placeholder="E.g. Need 8 physical prints + softcopy..."
+                  placeholder="E.g. Need 8 glossy prints on 6×4 sheet..."
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl"
                 />
               </div>
@@ -624,14 +587,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
             <button
               type="submit"
-              disabled={isBooking || !isApproved}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+              disabled={isSubmittingApt || !isApproved}
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
             >
-              <i className="fa-solid fa-calendar-check"></i>
+              <i className="fa-solid fa-calendar-plus"></i>
               <span>
                 {!isApproved
                   ? 'Requires Account Approval'
-                  : isBooking
+                  : isSubmittingApt
                   ? 'Booking...'
                   : 'Confirm Appointment'}
               </span>
@@ -640,7 +603,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
           <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h2 className="text-base font-extrabold text-slate-900">Your Bookings</h2>
+              <h2 className="text-base font-extrabold text-slate-900">Your Scheduled Slots</h2>
               <span className="text-xs font-mono tabular-nums text-slate-500">
                 {appointments.length} Total
               </span>
@@ -648,37 +611,43 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
             {appointments.length === 0 ? (
               <div className="py-12 text-center text-xs text-slate-500">
-                No appointments scheduled yet.
+                No studio appointments scheduled yet.
               </div>
             ) : (
               <div className="space-y-3">
                 {appointments.map((apt) => (
                   <div
                     key={apt.id}
-                    className="p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="p-4 rounded-2xl border border-slate-200 space-y-2.5"
                   >
-                    <div className="space-y-1">
-                      <div className="text-sm font-extrabold text-slate-900">{apt.serviceType}</div>
-                      <div className="text-xs text-slate-600">{apt.countrySpec}</div>
-                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-1.5">
-                        <span>{apt.branchLocation}</span>
-                        <span>·</span>
-                        <span className="font-mono tabular-nums">{apt.appointmentDate}</span>
-                        <span>·</span>
-                        <span className="font-mono tabular-nums">{apt.timeSlot}</span>
-                        <span>·</span>
-                        <span className={getStatusText(apt.status)}>{apt.status.toUpperCase()}</span>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {apt.serviceType}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          <i className="fa-solid fa-location-dot mr-1 text-cyan-600"></i>
+                          {apt.branchLocation}
+                        </div>
                       </div>
+                      <span className={`text-xs capitalize ${getStatusText(apt.status)}`}>
+                        {apt.status}
+                      </span>
                     </div>
 
-                    {apt.status !== 'completed' && apt.status !== 'cancelled' && (
-                      <button
-                        onClick={() => onCancelAppointment(apt)}
-                        className="min-h-[42px] px-3.5 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold active:scale-[0.98] transition whitespace-nowrap"
-                      >
-                        Cancel Slot
-                      </button>
-                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
+                      <span className="font-mono">
+                        {apt.appointmentDate} · {apt.timeSlot}
+                      </span>
+                      {apt.status !== 'cancelled' && apt.status !== 'completed' && (
+                        <button
+                          onClick={() => onCancelAppointment(apt)}
+                          className="min-h-[36px] px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 font-bold text-xs"
+                        >
+                          Cancel Slot
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -687,17 +656,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </div>
       )}
 
-      {/* TAB 3: DOCUMENT VERIFICATIONS */}
+      {/* TAB 3: DOCUMENT VERIFICATION */}
       {activeTab === 'verifications' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <form
-            onSubmit={handleDocSubmit}
+            onSubmit={handleVerificationSubmit}
             className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4"
           >
             <div>
               <h2 className="text-base font-extrabold text-slate-900">Submit ID for Verification</h2>
               <p className="text-xs text-slate-500">
-                Submit passport or visa documents for biometric compliance review
+                Verify biometric photo compliance against official government ID standards
               </p>
             </div>
 
@@ -709,9 +678,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   onChange={(e) => setDocType(e.target.value as any)}
                   className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl font-medium"
                 >
-                  {DOCUMENT_TYPES.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
+                  {DOCUMENT_TYPES.map((dt) => (
+                    <option key={dt} value={dt}>
+                      {dt}
                     </option>
                   ))}
                 </select>
@@ -724,17 +693,15 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <input
                   type="text"
                   required
-                  minLength={3}
-                  maxLength={50}
                   value={docNumber}
                   onChange={(e) => setDocNumber(e.target.value)}
-                  placeholder="E.g. V4829103 or ABCDE1234F"
-                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl font-mono uppercase"
+                  placeholder="E.g. P4829103 or XXXX-XXXX-8912"
+                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm font-mono uppercase bg-slate-50 border border-slate-200 rounded-2xl"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Country Standard</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">Issuing Country</label>
                 <select
                   value={docCountry}
                   onChange={(e) => setDocCountry(e.target.value)}
@@ -742,7 +709,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 >
                   {COUNTRY_PRESETS.map((c) => (
                     <option key={c.id} value={c.country}>
-                      {c.flag} {c.country}
+                      {c.country}
                     </option>
                   ))}
                 </select>
@@ -767,7 +734,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   )}
                   <div className="flex-1">
                     <label className="min-h-[42px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer active:scale-[0.98] transition">
-                      <i className="fa-solid fa-upload text-teal-600"></i>
+                      <i className="fa-solid fa-upload text-cyan-600"></i>
                       <span>Choose Image</span>
                       <input type="file" accept="image/*" onChange={handleDocFileUpload} className="hidden" />
                     </label>
@@ -790,7 +757,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <button
               type="submit"
               disabled={isSubmittingDoc || !isApproved}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-file-circle-check"></i>
               <span>
@@ -872,7 +839,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
             <button
               onClick={onNavigateToStudio}
-              className="min-h-[42px] px-4 py-2 rounded-2xl bg-teal-600 text-white text-xs font-bold"
+              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white text-xs font-bold"
             >
               + New Photo
             </button>
@@ -883,7 +850,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               <p className="text-xs text-slate-500">No saved photos in your account yet.</p>
               <button
                 onClick={onNavigateToStudio}
-                className="min-h-[44px] px-5 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-bold"
+                className="min-h-[44px] px-5 py-2.5 rounded-2xl bg-[#070a14] text-cyan-300 text-xs font-bold"
               >
                 Open Photo Studio
               </button>
@@ -911,13 +878,22 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     <a
                       href={photo.previewDataUrl}
                       download={`malnadu-passport-${photo.id}.jpg`}
-                      className="flex-1 min-h-[40px] rounded-xl bg-teal-600 text-white text-xs font-bold flex items-center justify-center"
+                      className="flex-1 min-h-[38px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-xs font-bold flex items-center justify-center"
                     >
                       Download
                     </a>
+                    {onLoadSavedPhotoInStudio && (
+                      <button
+                        onClick={() => onLoadSavedPhotoInStudio(photo.previewDataUrl)}
+                        className="min-h-[38px] px-2.5 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-800 text-xs font-bold"
+                        title="Edit in Studio"
+                      >
+                        Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => onDeleteSavedPhoto(photo.id)}
-                      className="min-h-[40px] min-w-[40px] rounded-xl border border-slate-200 text-slate-500 hover:text-rose-600 flex items-center justify-center"
+                      className="min-h-[38px] min-w-[38px] rounded-xl border border-slate-200 text-slate-500 hover:text-rose-600 flex items-center justify-center"
                     >
                       <i className="fa-solid fa-trash"></i>
                     </button>
@@ -973,7 +949,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <button
               type="submit"
               disabled={isSavingProfile}
-              className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold shadow-sm active:scale-[0.98] transition"
+              className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-sm font-bold shadow-sm active:scale-[0.98] transition"
             >
               {isSavingProfile ? 'Saving...' : 'Save Profile Changes'}
             </button>

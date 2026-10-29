@@ -1,24 +1,31 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import QRCode from 'qrcode';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   BG_SWATCHES,
+  generateSamplePortraitDataUrl,
   ShortLinkRecord,
   SiteSettings,
-  generateSamplePortraitDataUrl,
 } from '../constants';
 import { runBriaRmbgCutout } from '../rmbgEngine';
 
-export type ActiveToolTab = 'bg-remover' | 'clarity-enhancer' | 'qr-generator' | 'link-shortener';
+export type ActiveToolTab =
+  | 'bg-remover'
+  | 'clarity-enhancer'
+  | 'qr-generator'
+  | 'link-shortener';
 
 interface ToolsHubProps {
   activeTool: ActiveToolTab;
   onSelectTool: (tool: ActiveToolTab) => void;
   siteSettings: SiteSettings;
   shortLinks: ShortLinkRecord[];
-  onCreateShortLink: (originalUrl: string, customSlug: string) => Promise<{ ok: boolean; error?: string; link?: ShortLinkRecord }>;
+  onCreateShortLink: (
+    originalUrl: string,
+    customSlug: string
+  ) => Promise<{ ok: boolean; error?: string; link?: ShortLinkRecord }>;
   onToggleShortLinkStatus: (slug: string, currentActive: boolean) => Promise<void>;
   onDeleteShortLink: (slug: string) => Promise<void>;
   onOpenPassportStudio: () => void;
+  onSendImageToStudio?: (dataUrl: string) => void;
   showToast: (msg: string) => void;
 }
 
@@ -31,212 +38,252 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   onToggleShortLinkStatus,
   onDeleteShortLink,
   onOpenPassportStudio,
+  onSendImageToStudio,
   showToast,
 }) => {
-  // ============================================================================
-  // 1. BACKGROUND REMOVER STATE
-  // ============================================================================
-  const [bgOriginalSrc, setBgOriginalSrc] = useState<string>('');
+  // =========================================================================
+  // 1. DEDICATED BACKGROUND REMOVER STATE
+  // =========================================================================
+  const [bgSourceSrc, setBgSourceSrc] = useState<string>('');
   const [bgCutoutDataUrl, setBgCutoutDataUrl] = useState<string>('');
-  const [bgBackdropHex, setBgBackdropHex] = useState<string>('transparent');
+  const [bgFillColor, setBgFillColor] = useState<string>('transparent');
   const [bgEdgeTolerance, setBgEdgeTolerance] = useState<number>(12);
+  const [bgRotation, setBgRotation] = useState<number>(0);
   const [bgProcessing, setBgProcessing] = useState<boolean>(false);
   const [bgProgress, setBgProgress] = useState<number>(0);
   const [bgStatusText, setBgStatusText] = useState<string>('Ready');
-  const bgFileInputRef = useRef<HTMLInputElement | null>(null);
-  const bgSourceImgRef = useRef<HTMLImageElement | null>(null);
-  const bgRawCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // ============================================================================
-  // 2. PHOTO CLARITY ENHANCER STATE
-  // ============================================================================
+  const bgFileInputRef = useRef<HTMLInputElement | null>(null);
+  const bgRawCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bgSourceImageRef = useRef<HTMLImageElement | null>(null);
+
+  // =========================================================================
+  // 2. DEDICATED PHOTO CLARITY ENHANCER STATE
+  // =========================================================================
   const [clarityOriginalSrc, setClarityOriginalSrc] = useState<string>('');
   const [clarityEnhancedUrl, setClarityEnhancedUrl] = useState<string>('');
   const [sharpnessAmount, setSharpnessAmount] = useState<number>(65);
-  const [clarityContrast, setClarityContrast] = useState<number>(30);
-  const [luminanceBoost, setLuminanceBoost] = useState<number>(8);
+  const [clarityContrast, setClarityContrast] = useState<number>(28);
+  const [luminanceBoost, setLuminanceBoost] = useState<number>(6);
+  const [clarityRotation, setClarityRotation] = useState<number>(0);
   const [clarityProcessing, setClarityProcessing] = useState<boolean>(false);
   const [clarityViewMode, setClarityViewMode] = useState<'split' | 'enhanced'>('split');
+
   const clarityFileInputRef = useRef<HTMLInputElement | null>(null);
   const claritySourceImgRef = useRef<HTMLImageElement | null>(null);
 
-  // ============================================================================
+  // =========================================================================
   // 3. QR CODE GENERATOR STATE
-  // ============================================================================
+  // =========================================================================
   const [qrInputUrl, setQrInputUrl] = useState<string>('https://passportstudiopro.netlify.app');
   const [qrSize, setQrSize] = useState<number>(360);
-  const [qrFgColor, setQrFgColor] = useState<string>('#0f172a');
+  const [qrFgColor, setQrFgColor] = useState<string>('#070a14');
   const [qrBgColor, setQrBgColor] = useState<string>('#ffffff');
   const [qrErrorLevel, setQrErrorLevel] = useState<'L' | 'M' | 'Q' | 'H'>('H');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrErrorMsg, setQrErrorMsg] = useState<string | null>(null);
 
-  // ============================================================================
-  // 4. LINK SHORTENER STATE
-  // ============================================================================
+  // =========================================================================
+  // 4. CUSTOM LINK SHORTENER STATE
+  // =========================================================================
   const [longUrlInput, setLongUrlInput] = useState<string>('');
   const [customSlugInput, setCustomSlugInput] = useState<string>('');
   const [linkErrorMsg, setLinkErrorMsg] = useState<string | null>(null);
   const [isCreatingLink, setIsCreatingLink] = useState<boolean>(false);
   const [latestCreatedLink, setLatestCreatedLink] = useState<ShortLinkRecord | null>(null);
 
-  // ============================================================================
-  // INITIALIZE DEFAULT DEMO IMAGES & QR CODE ON MOUNT
-  // ============================================================================
-  useEffect(() => {
-    const sample0 = generateSamplePortraitDataUrl(0, false);
-    const sample1 = generateSamplePortraitDataUrl(1, false);
-    loadBgRemoverImage(sample0, true);
-    loadClarityImage(sample1, true);
-    handleGenerateQrCode('https://passportstudiopro.netlify.app', 360, '#0f172a', '#ffffff', 'H');
-  }, []);
+  const baseOrigin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
 
-  // ============================================================================
+  // =========================================================================
   // BACKGROUND REMOVER LOGIC
-  // ============================================================================
-  const composeFinalCutoutWithBackdrop = useCallback(
-    (rawCanvas: HTMLCanvasElement, backdropHex: string, tolerance: number) => {
-      const w = rawCanvas.width;
-      const h = rawCanvas.height;
-      const out = document.createElement('canvas');
-      out.width = w;
-      out.height = h;
-      const ctx = out.getContext('2d')!;
+  // =========================================================================
+  const compositeCutoutWithFill = useCallback(
+    (
+      rawCanvas: HTMLCanvasElement,
+      fill: string,
+      tolerance: number,
+      rotationDeg = bgRotation
+    ) => {
+      const srcW = rawCanvas.width;
+      const srcH = rawCanvas.height;
 
-      // Copy raw cutout and refine alpha edges
-      const temp = document.createElement('canvas');
-      temp.width = w;
-      temp.height = h;
-      const tCtx = temp.getContext('2d')!;
-      tCtx.drawImage(rawCanvas, 0, 0);
+      const refined = document.createElement('canvas');
+      refined.width = srcW;
+      refined.height = srcH;
+      const rCtx = refined.getContext('2d')!;
+      rCtx.drawImage(rawCanvas, 0, 0);
 
       if (tolerance > 0) {
-        const imgData = tCtx.getImageData(0, 0, w, h);
+        const imgData = rCtx.getImageData(0, 0, srcW, srcH);
         const d = imgData.data;
-        const threshold = Math.round((tolerance / 50) * 110);
+        const threshold = Math.round((tolerance / 50) * 115);
         for (let i = 3; i < d.length; i += 4) {
           const a = d[i];
           if (a > 0 && a < threshold) {
             d[i] = 0;
-          } else if (a >= threshold && a < 230) {
-            d[i] = Math.min(255, Math.round((a - threshold) * (255 / (230 - threshold))));
+          } else if (a >= threshold && a < 235) {
+            d[i] = Math.min(255, Math.round((a - threshold) * (255 / (235 - threshold))));
           }
         }
-        tCtx.putImageData(imgData, 0, 0);
+        rCtx.putImageData(imgData, 0, 0);
       }
 
-      if (backdropHex !== 'transparent') {
-        ctx.fillStyle = backdropHex;
-        ctx.fillRect(0, 0, w, h);
+      const normRot = ((rotationDeg % 360) + 360) % 360;
+      const swapDims = normRot === 90 || normRot === 270;
+      const outW = swapDims ? srcH : srcW;
+      const outH = swapDims ? srcW : srcH;
+
+      const out = document.createElement('canvas');
+      out.width = outW;
+      out.height = outH;
+      const ctx = out.getContext('2d')!;
+
+      if (fill !== 'transparent') {
+        ctx.fillStyle = fill;
+        ctx.fillRect(0, 0, outW, outH);
       }
-      ctx.drawImage(temp, 0, 0);
-      setBgCutoutDataUrl(out.toDataURL('image/png'));
+
+      ctx.save();
+      ctx.translate(outW / 2, outH / 2);
+      ctx.rotate((rotationDeg * Math.PI) / 180);
+      ctx.drawImage(refined, -srcW / 2, -srcH / 2);
+      ctx.restore();
+
+      const mime = fill === 'transparent' ? 'image/png' : 'image/jpeg';
+      setBgCutoutDataUrl(out.toDataURL(mime, 0.96));
     },
-    []
+    [bgRotation]
   );
 
-  const runStandaloneBgRemoval = async (imgOverride?: HTMLImageElement) => {
-    const target = imgOverride || bgSourceImgRef.current;
-    if (!target) return;
-    setBgProcessing(true);
-    setBgProgress(15);
-    setBgStatusText('Analyzing Subject Edges...');
-
-    try {
-      const cutoutCanvas = await runBriaRmbgCutout(target, (pct, msg) => {
-        setBgProgress(pct);
-        setBgStatusText(msg);
-      });
-      if (cutoutCanvas) {
-        bgRawCutoutCanvasRef.current = cutoutCanvas;
-        composeFinalCutoutWithBackdrop(cutoutCanvas, bgBackdropHex, bgEdgeTolerance);
-        setBgStatusText('Background Removed');
+  const runDedicatedBgRemoval = useCallback(
+    async (img: HTMLImageElement, fill = bgFillColor, tol = bgEdgeTolerance, rot = bgRotation) => {
+      setBgProcessing(true);
+      setBgProgress(18);
+      setBgStatusText('Running AI Portrait Segmentation...');
+      try {
+        const cutoutCanvas = await runBriaRmbgCutout(img, (pct, msg) => {
+          setBgProgress(pct);
+          setBgStatusText(msg);
+        });
+        if (cutoutCanvas) {
+          bgRawCutoutCanvasRef.current = cutoutCanvas;
+          compositeCutoutWithFill(cutoutCanvas, fill, tol, rot);
+          setBgStatusText('Background Removed');
+        }
+      } catch (err) {
+        console.error('BG Remover error:', err);
+        setBgStatusText('Fallback Segmentation Complete');
+      } finally {
+        setBgProcessing(false);
       }
-    } catch (e) {
-      console.error('Standalone BG removal error:', e);
-      setBgStatusText('Completed');
-    } finally {
-      setBgProcessing(false);
-    }
-  };
+    },
+    [bgFillColor, bgEdgeTolerance, bgRotation, compositeCutoutWithFill]
+  );
 
-  const loadBgRemoverImage = (src: string, autoRun = true) => {
-    setBgOriginalSrc(src);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      bgSourceImgRef.current = img;
-      if (autoRun) {
-        runStandaloneBgRemoval(img);
-      }
-    };
-    img.src = src;
-  };
+  const loadBgSampleOrDataUrl = useCallback(
+    (dataUrl: string) => {
+      setBgSourceSrc(dataUrl);
+      setBgRotation(0);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        bgSourceImageRef.current = img;
+        runDedicatedBgRemoval(img, bgFillColor, bgEdgeTolerance, 0);
+      };
+      img.src = dataUrl;
+    },
+    [bgFillColor, bgEdgeTolerance, runDedicatedBgRemoval]
+  );
 
-  useEffect(() => {
-    if (bgRawCutoutCanvasRef.current) {
-      composeFinalCutoutWithBackdrop(bgRawCutoutCanvasRef.current, bgBackdropHex, bgEdgeTolerance);
-    }
-  }, [bgBackdropHex, bgEdgeTolerance, composeFinalCutoutWithBackdrop]);
-
-  const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBgFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      if (ev.target?.result) {
-        loadBgRemoverImage(ev.target.result as string, true);
-        showToast('Photo uploaded for AI Background Removal!');
+      const result = ev.target?.result as string;
+      if (result) {
+        loadBgSampleOrDataUrl(result);
+        showToast('Photo uploaded — removing background...');
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const downloadBgRemovedImage = (format: 'png' | 'jpg') => {
-    if (!bgCutoutDataUrl) return;
-    if (format === 'png') {
-      const a = document.createElement('a');
-      a.href = bgCutoutDataUrl;
-      a.download = `malnadu-media-bg-removed.png`;
-      a.click();
-      showToast('Downloaded Transparent PNG!');
-    } else {
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
-        const ctx = c.getContext('2d')!;
-        if (bgBackdropHex === 'transparent') {
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, c.width, c.height);
-        }
-        ctx.drawImage(img, 0, 0);
-        const a = document.createElement('a');
-        a.href = c.toDataURL('image/jpeg', 0.96);
-        a.download = `malnadu-media-cutout-hd.jpg`;
-        a.click();
-        showToast('Downloaded Studio HD JPG!');
-      };
-      img.src = bgCutoutDataUrl;
+  const handleRotateBgCutout = (deltaDeg: number) => {
+    const nextRot = (bgRotation + deltaDeg) % 360;
+    setBgRotation(nextRot);
+    if (bgRawCutoutCanvasRef.current) {
+      compositeCutoutWithFill(
+        bgRawCutoutCanvasRef.current,
+        bgFillColor,
+        bgEdgeTolerance,
+        nextRot
+      );
     }
   };
 
-  // ============================================================================
-  // PHOTO CLARITY ENHANCER LOGIC (Real Pixel Unsharp Mask + Contrast Convolution)
-  // ============================================================================
+  const downloadCutoutImage = (format: 'png' | 'jpg') => {
+    if (!bgRawCutoutCanvasRef.current) return;
+    const raw = bgRawCutoutCanvasRef.current;
+    const normRot = ((bgRotation % 360) + 360) % 360;
+    const swapDims = normRot === 90 || normRot === 270;
+    const outW = swapDims ? raw.height : raw.width;
+    const outH = swapDims ? raw.width : raw.height;
+
+    const c = document.createElement('canvas');
+    c.width = outW;
+    c.height = outH;
+    const ctx = c.getContext('2d')!;
+
+    if (format === 'jpg' && bgFillColor === 'transparent') {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, outW, outH);
+    } else if (bgFillColor !== 'transparent') {
+      ctx.fillStyle = bgFillColor;
+      ctx.fillRect(0, 0, outW, outH);
+    }
+
+    ctx.save();
+    ctx.translate(outW / 2, outH / 2);
+    ctx.rotate((bgRotation * Math.PI) / 180);
+    ctx.drawImage(raw, -raw.width / 2, -raw.height / 2);
+    ctx.restore();
+
+    const link = document.createElement('a');
+    link.download = `malnadu-media-bg-removed.${format}`;
+    link.href = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
+    link.click();
+    showToast(`Downloaded ${format.toUpperCase()} Cutout!`);
+  };
+
+  // =========================================================================
+  // PHOTO CLARITY ENHANCER LOGIC (UNSHARP MASK + MICRO-CONTRAST + LUMINANCE)
+  // =========================================================================
   const runPhotoClarityPipeline = useCallback(
     (
       img: HTMLImageElement,
       sharpness = sharpnessAmount,
       contrastBoost = clarityContrast,
-      lumBoost = luminanceBoost
+      lumBoost = luminanceBoost,
+      rotationDeg = clarityRotation
     ) => {
       setClarityProcessing(true);
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         try {
-          const w = img.width;
-          const h = img.height;
+          const maxDim = 1100;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+
           const canvas = document.createElement('canvas');
           canvas.width = w;
           canvas.height = h;
@@ -244,206 +291,200 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           ctx.drawImage(img, 0, 0, w, h);
 
           const srcData = ctx.getImageData(0, 0, w, h);
-          const dstData = ctx.createImageData(w, h);
-          const s = srcData.data;
-          const d = dstData.data;
+          const src = srcData.data;
+          const outData = ctx.createImageData(w, h);
+          const dst = outData.data;
 
-          // Unsharp Mask 3x3 Convolution Kernel weight based on sharpness (0..100)
-          const amount = (sharpness / 100) * 1.45;
-          // Contrast S-curve factor
-          const cFactor = Math.pow((contrastBoost + 100) / 100, 1.65);
-          const lumOffset = (lumBoost / 100) * 45;
+          const amount = (sharpness / 100) * 1.65;
+          const cFactor = Math.pow(1 + contrastBoost / 160, 2);
+          const lumOffset = lumBoost * 1.4;
 
           for (let y = 0; y < h; y++) {
             for (let x = 0; x < w; x++) {
               const idx = (y * w + x) * 4;
-              const alpha = s[idx + 3];
-              if (alpha === 0) {
-                d[idx + 3] = 0;
+
+              if (x === 0 || y === 0 || x === w - 1 || y === h - 1 || amount <= 0.01) {
+                for (let c = 0; c < 3; c++) {
+                  let val = src[idx + c] + lumOffset;
+                  val = (val - 128) * cFactor + 128;
+                  dst[idx + c] = val < 0 ? 0 : val > 255 ? 255 : val;
+                }
+                dst[idx + 3] = src[idx + 3];
                 continue;
               }
 
-              // Sample 3x3 neighborhood for unsharp mask
-              let rBlur = 0;
-              let gBlur = 0;
-              let bBlur = 0;
-              let count = 0;
+              const up = ((y - 1) * w + x) * 4;
+              const down = ((y + 1) * w + x) * 4;
+              const left = (y * w + (x - 1)) * 4;
+              const right = (y * w + (x + 1)) * 4;
 
-              for (let ky = -1; ky <= 1; ky++) {
-                const ny = y + ky;
-                if (ny < 0 || ny >= h) continue;
-                for (let kx = -1; kx <= 1; kx++) {
-                  const nx = x + kx;
-                  if (nx < 0 || nx >= w) continue;
-                  const nIdx = (ny * w + nx) * 4;
-                  rBlur += s[nIdx];
-                  gBlur += s[nIdx + 1];
-                  bBlur += s[nIdx + 2];
-                  count++;
-                }
+              for (let c = 0; c < 3; c++) {
+                const center = src[idx + c];
+                const neighborAvg =
+                  (src[up + c] + src[down + c] + src[left + c] + src[right + c]) * 0.25;
+                const highPass = center - neighborAvg;
+                let sharpened = center + highPass * amount + lumOffset;
+                sharpened = (sharpened - 128) * cFactor + 128;
+                dst[idx + c] = sharpened < 0 ? 0 : sharpened > 255 ? 255 : sharpened;
               }
-
-              rBlur /= count;
-              gBlur /= count;
-              bBlur /= count;
-
-              // High-frequency detail = original - local blur
-              let r = s[idx] + (s[idx] - rBlur) * amount;
-              let g = s[idx + 1] + (s[idx + 1] - gBlur) * amount;
-              let b = s[idx + 2] + (s[idx + 2] - bBlur) * amount;
-
-              // Apply luminance & micro-contrast enhancement
-              r = (r - 128) * cFactor + 128 + lumOffset;
-              g = (g - 128) * cFactor + 128 + lumOffset;
-              b = (b - 128) * cFactor + 128 + lumOffset;
-
-              // Subtle vibrance preservation
-              const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-              const satBoost = 1.08;
-              r = luma + (r - luma) * satBoost;
-              g = luma + (g - luma) * satBoost;
-              b = luma + (b - luma) * satBoost;
-
-              d[idx] = r < 0 ? 0 : r > 255 ? 255 : Math.round(r);
-              d[idx + 1] = g < 0 ? 0 : g > 255 ? 255 : Math.round(g);
-              d[idx + 2] = b < 0 ? 0 : b > 255 ? 255 : Math.round(b);
-              d[idx + 3] = alpha;
+              dst[idx + 3] = src[idx + 3];
             }
           }
 
-          ctx.putImageData(dstData, 0, 0);
-          setClarityEnhancedUrl(canvas.toDataURL('image/png'));
+          ctx.putImageData(outData, 0, 0);
+
+          const normRot = ((rotationDeg % 360) + 360) % 360;
+          const swapDims = normRot === 90 || normRot === 270;
+          const finalW = swapDims ? h : w;
+          const finalH = swapDims ? w : h;
+
+          const rotCanvas = document.createElement('canvas');
+          rotCanvas.width = finalW;
+          rotCanvas.height = finalH;
+          const rCtx = rotCanvas.getContext('2d')!;
+          rCtx.save();
+          rCtx.translate(finalW / 2, finalH / 2);
+          rCtx.rotate((rotationDeg * Math.PI) / 180);
+          rCtx.drawImage(canvas, -w / 2, -h / 2);
+          rCtx.restore();
+
+          setClarityEnhancedUrl(rotCanvas.toDataURL('image/jpeg', 0.96));
         } finally {
           setClarityProcessing(false);
         }
-      }, 60);
+      });
     },
-    [sharpnessAmount, clarityContrast, luminanceBoost]
+    [sharpnessAmount, clarityContrast, luminanceBoost, clarityRotation]
   );
 
-  const loadClarityImage = (src: string, autoEnhance = true) => {
-    setClarityOriginalSrc(src);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      claritySourceImgRef.current = img;
-      if (autoEnhance) {
-        runPhotoClarityPipeline(img, sharpnessAmount, clarityContrast, luminanceBoost);
+  const loadClarityImage = useCallback(
+    (dataUrl: string, resetSliders = false) => {
+      setClarityOriginalSrc(dataUrl);
+      setClarityRotation(0);
+      const sVal = resetSliders ? 65 : sharpnessAmount;
+      const cVal = resetSliders ? 28 : clarityContrast;
+      const lVal = resetSliders ? 6 : luminanceBoost;
+      if (resetSliders) {
+        setSharpnessAmount(65);
+        setClarityContrast(28);
+        setLuminanceBoost(6);
       }
-    };
-    img.src = src;
-  };
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        claritySourceImgRef.current = img;
+        runPhotoClarityPipeline(img, sVal, cVal, lVal, 0);
+      };
+      img.src = dataUrl;
+    },
+    [sharpnessAmount, clarityContrast, luminanceBoost, runPhotoClarityPipeline]
+  );
 
   const handleClarityUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      if (ev.target?.result) {
-        loadClarityImage(ev.target.result as string, true);
-        showToast('Photo loaded & clarity enhanced!');
+      const result = ev.target?.result as string;
+      if (result) {
+        loadClarityImage(result, false);
+        showToast('Photo loaded — enhancing clarity...');
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const downloadEnhancedClarityImage = (format: 'png' | 'jpg') => {
+  const handleRotateClarity = (deltaDeg: number) => {
+    const nextRot = (clarityRotation + deltaDeg) % 360;
+    setClarityRotation(nextRot);
+    if (claritySourceImgRef.current) {
+      runPhotoClarityPipeline(
+        claritySourceImgRef.current,
+        sharpnessAmount,
+        clarityContrast,
+        luminanceBoost,
+        nextRot
+      );
+    }
+  };
+
+  const downloadEnhancedClarityImage = (format: 'jpg' | 'png') => {
     if (!clarityEnhancedUrl) return;
-    if (format === 'png') {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      c.getContext('2d')!.drawImage(img, 0, 0);
       const a = document.createElement('a');
-      a.href = clarityEnhancedUrl;
-      a.download = 'malnadu-media-enhanced-hd.png';
+      a.download = `malnadu-media-clarity-hd.${format}`;
+      a.href = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.97);
       a.click();
-      showToast('Downloaded Enhanced HD PNG!');
-    } else {
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
-        const ctx = c.getContext('2d')!;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, c.width, c.height);
-        ctx.drawImage(img, 0, 0);
-        const a = document.createElement('a');
-        a.href = c.toDataURL('image/jpeg', 0.96);
-        a.download = 'malnadu-media-enhanced-hd.jpg';
-        a.click();
-        showToast('Downloaded Enhanced HD JPG!');
-      };
-      img.src = clarityEnhancedUrl;
-    }
+      showToast(`Downloaded Enhanced HD ${format.toUpperCase()}!`);
+    };
+    img.src = clarityEnhancedUrl;
   };
 
-  // ============================================================================
+  // =========================================================================
   // QR CODE GENERATOR LOGIC
-  // ============================================================================
-  const handleGenerateQrCode = async (
-    targetText = qrInputUrl,
-    size = qrSize,
-    fg = qrFgColor,
-    bg = qrBgColor,
-    errLevel = qrErrorLevel
-  ) => {
-    setQrErrorMsg(null);
-    const trimmed = targetText.trim();
-    if (!trimmed) {
-      setQrErrorMsg('Please enter a valid URL or text to generate a QR code.');
-      return;
-    }
-
-    try {
-      const dataUrl = await QRCode.toDataURL(trimmed, {
-        width: size,
-        margin: 2,
-        color: {
-          dark: fg,
-          light: bg,
-        },
-        errorCorrectionLevel: errLevel,
-      });
-      setQrDataUrl(dataUrl);
-    } catch (err: any) {
-      setQrErrorMsg(err?.message || 'Could not generate QR Code. Check your input.');
-    }
-  };
+  // =========================================================================
+  const handleGenerateQrCode = useCallback(
+    async (
+      targetText = qrInputUrl,
+      sizePx = qrSize,
+      fgHex = qrFgColor,
+      bgHex = qrBgColor,
+      errLvl = qrErrorLevel
+    ) => {
+      const cleaned = targetText.trim();
+      if (!cleaned) {
+        setQrErrorMsg('Please enter a valid URL or text to generate a QR code.');
+        return;
+      }
+      setQrErrorMsg(null);
+      try {
+        const QRCodeMod: any = await import('qrcode');
+        const toDataURL = QRCodeMod.toDataURL || QRCodeMod.default?.toDataURL;
+        if (toDataURL) {
+          const url = await toDataURL(cleaned, {
+            width: sizePx,
+            margin: 2,
+            color: {
+              dark: fgHex,
+              light: bgHex,
+            },
+            errorCorrectionLevel: errLvl,
+          });
+          setQrDataUrl(url);
+        }
+      } catch (err) {
+        console.error('QR generation error:', err);
+        setQrErrorMsg('Unable to generate QR code. Please check your input.');
+      }
+    },
+    [qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel]
+  );
 
   const handleDownloadQrCode = () => {
     if (!qrDataUrl) return;
-    const link = document.createElement('a');
-    link.href = qrDataUrl;
-    link.download = `malnadu-media-qr-${Date.now()}.png`;
-    link.click();
-    showToast('QR Code PNG Downloaded!');
+    const a = document.createElement('a');
+    a.download = `malnadu-media-qr-${Date.now()}.png`;
+    a.href = qrDataUrl;
+    a.click();
+    showToast('Downloaded High-Resolution QR Code PNG!');
   };
 
-  const handleCopyText = async (text: string, label = 'Copied to clipboard!') => {
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast(label);
-    } catch {
-      showToast(label);
-    }
-  };
-
-  // ============================================================================
+  // =========================================================================
   // LINK SHORTENER LOGIC
-  // ============================================================================
-  const sanitizeSlug = (raw: string) =>
-    raw
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9-_]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-
+  // =========================================================================
   const handleShortLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLinkErrorMsg(null);
+    setLatestCreatedLink(null);
 
     let normalizedUrl = longUrlInput.trim();
     if (!normalizedUrl) {
-      setLinkErrorMsg('Please enter a destination URL.');
+      setLinkErrorMsg('Please enter a destination URL to shorten.');
       return;
     }
     if (!/^https?:\/\//i.test(normalizedUrl)) {
@@ -453,66 +494,71 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
     try {
       new URL(normalizedUrl);
     } catch {
-      setLinkErrorMsg('Please enter a valid destination URL (e.g., https://example.com).');
+      setLinkErrorMsg('Please enter a valid website URL (e.g. https://example.com).');
       return;
     }
 
-    const cleanSlug = sanitizeSlug(
-      customSlugInput.trim() || `mm-${Math.random().toString(36).substring(2, 7)}`
-    );
+    let slug = customSlugInput
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
 
-    if (cleanSlug.length < 2 || cleanSlug.length > 60) {
-      setLinkErrorMsg('Custom short name must be between 2 and 60 characters.');
-      return;
+    if (!slug) {
+      slug = `mm-${Math.random().toString(36).substring(2, 7)}`;
     }
 
-    const reservedSlugs = ['studio', 'dashboard', 'admin', 'login', 'signup', 'api'];
-    if (reservedSlugs.includes(cleanSlug)) {
-      setLinkErrorMsg(`"${cleanSlug}" is a reserved system path. Please choose another short name.`);
+    const reservedSlugs = ['admin', 'dashboard', 'studio', 'tools', 'login', 'api'];
+    if (reservedSlugs.includes(slug)) {
+      setLinkErrorMsg(`The short name "${slug}" is reserved. Please pick another custom name.`);
       return;
     }
 
     setIsCreatingLink(true);
     try {
-      const res = await onCreateShortLink(normalizedUrl, cleanSlug);
-      if (!res.ok) {
-        setLinkErrorMsg(res.error || 'Slug is already taken. Try a different short name.');
-      } else if (res.link) {
-        setLatestCreatedLink(res.link);
+      const result = await onCreateShortLink(normalizedUrl, slug);
+      if (!result.ok) {
+        setLinkErrorMsg(result.error || 'Could not create short link.');
+      } else if (result.link) {
+        setLatestCreatedLink(result.link);
         setLongUrlInput('');
         setCustomSlugInput('');
-        showToast(`Short link /${cleanSlug} created!`);
+        showToast('Custom Short Link Created!');
       }
     } finally {
       setIsCreatingLink(false);
     }
   };
 
-  const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
+  const handleCopyText = (text: string, label = 'Copied to clipboard!') => {
+    navigator.clipboard.writeText(text);
+    showToast(label);
+  };
+
+  // Initialize default sample images and QR code on mount
+  useEffect(() => {
+    const samplePortrait = generateSamplePortraitDataUrl(0, false);
+    loadBgSampleOrDataUrl(samplePortrait);
+    loadClarityImage(samplePortrait, true);
+    handleGenerateQrCode('https://passportstudiopro.netlify.app', 360, '#070a14', '#ffffff', 'H');
+  }, []);
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
-      {/* Top Feature Switcher Bar */}
-      <div className="bg-white rounded-3xl border border-slate-200/90 p-3 sm:p-4 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+      {/* Top Tool Switcher Bar — Styled with MALNADU MEDIA Butterfly-Camera Logo Theme */}
+      <div className="bg-[#070a14] rounded-3xl border border-cyan-500/30 p-3 sm:p-4 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <button
-            onClick={onOpenPassportStudio}
-            className="min-h-[44px] px-3.5 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-2 whitespace-nowrap shrink-0 transition"
-          >
-            <i className="fa-solid fa-id-card-clip text-teal-600"></i>
-            <span>Passport Studio</span>
-          </button>
-
           {siteSettings.enableBgRemover && (
             <button
               onClick={() => onSelectTool('bg-remover')}
-              className={`min-h-[44px] px-4 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 whitespace-nowrap shrink-0 transition ${
+              className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
                 activeTool === 'bg-remover'
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
               }`}
             >
-              <i className="fa-solid fa-wand-magic-sparkles"></i>
+              <i className="fa-solid fa-wand-magic-sparkles text-cyan-300"></i>
               <span>Background Remover</span>
             </button>
           )}
@@ -520,13 +566,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           {siteSettings.enableClarityEnhancer && (
             <button
               onClick={() => onSelectTool('clarity-enhancer')}
-              className={`min-h-[44px] px-4 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 whitespace-nowrap shrink-0 transition ${
+              className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
                 activeTool === 'clarity-enhancer'
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
               }`}
             >
-              <i className="fa-solid fa-sparkles"></i>
+              <i className="fa-solid fa-sparkles text-purple-300"></i>
               <span>Photo Clarity Enhancer</span>
             </button>
           )}
@@ -534,13 +580,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           {siteSettings.enableQrGenerator && (
             <button
               onClick={() => onSelectTool('qr-generator')}
-              className={`min-h-[44px] px-4 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 whitespace-nowrap shrink-0 transition ${
+              className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
                 activeTool === 'qr-generator'
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
               }`}
             >
-              <i className="fa-solid fa-qrcode"></i>
+              <i className="fa-solid fa-qrcode text-cyan-300"></i>
               <span>QR Code Generator</span>
             </button>
           )}
@@ -548,70 +594,80 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           {siteSettings.enableLinkShortener && (
             <button
               onClick={() => onSelectTool('link-shortener')}
-              className={`min-h-[44px] px-4 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 whitespace-nowrap shrink-0 transition ${
+              className={`min-h-[42px] px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
                 activeTool === 'link-shortener'
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
               }`}
             >
-              <i className="fa-solid fa-link"></i>
+              <i className="fa-solid fa-link text-amber-300"></i>
               <span>Link Shortener</span>
             </button>
           )}
         </div>
+
+        <button
+          onClick={onOpenPassportStudio}
+          className="min-h-[42px] px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/20 border border-cyan-400/30 text-cyan-300 text-xs font-bold transition flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
+        >
+          <i className="fa-solid fa-id-card"></i>
+          <span>Passport Photo Maker</span>
+        </button>
       </div>
 
       {/* =====================================================================
-          TOOL 1: DEDICATED AI BACKGROUND REMOVER
+          TOOL 1: DEDICATED BACKGROUND REMOVER
          ===================================================================== */}
       {activeTool === 'bg-remover' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Controls Column */}
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-5 shadow-xs">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-                  <i className="fa-solid fa-wand-magic-sparkles"></i> AI Cutout Engine
-                </span>
-                <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
-                  Background Remover
-                </h1>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Upload any portrait or product photo to remove the background with precision edge matting.
-                </p>
-              </div>
+            <div>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-cyan-800 bg-cyan-50 px-2.5 py-1 rounded-lg border border-cyan-200">
+                <i className="fa-solid fa-bolt text-cyan-600"></i> AI Portrait Cutout
+              </span>
+              <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
+                Background Remover
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Upload any portrait or product photo to automatically remove the background, rotate, and export transparent PNG or studio-colored JPG.
+              </p>
             </div>
 
-            {/* Upload & Sample Selector */}
+            {/* Upload Button + Sample Portraits */}
             <div className="space-y-3">
               <button
                 onClick={() => bgFileInputRef.current?.click()}
-                className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-cloud-arrow-up"></i>
-                <span>Upload Image to Remove Background</span>
+                <span>Upload Photo to Remove Background</span>
               </button>
               <input
                 ref={bgFileInputRef}
                 type="file"
                 accept="image/*"
-                onChange={handleBgUpload}
+                onChange={handleBgFileUpload}
                 className="hidden"
               />
 
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-xs font-bold text-slate-500">Or test with sample portrait:</span>
+                <span className="text-xs font-bold text-slate-500">Or test with sample:</span>
                 <div className="flex items-center gap-2">
                   {[0, 1, 2].map((idx) => {
                     const sampleUrl = generateSamplePortraitDataUrl(idx, false);
                     return (
                       <button
                         key={idx}
-                        onClick={() => loadBgRemoverImage(sampleUrl, true)}
-                        className="w-10 h-10 rounded-xl overflow-hidden border border-slate-300 hover:border-teal-600 transition"
-                        title={`Load Sample ${idx + 1}`}
+                        onClick={() => loadBgSampleOrDataUrl(sampleUrl)}
+                        className="w-10 h-10 rounded-xl overflow-hidden border border-slate-300 hover:border-cyan-500 transition"
+                        title={`Sample Portrait ${idx + 1}`}
                       >
-                        <img src={sampleUrl} alt={`Sample ${idx + 1}`} className="w-full h-full object-cover" />
+                        <img
+                          src={sampleUrl}
+                          alt={`Sample ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
                       </button>
                     );
                   })}
@@ -619,133 +675,198 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             </div>
 
-            {/* Trigger Button & Edge Tolerance */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-800">Cutout Status</span>
-                <span className="text-xs font-bold text-teal-700">{bgStatusText}</span>
-              </div>
-
-              <button
-                onClick={() => runStandaloneBgRemoval()}
-                disabled={bgProcessing}
-                className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-bolt text-teal-400"></i>
-                <span>{bgProcessing ? 'Processing Cutout...' : 'Re-Run Background Removal'}</span>
-              </button>
-
-              <div>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="font-semibold text-slate-700">Hair & Edge Softness</span>
-                  <span className="font-mono font-bold text-teal-700">{bgEdgeTolerance}%</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={45}
-                  value={bgEdgeTolerance}
-                  onChange={(e) => setBgEdgeTolerance(parseInt(e.target.value, 10))}
-                  className="w-full cursor-pointer"
-                />
-              </div>
-            </div>
-
             {/* Replacement Background Color Swatches */}
             <div className="space-y-2.5">
-              <label className="block text-xs font-extrabold text-slate-800">
-                Output Backdrop (Transparent or Studio Solid)
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {BG_SWATCHES.map((swatch) => {
-                  const active = bgBackdropHex.toLowerCase() === swatch.hex.toLowerCase();
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
+                  Background Fill
+                </label>
+                <span className="text-xs font-mono text-cyan-700 font-bold">
+                  {bgFillColor === 'transparent' ? 'Transparent PNG' : bgFillColor}
+                </span>
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                {BG_SWATCHES.map((sw) => {
+                  const active = bgFillColor === sw.color;
                   return (
                     <button
-                      key={swatch.name}
-                      onClick={() => setBgBackdropHex(swatch.hex)}
-                      className={`min-h-[64px] p-2 rounded-2xl border text-[11px] font-bold flex flex-col items-center justify-center gap-1 transition ${
+                      key={sw.color}
+                      onClick={() => {
+                        setBgFillColor(sw.color);
+                        if (bgRawCutoutCanvasRef.current) {
+                          compositeCutoutWithFill(
+                            bgRawCutoutCanvasRef.current,
+                            sw.color,
+                            bgEdgeTolerance,
+                            bgRotation
+                          );
+                        }
+                      }}
+                      className={`h-11 rounded-2xl border transition flex items-center justify-center ${
+                        sw.checker ? 'checkerboard' : ''
+                      } ${
                         active
-                          ? 'border-teal-600 bg-teal-50/70 ring-2 ring-teal-500/20'
-                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                          ? 'ring-2 ring-cyan-500 border-slate-900 scale-105'
+                          : 'border-slate-300'
                       }`}
+                      style={!sw.checker ? { backgroundColor: sw.color } : undefined}
+                      title={sw.name}
                     >
-                      <span
-                        className={`w-6 h-6 rounded-full border ${
-                          swatch.hex === 'transparent' ? 'checkerboard' : ''
-                        }`}
-                        style={{
-                          backgroundColor: swatch.hex === 'transparent' ? undefined : swatch.hex,
-                          borderColor: swatch.border,
-                        }}
-                      />
-                      <span className="truncate max-w-full">{swatch.name}</span>
+                      {active && (
+                        <i
+                          className={`fa-solid fa-check text-xs ${
+                            sw.color === '#FFFFFF' || sw.color === 'transparent'
+                              ? 'text-slate-900'
+                              : 'text-white'
+                          }`}
+                        />
+                      )}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Download Buttons */}
-            <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => downloadBgRemovedImage('png')}
-                disabled={!bgCutoutDataUrl || bgProcessing}
-                className="min-h-[48px] px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-download"></i>
-                <span>Download PNG</span>
-              </button>
-              <button
-                onClick={() => downloadBgRemovedImage('jpg')}
-                disabled={!bgCutoutDataUrl || bgProcessing}
-                className="min-h-[48px] px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-file-image"></i>
-                <span>Download HD JPG</span>
-              </button>
+            {/* Edge Refinement + Rotation Controls */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+              <div>
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="font-bold text-slate-700">Hair & Edge Feathering</span>
+                  <span className="font-mono font-bold text-cyan-700">{bgEdgeTolerance}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={45}
+                  value={bgEdgeTolerance}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setBgEdgeTolerance(val);
+                    if (bgRawCutoutCanvasRef.current) {
+                      compositeCutoutWithFill(
+                        bgRawCutoutCanvasRef.current,
+                        bgFillColor,
+                        val,
+                        bgRotation
+                      );
+                    }
+                  }}
+                  className="w-full cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
+                <span className="text-xs font-bold text-slate-700">Rotate Photo:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleRotateBgCutout(-90)}
+                    className="min-h-[36px] px-3 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition"
+                  >
+                    <i className="fa-solid fa-rotate-left text-cyan-600"></i>
+                    <span>-90°</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRotateBgCutout(90)}
+                    className="min-h-[36px] px-3 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition"
+                  >
+                    <i className="fa-solid fa-rotate-right text-purple-600"></i>
+                    <span>+90°</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Download & Send to Studio Buttons */}
+            <div className="space-y-2.5 pt-1 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  onClick={() => downloadCutoutImage('png')}
+                  disabled={!bgCutoutDataUrl || bgProcessing}
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-download"></i>
+                  <span>Download PNG</span>
+                </button>
+                <button
+                  onClick={() => downloadCutoutImage('jpg')}
+                  disabled={!bgCutoutDataUrl || bgProcessing}
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-file-image text-cyan-400"></i>
+                  <span>Download JPG</span>
+                </button>
+              </div>
+
+              {onSendImageToStudio && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (bgCutoutDataUrl) {
+                      onSendImageToStudio(bgCutoutDataUrl);
+                    }
+                  }}
+                  disabled={!bgCutoutDataUrl || bgProcessing}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-300 text-cyan-900 font-extrabold text-xs transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-id-card text-cyan-600"></i>
+                  <span>Use This Cutout in Passport Photo Studio →</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Preview Column */}
+          {/* Before / After Preview Column */}
           <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="text-base font-extrabold text-slate-900">
-                  Before & After Cutout Preview
+                  Live Before & After Cutout Preview
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Full-resolution transparent cutout ready for download
+                  Status: <span className="font-bold text-cyan-700">{bgStatusText}</span>
                 </p>
               </div>
-              {bgProcessing && (
-                <span className="text-xs font-bold text-teal-600 flex items-center gap-1.5">
-                  <i className="fa-solid fa-circle-notch fa-spin"></i>
-                  <span>{bgProgress}%</span>
-                </span>
-              )}
+              <button
+                onClick={() => {
+                  if (bgSourceImageRef.current) {
+                    runDedicatedBgRemoval(
+                      bgSourceImageRef.current,
+                      bgFillColor,
+                      bgEdgeTolerance,
+                      bgRotation
+                    );
+                  }
+                }}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-rotate text-cyan-600"></i>
+                <span>Re-Run Cutout</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Original Image */}
+              {/* Original Image Card */}
               <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-3">
                 <span className="text-xs font-bold text-slate-500 mb-2">Original Photo</span>
-                <div className="w-full h-[300px] sm:h-[360px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-slate-200/80 p-2">
-                  {bgOriginalSrc ? (
+                <div className="w-full h-[280px] sm:h-[340px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-slate-200 p-2">
+                  {bgSourceSrc ? (
                     <img
-                      src={bgOriginalSrc}
+                      src={bgSourceSrc}
                       alt="Original"
                       className="max-h-full max-w-full object-contain rounded-lg"
                     />
                   ) : (
-                    <span className="text-xs text-slate-400">No image selected</span>
+                    <span className="text-xs text-slate-400">No photo selected</span>
                   )}
                 </div>
               </div>
 
-              {/* Background Removed Result */}
+              {/* Cutout Output Card */}
               <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-3">
-                <span className="text-xs font-bold text-teal-700 mb-2">Background Removed Result</span>
-                <div className="relative w-full h-[300px] sm:h-[360px] flex items-center justify-center overflow-hidden rounded-xl checkerboard border border-slate-300 p-2">
+                <span className="text-xs font-bold text-cyan-700 mb-2">Background Removed</span>
+                <div className="relative w-full h-[280px] sm:h-[340px] flex items-center justify-center overflow-hidden rounded-xl checkerboard border border-slate-200 p-2">
                   {bgCutoutDataUrl ? (
                     <img
                       src={bgCutoutDataUrl}
@@ -757,12 +878,12 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   )}
 
                   {bgProcessing && (
-                    <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-xs flex flex-col items-center justify-center text-white p-4 text-center gap-2">
-                      <i className="fa-solid fa-wand-magic-sparkles fa-bounce text-2xl text-teal-400"></i>
+                    <div className="absolute inset-0 bg-[#070a14]/80 backdrop-blur-xs flex flex-col items-center justify-center text-white p-4 text-center gap-2">
+                      <i className="fa-solid fa-wand-magic-sparkles fa-bounce text-2xl text-cyan-400"></i>
                       <div className="text-xs font-bold">{bgStatusText}</div>
                       <div className="w-40 h-2 bg-slate-700 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-teal-500 transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 transition-all duration-300"
                           style={{ width: `${bgProgress}%` }}
                         />
                       </div>
@@ -783,14 +904,14 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           {/* Controls Column */}
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-5 shadow-xs">
             <div>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-                <i className="fa-solid fa-wand-magic"></i> Studio Detail Engine
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-purple-800 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                <i className="fa-solid fa-wand-magic text-purple-600"></i> Studio Detail Engine
               </span>
               <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
                 Photo Clarity Enhancer
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Enhance facial sharpness, micro-contrast, and studio lighting while preserving natural skin tones and biometric accuracy.
+                Enhance facial sharpness, micro-contrast, rotation, and studio lighting while preserving natural skin tones.
               </p>
             </div>
 
@@ -798,7 +919,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             <div className="space-y-3">
               <button
                 onClick={() => clarityFileInputRef.current?.click()}
-                className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-upload"></i>
                 <span>Upload Photo to Enhance Clarity</span>
@@ -820,7 +941,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       <button
                         key={idx}
                         onClick={() => loadClarityImage(sampleUrl, true)}
-                        className="w-10 h-10 rounded-xl overflow-hidden border border-slate-300 hover:border-teal-600 transition"
+                        className="w-10 h-10 rounded-xl overflow-hidden border border-slate-300 hover:border-purple-500 transition"
                       >
                         <img src={sampleUrl} alt={`Sample ${idx + 1}`} className="w-full h-full object-cover" />
                       </button>
@@ -830,12 +951,12 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             </div>
 
-            {/* Clarity Sliders */}
+            {/* Clarity Sliders & Rotate */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
               <div>
                 <div className="flex justify-between text-xs mb-1">
                   <span className="font-bold text-slate-700">Detail & Sharpness (Unsharp Mask)</span>
-                  <span className="font-mono font-bold text-teal-700">{sharpnessAmount}%</span>
+                  <span className="font-mono font-bold text-cyan-700">{sharpnessAmount}%</span>
                 </div>
                 <input
                   type="range"
@@ -846,7 +967,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     const val = parseInt(e.target.value, 10);
                     setSharpnessAmount(val);
                     if (claritySourceImgRef.current) {
-                      runPhotoClarityPipeline(claritySourceImgRef.current, val, clarityContrast, luminanceBoost);
+                      runPhotoClarityPipeline(
+                        claritySourceImgRef.current,
+                        val,
+                        clarityContrast,
+                        luminanceBoost,
+                        clarityRotation
+                      );
                     }
                   }}
                   className="w-full cursor-pointer"
@@ -856,7 +983,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               <div>
                 <div className="flex justify-between text-xs mb-1">
                   <span className="font-bold text-slate-700">Micro-Contrast & Depth</span>
-                  <span className="font-mono font-bold text-teal-700">{clarityContrast}%</span>
+                  <span className="font-mono font-bold text-cyan-700">{clarityContrast}%</span>
                 </div>
                 <input
                   type="range"
@@ -867,7 +994,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     const val = parseInt(e.target.value, 10);
                     setClarityContrast(val);
                     if (claritySourceImgRef.current) {
-                      runPhotoClarityPipeline(claritySourceImgRef.current, sharpnessAmount, val, luminanceBoost);
+                      runPhotoClarityPipeline(
+                        claritySourceImgRef.current,
+                        sharpnessAmount,
+                        val,
+                        luminanceBoost,
+                        clarityRotation
+                      );
                     }
                   }}
                   className="w-full cursor-pointer"
@@ -877,7 +1010,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               <div>
                 <div className="flex justify-between text-xs mb-1">
                   <span className="font-bold text-slate-700">Studio Luminance Balance</span>
-                  <span className="font-mono font-bold text-teal-700">
+                  <span className="font-mono font-bold text-cyan-700">
                     {luminanceBoost > 0 ? `+${luminanceBoost}` : luminanceBoost}%
                   </span>
                 </div>
@@ -890,11 +1023,40 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     const val = parseInt(e.target.value, 10);
                     setLuminanceBoost(val);
                     if (claritySourceImgRef.current) {
-                      runPhotoClarityPipeline(claritySourceImgRef.current, sharpnessAmount, clarityContrast, val);
+                      runPhotoClarityPipeline(
+                        claritySourceImgRef.current,
+                        sharpnessAmount,
+                        clarityContrast,
+                        val,
+                        clarityRotation
+                      );
                     }
                   }}
                   className="w-full cursor-pointer"
                 />
+              </div>
+
+              {/* Rotate Left / Right inside Clarity Enhancer */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
+                <span className="text-xs font-bold text-slate-700">Rotate Photo:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleRotateClarity(-90)}
+                    className="min-h-[36px] px-3 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition"
+                  >
+                    <i className="fa-solid fa-rotate-left text-cyan-600"></i>
+                    <span>-90°</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRotateClarity(90)}
+                    className="min-h-[36px] px-3 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition"
+                  >
+                    <i className="fa-solid fa-rotate-right text-purple-600"></i>
+                    <span>+90°</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-1">
@@ -904,11 +1066,17 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     setClarityContrast(32);
                     setLuminanceBoost(8);
                     if (claritySourceImgRef.current) {
-                      runPhotoClarityPipeline(claritySourceImgRef.current, 70, 32, 8);
+                      runPhotoClarityPipeline(
+                        claritySourceImgRef.current,
+                        70,
+                        32,
+                        8,
+                        clarityRotation
+                      );
                     }
                     showToast('Applied Studio HD Clarity Preset!');
                   }}
-                  className="min-h-[42px] px-3 py-2 rounded-xl bg-teal-600 text-white font-bold text-xs transition"
+                  className="min-h-[42px] px-3 py-2 rounded-xl bg-[#070a14] text-cyan-300 font-bold text-xs transition"
                 >
                   Auto HD Preset
                 </button>
@@ -917,8 +1085,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     setSharpnessAmount(0);
                     setClarityContrast(0);
                     setLuminanceBoost(0);
+                    setClarityRotation(0);
                     if (claritySourceImgRef.current) {
-                      runPhotoClarityPipeline(claritySourceImgRef.current, 0, 0, 0);
+                      runPhotoClarityPipeline(claritySourceImgRef.current, 0, 0, 0, 0);
                     }
                   }}
                   className="min-h-[42px] px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs transition"
@@ -928,24 +1097,42 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             </div>
 
-            {/* Download Enhanced Result */}
-            <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => downloadEnhancedClarityImage('jpg')}
-                disabled={!clarityEnhancedUrl || clarityProcessing}
-                className="min-h-[48px] px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-download"></i>
-                <span>Download HD JPG</span>
-              </button>
-              <button
-                onClick={() => downloadEnhancedClarityImage('png')}
-                disabled={!clarityEnhancedUrl || clarityProcessing}
-                className="min-h-[48px] px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-file-image"></i>
-                <span>Download Lossless PNG</span>
-              </button>
+            {/* Download & Send to Passport Studio */}
+            <div className="space-y-2.5 pt-2 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  onClick={() => downloadEnhancedClarityImage('jpg')}
+                  disabled={!clarityEnhancedUrl || clarityProcessing}
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-download"></i>
+                  <span>Download HD JPG</span>
+                </button>
+                <button
+                  onClick={() => downloadEnhancedClarityImage('png')}
+                  disabled={!clarityEnhancedUrl || clarityProcessing}
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-file-image text-cyan-400"></i>
+                  <span>Download PNG</span>
+                </button>
+              </div>
+
+              {onSendImageToStudio && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (clarityEnhancedUrl) {
+                      onSendImageToStudio(clarityEnhancedUrl);
+                    }
+                  }}
+                  disabled={!clarityEnhancedUrl || clarityProcessing}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-900 font-extrabold text-xs transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-id-card text-purple-600"></i>
+                  <span>Use Enhanced Photo in Passport Studio →</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -964,7 +1151,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 <button
                   onClick={() => setClarityViewMode('split')}
                   className={`px-3 py-1.5 rounded-lg transition ${
-                    clarityViewMode === 'split' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                    clarityViewMode === 'split' ? 'bg-[#070a14] text-cyan-300 shadow-xs' : 'text-slate-600'
                   }`}
                 >
                   Side-by-Side
@@ -972,7 +1159,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 <button
                   onClick={() => setClarityViewMode('enhanced')}
                   className={`px-3 py-1.5 rounded-lg transition ${
-                    clarityViewMode === 'enhanced' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                    clarityViewMode === 'enhanced' ? 'bg-[#070a14] text-cyan-300 shadow-xs' : 'text-slate-600'
                   }`}
                 >
                   Enhanced Full
@@ -996,10 +1183,10 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 </div>
 
                 <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-3">
-                  <span className="text-xs font-bold text-teal-700 mb-2">
+                  <span className="text-xs font-bold text-cyan-700 mb-2">
                     Enhanced HD Clarity ({sharpnessAmount}% Sharpness)
                   </span>
-                  <div className="relative w-full h-[300px] sm:h-[360px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-teal-200 p-2">
+                  <div className="relative w-full h-[300px] sm:h-[360px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-cyan-200 p-2">
                     {clarityEnhancedUrl && (
                       <img
                         src={clarityEnhancedUrl}
@@ -1008,8 +1195,8 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       />
                     )}
                     {clarityProcessing && (
-                      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center text-white text-xs font-bold gap-2">
-                        <i className="fa-solid fa-circle-notch fa-spin text-teal-400"></i>
+                      <div className="absolute inset-0 bg-[#070a14]/70 backdrop-blur-xs flex items-center justify-center text-white text-xs font-bold gap-2">
+                        <i className="fa-solid fa-circle-notch fa-spin text-cyan-400"></i>
                         <span>Enhancing Clarity...</span>
                       </div>
                     )}
@@ -1018,7 +1205,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             ) : (
               <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-4">
-                <div className="relative w-full h-[380px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-teal-200 p-2">
+                <div className="relative w-full h-[380px] flex items-center justify-center overflow-hidden rounded-xl bg-white border border-cyan-200 p-2">
                   {clarityEnhancedUrl && (
                     <img
                       src={clarityEnhancedUrl}
@@ -1040,8 +1227,8 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <div className="lg:col-span-6 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs">
             <div>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-                <i className="fa-solid fa-qrcode"></i> Instant Scannable QR
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-cyan-800 bg-cyan-50 px-2.5 py-1 rounded-lg border border-cyan-200">
+                <i className="fa-solid fa-qrcode text-cyan-600"></i> Instant Scannable QR
               </span>
               <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
                 QR Code Generator
@@ -1072,7 +1259,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     }
                   }}
                   placeholder="https://example.com"
-                  className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
 
@@ -1157,7 +1344,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               <button
                 type="button"
                 onClick={() => handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel)}
-                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-qrcode"></i>
                 <span>Generate QR Code</span>
@@ -1172,7 +1359,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 <h2 className="text-base font-extrabold text-slate-900">Scannable QR Preview</h2>
                 <p className="text-xs text-slate-500">Test with any smartphone camera</p>
               </div>
-              <span className="text-xs font-mono font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg">
+              <span className="text-xs font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-lg">
                 {qrSize}×{qrSize}px
               </span>
             </div>
@@ -1198,9 +1385,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               <button
                 onClick={handleDownloadQrCode}
                 disabled={!qrDataUrl}
-                className="min-h-[48px] py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
+                className="min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
               >
-                <i className="fa-solid fa-download"></i>
+                <i className="fa-solid fa-download text-cyan-400"></i>
                 <span>Download QR Code (PNG)</span>
               </button>
               <button
@@ -1208,7 +1395,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 disabled={!qrInputUrl.trim()}
                 className="min-h-[48px] py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition flex items-center justify-center gap-2"
               >
-                <i className="fa-solid fa-copy"></i>
+                <i className="fa-solid fa-copy text-purple-600"></i>
                 <span>Copy Target Link</span>
               </button>
             </div>
@@ -1224,8 +1411,8 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           {/* Create Short Link Form */}
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs">
             <div>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-                <i className="fa-solid fa-link"></i> Custom Branded Shortener
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                <i className="fa-solid fa-link text-amber-600"></i> Custom Branded Shortener
               </span>
               <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
                 Link Shortener
@@ -1252,7 +1439,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   value={longUrlInput}
                   onChange={(e) => setLongUrlInput(e.target.value)}
                   placeholder="https://example.com/very-long-url-path"
-                  className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
 
@@ -1260,7 +1447,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   Custom Short Name / Slug
                 </label>
-                <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden focus-within:ring-2 focus-within:ring-teal-500">
+                <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden focus-within:ring-2 focus-within:ring-cyan-500">
                   <span className="px-3 py-3 text-xs font-mono text-slate-400 bg-slate-100 border-r border-slate-200 select-none truncate max-w-[140px]">
                     {baseOrigin.replace(/^https?:\/\//, '')}/
                   </span>
@@ -1280,7 +1467,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               <button
                 type="submit"
                 disabled={isCreatingLink}
-                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-wand-magic-sparkles"></i>
                 <span>{isCreatingLink ? 'Creating Short Link...' : 'Generate Short Link'}</span>
@@ -1288,14 +1475,14 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             </form>
 
             {latestCreatedLink && (
-              <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 space-y-3">
+              <div className="p-4 rounded-2xl bg-cyan-50 border border-cyan-200 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-teal-950">
+                  <span className="text-xs font-extrabold text-cyan-950">
                     Short Link Ready!
                   </span>
                   <span className="text-[11px] font-bold text-emerald-700">Active</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-white border border-teal-200 font-mono text-xs font-bold text-slate-900 break-all">
+                <div className="p-2.5 rounded-xl bg-white border border-cyan-200 font-mono text-xs font-bold text-slate-900 break-all">
                   {`${baseOrigin}/${latestCreatedLink.slug}`}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1307,7 +1494,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                         'Short link copied to clipboard!'
                       )
                     }
-                    className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold flex items-center justify-center gap-1.5"
+                    className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <i className="fa-solid fa-copy"></i>
                     <span>Copy Short Link</span>
@@ -1320,7 +1507,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       handleGenerateQrCode(qrUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel);
                       onSelectTool('qr-generator');
                     }}
-                    className="min-h-[40px] px-3 py-2 rounded-xl bg-white border border-teal-300 text-teal-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                    className="min-h-[40px] px-3 py-2 rounded-xl bg-white border border-cyan-300 text-cyan-800 text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <i className="fa-solid fa-qrcode"></i>
                     <span>QR</span>
@@ -1358,11 +1545,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   return (
                     <div
                       key={item.slug}
-                      className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50"
+                      className="p-4 rounded-2xl border border-slate-200 hover:border-cyan-300 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50"
                     >
                       <div className="min-w-0 space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-sm font-extrabold text-teal-700 break-all">
+                          <span className="font-mono text-sm font-extrabold text-cyan-700 break-all">
                             /{item.slug}
                           </span>
                           <span
@@ -1384,13 +1571,24 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                        <a
+                          href={item.originalUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 text-cyan-800 text-xs font-bold flex items-center gap-1.5"
+                          title="Open Target URL"
+                        >
+                          <i className="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
+                          <span>Open</span>
+                        </a>
+
                         <button
                           onClick={() => handleCopyText(fullShortUrl, `Copied ${fullShortUrl}`)}
                           className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1.5"
                           title="Copy Short URL"
                         >
-                          <i className="fa-solid fa-copy text-teal-600"></i>
+                          <i className="fa-solid fa-copy text-cyan-600"></i>
                           <span>Copy</span>
                         </button>
 
