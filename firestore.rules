@@ -1,0 +1,283 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrapAdmin() {
+      return isSignedIn() && request.auth.token.email == 'shriyanshsingh7581@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrapAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function userExists(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    // 3. Entity Validation Blueprints (Anti-Update-Gap)
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'createdAt', 'updatedAt']) &&
+             data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
+             data.phone is string && data.phone.size() >= 0 && data.phone.size() <= 30 &&
+             data.role is string && (data.role == 'user' || data.role == 'admin') &&
+             data.status is string && (data.status == 'active' || data.status == 'suspended') &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll([
+               'userId', 'userName', 'userEmail', 'phone', 'serviceType',
+               'countrySpec', 'branchLocation', 'appointmentDate', 'timeSlot',
+               'status', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'userName', 'userEmail', 'phone', 'serviceType',
+               'countrySpec', 'branchLocation', 'appointmentDate', 'timeSlot',
+               'status', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100 &&
+             data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 150 &&
+             data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 30 &&
+             data.serviceType is string && (
+               data.serviceType == 'Passport Photo Shoot' ||
+               data.serviceType == 'Visa Biometric Photo' ||
+               data.serviceType == 'Express Document Verification' ||
+               data.serviceType == 'OCI / PAN Card Photo' ||
+               data.serviceType == 'Full Family Studio Package'
+             ) &&
+             data.countrySpec is string && data.countrySpec.size() >= 1 && data.countrySpec.size() <= 100 &&
+             data.branchLocation is string && (
+               data.branchLocation == 'Kochi Main Studio — MG Road' ||
+               data.branchLocation == 'Trivandrum Technopark Center' ||
+               data.branchLocation == 'Calicut Mavoor Road Studio' ||
+               data.branchLocation == 'Online Express Verification'
+             ) &&
+             data.appointmentDate is string && data.appointmentDate.size() == 10 &&
+             data.timeSlot is string && (
+               data.timeSlot == '09:30 AM' ||
+               data.timeSlot == '10:30 AM' ||
+               data.timeSlot == '11:30 AM' ||
+               data.timeSlot == '02:00 PM' ||
+               data.timeSlot == '03:30 PM' ||
+               data.timeSlot == '05:00 PM'
+             ) &&
+             data.status is string && (
+               data.status == 'pending' ||
+               data.status == 'confirmed' ||
+               data.status == 'completed' ||
+               data.status == 'cancelled'
+             ) &&
+             data.notes is string && data.notes.size() >= 0 && data.notes.size() <= 500 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidVerification(data) {
+      return data.keys().hasAll([
+               'userId', 'userName', 'userEmail', 'documentType', 'documentNumber',
+               'country', 'photoPreviewDataUrl', 'status', 'remarks', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'userName', 'userEmail', 'documentType', 'documentNumber',
+               'country', 'photoPreviewDataUrl', 'status', 'remarks', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100 &&
+             data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 150 &&
+             data.documentType is string && (
+               data.documentType == 'Indian Passport' ||
+               data.documentType == 'PAN Card' ||
+               data.documentType == 'Aadhaar Card' ||
+               data.documentType == 'Driving License' ||
+               data.documentType == 'UAE / Schengen Visa Form' ||
+               data.documentType == 'OCI / Voter ID'
+             ) &&
+             data.documentNumber is string && data.documentNumber.size() >= 3 && data.documentNumber.size() <= 50 &&
+             data.country is string && data.country.size() >= 2 && data.country.size() <= 80 &&
+             data.photoPreviewDataUrl is string && data.photoPreviewDataUrl.size() >= 0 && data.photoPreviewDataUrl.size() <= 250000 &&
+             data.status is string && (
+               data.status == 'pending' ||
+               data.status == 'under_review' ||
+               data.status == 'verified' ||
+               data.status == 'rejected'
+             ) &&
+             data.remarks is string && data.remarks.size() >= 0 && data.remarks.size() <= 500 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidSavedPhoto(data) {
+      return data.keys().hasAll([
+               'userId', 'presetName', 'dimensionsText', 'bgColor', 'previewDataUrl', 'createdAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'presetName', 'dimensionsText', 'bgColor', 'previewDataUrl', 'createdAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.presetName is string && data.presetName.size() >= 1 && data.presetName.size() <= 100 &&
+             data.dimensionsText is string && data.dimensionsText.size() >= 1 && data.dimensionsText.size() <= 80 &&
+             data.bgColor is string && data.bgColor.size() >= 1 && data.bgColor.size() <= 30 &&
+             data.previewDataUrl is string && data.previewDataUrl.size() >= 10 && data.previewDataUrl.size() <= 250000 &&
+             data.createdAt is timestamp;
+    }
+
+    // 4. Collection Rules (No get/exists in allow list to prevent O(n) cost attacks!)
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isBootstrapAdmin());
+
+      allow create: if isSignedIn() &&
+                    isValidId(userId) &&
+                    isValidUser(incoming()) &&
+                    incoming().uid == request.auth.uid &&
+                    userId == request.auth.uid &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time &&
+                    incoming().status == 'active' &&
+                    (incoming().role == 'user' || (incoming().role == 'admin' && isBootstrapAdmin()));
+
+      allow update: if isSignedIn() &&
+                    isValidId(userId) &&
+                    isValidUser(incoming()) &&
+                    incoming().uid == existing().uid &&
+                    incoming().email == existing().email &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    (
+                      // Action 1: Owner updates displayName or phone (cannot change role or status)
+                      (isOwner(userId) &&
+                       existing().status == 'active' &&
+                       incoming().role == existing().role &&
+                       incoming().status == existing().status &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'updatedAt'])) ||
+                      // Action 2: Admin updates role, status, displayName, or phone
+                      (isAdmin() &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'role', 'status', 'updatedAt']))
+                    );
+
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // APPOINTMENTS COLLECTION
+    match /appointments/{appointmentId} {
+      allow get: if isValidId(appointmentId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isBootstrapAdmin());
+
+      allow create: if isSignedIn() &&
+                    isValidId(appointmentId) &&
+                    isValidAppointment(incoming()) &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time &&
+                    (incoming().status == 'pending' || isAdmin()) &&
+                    userExists(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+                    isValidId(appointmentId) &&
+                    isValidAppointment(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    (
+                      // Action 1: Owner cancels or updates notes while not in terminal state
+                      (existing().userId == request.auth.uid &&
+                       existing().status != 'completed' &&
+                       existing().status != 'cancelled' &&
+                       (incoming().status == existing().status || incoming().status == 'cancelled') &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'updatedAt'])) ||
+                      // Action 2: Admin manages appointment status, schedule, or notes
+                      (isAdmin() &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'appointmentDate', 'timeSlot', 'branchLocation', 'updatedAt']))
+                    );
+
+      allow delete: if isValidId(appointmentId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // DOCUMENT VERIFICATIONS COLLECTION
+    match /verifications/{verificationId} {
+      allow get: if isValidId(verificationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isBootstrapAdmin());
+
+      allow create: if isSignedIn() &&
+                    isValidId(verificationId) &&
+                    isValidVerification(incoming()) &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time &&
+                    (incoming().status == 'pending' || isAdmin()) &&
+                    userExists(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+                    isValidId(verificationId) &&
+                    isValidVerification(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    (
+                      // Action 1: Owner updates remarks or documentNumber while still pending
+                      (existing().userId == request.auth.uid &&
+                       existing().status == 'pending' &&
+                       incoming().status == 'pending' &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['documentNumber', 'remarks', 'updatedAt'])) ||
+                      // Action 2: Admin processes verification status and remarks
+                      (isAdmin() &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'remarks', 'updatedAt']))
+                    );
+
+      allow delete: if isValidId(verificationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // SAVED PHOTOS COLLECTION
+    match /savedPhotos/{photoId} {
+      allow get: if isValidId(photoId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isBootstrapAdmin());
+
+      allow create: if isSignedIn() &&
+                    isValidId(photoId) &&
+                    isValidSavedPhoto(incoming()) &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().createdAt == request.time &&
+                    userExists(request.auth.uid);
+
+      allow update: if false;
+
+      allow delete: if isValidId(photoId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+  }
+}

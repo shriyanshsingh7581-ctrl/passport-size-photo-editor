@@ -1,0 +1,332 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Registered user profile in PassportStudio Pro with role-based access and status tracking.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full name of the user",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the user",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number of the user",
+          "minLength": 0,
+          "maxLength": 30
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Access role of the user"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "suspended"],
+          "description": "Account status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["uid", "displayName", "email", "phone", "role", "status", "createdAt", "updatedAt"]
+    },
+    "Appointment": {
+      "title": "Passport & Studio Appointment",
+      "description": "Scheduled studio or passport consultation appointment booked by a user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the user who booked the appointment",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Full name of the applicant",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the applicant",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number for SMS/call updates",
+          "minLength": 5,
+          "maxLength": 30
+        },
+        "serviceType": {
+          "type": "string",
+          "enum": [
+            "Passport Photo Shoot",
+            "Visa Biometric Photo",
+            "Express Document Verification",
+            "OCI / PAN Card Photo",
+            "Full Family Studio Package"
+          ],
+          "description": "Type of studio or verification service requested"
+        },
+        "countrySpec": {
+          "type": "string",
+          "description": "Target country passport/visa specification",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "branchLocation": {
+          "type": "string",
+          "enum": [
+            "Kochi Main Studio — MG Road",
+            "Trivandrum Technopark Center",
+            "Calicut Mavoor Road Studio",
+            "Online Express Verification"
+          ],
+          "description": "Selected studio center or online desk"
+        },
+        "appointmentDate": {
+          "type": "string",
+          "description": "Scheduled date in YYYY-MM-DD format",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "timeSlot": {
+          "type": "string",
+          "enum": [
+            "09:30 AM",
+            "10:30 AM",
+            "11:30 AM",
+            "02:00 PM",
+            "03:30 PM",
+            "05:00 PM"
+          ],
+          "description": "Scheduled time slot"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "completed", "cancelled"],
+          "description": "Current status of the appointment"
+        },
+        "notes": {
+          "type": "string",
+          "description": "User notes or admin remarks",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update"
+        }
+      },
+      "required": [
+        "userId",
+        "userName",
+        "userEmail",
+        "phone",
+        "serviceType",
+        "countrySpec",
+        "branchLocation",
+        "appointmentDate",
+        "timeSlot",
+        "status",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DocumentVerification": {
+      "title": "Document Verification Request",
+      "description": "Official identity or travel document submitted for biometric compliance and verification.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the user who submitted the document",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Applicant full name on the document",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Applicant email address",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "documentType": {
+          "type": "string",
+          "enum": [
+            "Indian Passport",
+            "PAN Card",
+            "Aadhaar Card",
+            "Driving License",
+            "UAE / Schengen Visa Form",
+            "OCI / Voter ID"
+          ],
+          "description": "Category of document being verified"
+        },
+        "documentNumber": {
+          "type": "string",
+          "description": "Official reference or ID number on the document",
+          "minLength": 3,
+          "maxLength": 50
+        },
+        "country": {
+          "type": "string",
+          "description": "Issuing or destination country",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "photoPreviewDataUrl": {
+          "type": "string",
+          "description": "Compact base64 thumbnail of the passport photo or document proof",
+          "minLength": 0,
+          "maxLength": 250000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "under_review", "verified", "rejected"],
+          "description": "Verification workflow state"
+        },
+        "remarks": {
+          "type": "string",
+          "description": "Verification officer remarks or rejection reason",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of submission"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of review"
+        }
+      },
+      "required": [
+        "userId",
+        "userName",
+        "userEmail",
+        "documentType",
+        "documentNumber",
+        "country",
+        "photoPreviewDataUrl",
+        "status",
+        "remarks",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SavedPhoto": {
+      "title": "Saved Passport Photo",
+      "description": "Processed passport or ID photo saved by the user to their studio account.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the owner",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "presetName": {
+          "type": "string",
+          "description": "Country preset name",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "dimensionsText": {
+          "type": "string",
+          "description": "Formatted size string (e.g. 35 x 45 mm @ 300 DPI)",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "bgColor": {
+          "type": "string",
+          "description": "Background color hex or transparent",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "previewDataUrl": {
+          "type": "string",
+          "description": "Compact base64 image preview",
+          "minLength": 10,
+          "maxLength": 250000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when saved"
+        }
+      },
+      "required": [
+        "userId",
+        "presetName",
+        "dimensionsText",
+        "bgColor",
+        "previewDataUrl",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores registered user profiles, role assignments, and account status."
+    },
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Stores studio and passport photo appointments for tracking and management."
+    },
+    "/verifications/{verificationId}": {
+      "schema": { "$ref": "#/entities/DocumentVerification" },
+      "description": "Stores document verification requests and biometric compliance reviews."
+    },
+    "/savedPhotos/{photoId}": {
+      "schema": { "$ref": "#/entities/SavedPhoto" },
+      "description": "Stores user-created passport photos saved from the Studio workspace."
+    }
+  }
+}

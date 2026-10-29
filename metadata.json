@@ -1,0 +1,6 @@
+{
+  "name": "PassportStudio Pro — Official Passport & ID Photo Maker",
+  "description": "AI Background Removal | Official Country Sizes | 300 DPI HD Downloads | 6×4 Print Sheets, User Dashboard, Appointment Booking, Document Verification, and Admin Panel.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
