@@ -1,31 +1,47 @@
 @import "tailwindcss";
 
 :root {
-  --brand-primary: #0d9488;
-  --brand-secondary: #0f172a;
+  --brand-primary: #06b6d4;
+  --brand-secondary: #070a14;
+  --brand-accent: #a855f7;
 }
 
-@theme {
-  --font-sans: 'Plus Jakarta Sans', 'Noto Sans Malayalam', sans-serif;
-  --font-malayalam: 'Noto Sans Malayalam', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-  --color-brand-50: #f0fdfa;
-  --color-brand-100: #ccfbf1;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: var(--brand-primary);
-  --color-brand-700: #0f766e;
-  --color-brand-900: var(--brand-secondary);
+body {
+  font-family: 'Inter', 'Noto Sans Malayalam', sans-serif;
+}
+
+.font-malayalam {
+  font-family: 'Noto Sans Malayalam', 'Inter', sans-serif;
 }
 
 .checkerboard {
-  background-image: 
-    linear-gradient(45deg, #cbd5e1 25%, transparent 25%), 
-    linear-gradient(-45deg, #cbd5e1 25%, transparent 25%), 
-    linear-gradient(45deg, transparent 75%, #cbd5e1 75%), 
-    linear-gradient(-45deg, transparent 75%, #cbd5e1 75%);
-  background-size: 18px 18px;
-  background-position: 0 0, 0 9px, 9px -9px, -9px 0px;
-  background-color: #f8fafc;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(-45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e2e8f0 75%),
+    linear-gradient(-45deg, transparent 75%, #e2e8f0 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* Logo-inspired Cyan -> Blue -> Purple -> Pink/Amber Gradient Utilities */
+.malnadu-gradient-bg {
+  background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 35%, #9333ea 70%, #ec4899 100%);
+}
+
+.malnadu-gradient-border {
+  background: linear-gradient(90deg, #00d2ff 0%, #3b82f6 30%, #a855f7 65%, #f59e0b 100%);
+}
+
+.malnadu-text-gradient {
+  background: linear-gradient(90deg, #22d3ee 0%, #60a5fa 35%, #c084fc 70%, #fbbf24 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+input[type="range"] {
+  accent-color: #06b6d4;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -34,14 +50,4 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
-}
-
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: #f1f5f9; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-input[type="range"] {
-  accent-color: var(--brand-primary);
-  height: 6px;
 }

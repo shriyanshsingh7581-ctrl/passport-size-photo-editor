@@ -54,9 +54,24 @@ import { UserDashboard } from './components/UserDashboard';
 import { ToolsHub, ActiveToolTab } from './components/ToolsHub';
 import { AdminPanel } from './components/AdminPanel';
 
-const LOCAL_SETTINGS_KEY = 'malnadu_media_site_settings_v1';
+const LOCAL_SETTINGS_KEY = 'malnadu_media_site_settings_v2';
 const LOCAL_SHORTLINKS_KEY = 'malnadu_media_short_links_v1';
 const LOCAL_USERS_KEY = 'malnadu_media_users_v1';
+
+export const PHOTO_COUNT_OPTIONS: Array<'auto' | number> = [
+  'auto',
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  12,
+];
 
 const DEFAULT_DEMO_USERS: UserProfile[] = [
   {
@@ -133,7 +148,13 @@ export default function App() {
     try {
       const saved = localStorage.getItem(LOCAL_SETTINGS_KEY);
       if (saved) {
-        return { ...DEFAULT_SITE_SETTINGS, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        return {
+          ...DEFAULT_SITE_SETTINGS,
+          ...parsed,
+          logoType: parsed.logoUrl ? parsed.logoType : DEFAULT_SITE_SETTINGS.logoType,
+          logoUrl: parsed.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+        };
       }
     } catch {
       // ignore
@@ -191,6 +212,8 @@ export default function App() {
   const [customWidthInput, setCustomWidthInput] = useState('35');
   const [customHeightInput, setCustomHeightInput] = useState('45');
   const [dpi, setDpi] = useState(300);
+  // Custom Photo Count on Sheet ('auto' or exact number: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12)
+  const [customPhotoCount, setCustomPhotoCount] = useState<'auto' | number>('auto');
 
   // Studio Background & Cutout State
   const [bgColor, setBgColor] = useState('#FFFFFF');
@@ -254,8 +277,8 @@ export default function App() {
   // =========================================================================
   useEffect(() => {
     document.title = siteSettings.seoTitle || `${siteSettings.brandName} — Passport Photo Editor & AI Photo Tools`;
-    document.documentElement.style.setProperty('--brand-primary', siteSettings.primaryColor || '#0d9488');
-    document.documentElement.style.setProperty('--brand-secondary', siteSettings.secondaryColor || '#0f172a');
+    document.documentElement.style.setProperty('--brand-primary', siteSettings.primaryColor || '#06b6d4');
+    document.documentElement.style.setProperty('--brand-secondary', siteSettings.secondaryColor || '#070a14');
 
     try {
       localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(siteSettings));
@@ -367,7 +390,12 @@ export default function App() {
       (snap) => {
         if (snap.exists()) {
           const data = snap.data() as Partial<SiteSettings>;
-          setSiteSettings((prev) => ({ ...prev, ...data }));
+          setSiteSettings((prev) => ({
+            ...prev,
+            ...data,
+            logoType: data.logoUrl ? (data.logoType || 'url') : prev.logoType,
+            logoUrl: data.logoUrl || prev.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+          }));
         }
       },
       () => {
@@ -647,40 +675,84 @@ export default function App() {
   );
 
   // =========================================================================
-  // 6. EXACT 6x4 INCH PRINT SHEET & PASSPORT CANVAS RENDERING
+  // 6. EXACT 6x4 INCH PRINT SHEET & PASSPORT CANVAS RENDERING (2, 3, 4, 5, 6, 7, 8, 9+ PHOTOS)
   // =========================================================================
   const getExact6x4GridConfig = useCallback(() => {
     const sheetDpi = 300;
-    const photoW = Math.round((widthMm / 25.4) * sheetDpi);
-    const photoH = Math.round((heightMm / 25.4) * sheetDpi);
+    const rawPhotoW = Math.round((widthMm / 25.4) * sheetDpi);
+    const rawPhotoH = Math.round((heightMm / 25.4) * sheetDpi);
     const sheetW = 1800;
     const sheetH = 1200;
 
-    const preset = COUNTRY_PRESETS.find((p) => p.id === selectedPresetId);
-    if (preset && preset.cols && preset.rows) {
-      return {
-        cols: preset.cols,
-        rows: preset.rows,
-        total: preset.cols * preset.rows,
-        sheetW,
-        sheetH,
-        photoW,
-        photoH,
-      };
+    let cols = 4;
+    let rows = 2;
+    let total = 8;
+
+    if (customPhotoCount !== 'auto') {
+      total = customPhotoCount;
+      if (total === 1) {
+        cols = 1;
+        rows = 1;
+      } else if (total === 2) {
+        cols = 2;
+        rows = 1;
+      } else if (total === 3) {
+        cols = 3;
+        rows = 1;
+      } else if (total === 4) {
+        if (rawPhotoW * 4 + 100 <= sheetW) {
+          cols = 4;
+          rows = 1;
+        } else {
+          cols = 2;
+          rows = 2;
+        }
+      } else if (total === 5 || total === 6) {
+        cols = 3;
+        rows = 2;
+      } else if (total === 7 || total === 8) {
+        cols = 4;
+        rows = 2;
+      } else if (total === 9 || total === 10) {
+        cols = 5;
+        rows = 2;
+      } else {
+        cols = 4;
+        rows = Math.ceil(total / 4);
+      }
+    } else {
+      const preset = COUNTRY_PRESETS.find((p) => p.id === selectedPresetId);
+      if (preset && preset.cols && preset.rows) {
+        cols = preset.cols;
+        rows = preset.rows;
+        total = preset.cols * preset.rows;
+      } else {
+        cols = Math.max(1, Math.floor(sheetW / rawPhotoW));
+        rows = Math.max(1, Math.floor(sheetH / rawPhotoH));
+        total = cols * rows;
+      }
     }
 
-    const cols = Math.max(1, Math.floor(sheetW / photoW));
-    const rows = Math.max(1, Math.floor(sheetH / photoH));
+    // Safe fit scaling so even 9, 10, or 12 photos fit cleanly inside 1800x1200 with margins
+    const minMargin = 48;
+    const minGap = 18;
+    const maxAvailPerCol = (sheetW - minMargin * 2 - Math.max(0, cols - 1) * minGap) / cols;
+    const maxAvailPerRow = (sheetH - minMargin * 2 - Math.max(0, rows - 1) * minGap) / rows;
+    const scaleFactor = Math.min(1, maxAvailPerCol / rawPhotoW, maxAvailPerRow / rawPhotoH);
+
+    const photoW = Math.round(rawPhotoW * scaleFactor);
+    const photoH = Math.round(rawPhotoH * scaleFactor);
+
     return {
       cols,
       rows,
-      total: cols * rows,
+      total,
       sheetW,
       sheetH,
       photoW,
       photoH,
     };
-  }, [widthMm, heightMm, selectedPresetId]);
+  }, [widthMm, heightMm, selectedPresetId, customPhotoCount]);
 
   const renderPassportToCanvas = useCallback(
     (targetCanvas: HTMLCanvasElement, includeBiometricOverlay = false) => {
@@ -722,7 +794,7 @@ export default function App() {
 
       if (includeBiometricOverlay) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(13, 148, 136, 0.6)';
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.75)';
         ctx.lineWidth = Math.max(1.5, pxW * 0.003);
         ctx.setLineDash([6, 6]);
         ctx.beginPath();
@@ -751,7 +823,7 @@ export default function App() {
       const singleClean = document.createElement('canvas');
       renderPassportToCanvas(singleClean, false);
 
-      const { cols, rows, sheetW, sheetH, photoW, photoH } = getExact6x4GridConfig();
+      const { cols, rows, total, sheetW, sheetH, photoW, photoH } = getExact6x4GridConfig();
 
       sheetCanvas.width = sheetW;
       sheetCanvas.height = sheetH;
@@ -761,18 +833,23 @@ export default function App() {
 
       const availW = sheetW - cols * photoW;
       const availH = sheetH - rows * photoH;
-      const gapX = cols > 1 ? Math.min(24, Math.floor(availW / (cols + 1))) : 0;
-      const gapY = rows > 1 ? Math.min(24, Math.floor(availH / (rows + 1))) : 0;
+      const gapX = cols > 1 ? Math.min(28, Math.max(16, Math.floor(availW / (cols + 1)))) : 0;
+      const gapY = rows > 1 ? Math.min(28, Math.max(16, Math.floor(availH / (rows + 1)))) : 0;
 
-      const totalGridW = cols * photoW + (cols - 1) * gapX;
       const totalGridH = rows * photoH + (rows - 1) * gapY;
-
-      const startX = Math.round((sheetW - totalGridW) / 2);
       const startY = Math.round((sheetH - totalGridH) / 2);
 
+      let drawnCount = 0;
       for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const x = startX + c * (photoW + gapX);
+        const remaining = total - drawnCount;
+        const itemsInThisRow = Math.min(cols, remaining);
+        if (itemsInThisRow <= 0) break;
+
+        const rowGridW = itemsInThisRow * photoW + (itemsInThisRow - 1) * gapX;
+        const rowStartX = Math.round((sheetW - rowGridW) / 2);
+
+        for (let c = 0; c < itemsInThisRow; c++) {
+          const x = rowStartX + c * (photoW + gapX);
           const y = startY + r * (photoH + gapY);
           ctx.drawImage(singleClean, x, y, photoW, photoH);
 
@@ -781,6 +858,7 @@ export default function App() {
             ctx.lineWidth = 2;
             ctx.strokeRect(x, y, photoW, photoH);
           }
+          drawnCount++;
         }
       }
     },
@@ -818,6 +896,7 @@ export default function App() {
     previewMode,
     widthMm,
     heightMm,
+    customPhotoCount,
   ]);
 
   useEffect(() => {
@@ -838,6 +917,7 @@ export default function App() {
     showBiometricGrid,
     showCutMarks,
     previewMode,
+    customPhotoCount,
     activeRoute,
     applyPixelColorGrading,
     renderAll,
@@ -1702,39 +1782,49 @@ export default function App() {
   };
 
   // =========================================================================
-  // 12. RENDER BRAND LOGO HELPER (MALNADU MEDIA)
+  // 12. RENDER BRAND LOGO HELPER (MALNADU MEDIA BUTTERFLY-APERTURE LOGO)
   // =========================================================================
-  const renderBrandLogo = (darkText = true) => {
+  const renderBrandLogo = (onLightSurface = false) => {
     const parts = siteSettings.brandName.trim().split(' ');
     const firstWord = parts[0] || 'MALNADU';
     const restWords = parts.slice(1).join(' ') || 'MEDIA';
+    const activeLogoSrc =
+      siteSettings.logoUrl || '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg';
 
     return (
       <div className="flex items-center gap-2.5">
-        {siteSettings.logoType === 'url' && siteSettings.logoUrl ? (
-          <img
-            src={siteSettings.logoUrl}
-            alt={siteSettings.brandName}
-            className="w-9 h-9 rounded-xl object-contain bg-white border border-slate-200 p-0.5 shrink-0"
-          />
+        {siteSettings.logoType === 'url' && activeLogoSrc ? (
+          <div className="h-10 sm:h-11 px-1.5 py-0.5 rounded-xl bg-[#070a14] border border-cyan-500/40 shadow-md flex items-center justify-center shrink-0 overflow-hidden">
+            <img
+              src={activeLogoSrc}
+              alt={siteSettings.brandName}
+              className="h-full w-auto max-w-[115px] sm:max-w-[140px] object-contain"
+            />
+          </div>
         ) : (
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-extrabold text-xs tracking-tighter shadow-sm shrink-0 relative overflow-hidden"
-            style={{ backgroundColor: siteSettings.primaryColor || '#0d9488' }}
-          >
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-extrabold text-xs tracking-tighter shadow-md shrink-0 relative overflow-hidden malnadu-gradient-bg">
             <span className="z-10">{siteSettings.logoText || 'MM'}</span>
             <span className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-white/15"></span>
           </div>
         )}
         <div className="leading-tight">
-          <span
+          <div
             className={`font-extrabold text-sm sm:text-base tracking-tight ${
-              darkText ? 'text-slate-900' : 'text-white'
+              onLightSurface ? 'text-slate-900' : 'text-white'
             }`}
           >
             {firstWord}{' '}
-            <span style={{ color: siteSettings.primaryColor || '#0d9488' }}>{restWords}</span>
-          </span>
+            <span className="bg-gradient-to-r from-cyan-400 via-purple-400 to-amber-400 bg-clip-text text-transparent">
+              {restWords}
+            </span>
+          </div>
+          <div
+            className={`text-[9px] font-bold tracking-widest uppercase hidden sm:block ${
+              onLightSurface ? 'text-slate-500' : 'text-cyan-300/80'
+            }`}
+          >
+            {siteSettings.brandTagline || 'CAPTURING | CREATING | CONNECTING'}
+          </div>
         </div>
       </div>
     );
@@ -1745,17 +1835,17 @@ export default function App() {
   // =========================================================================
   if (redirectState.status === 'redirecting') {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
-        <div className="w-14 h-14 rounded-2xl bg-teal-600 flex items-center justify-center text-2xl shadow-lg">
+      <div className="min-h-screen bg-[#070a14] text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <div className="w-14 h-14 rounded-2xl malnadu-gradient-bg flex items-center justify-center text-2xl shadow-lg">
           <i className="fa-solid fa-arrow-up-right-from-square fa-beat-fade"></i>
         </div>
         <h1 className="text-xl font-extrabold">{siteSettings.brandName} Short Link Redirect</h1>
         <p className="text-xs text-slate-400 max-w-md">
-          Redirecting you to <span className="font-mono text-teal-400 break-all">{redirectState.targetUrl}</span>...
+          Redirecting you to <span className="font-mono text-cyan-400 break-all">{redirectState.targetUrl}</span>...
         </p>
         <a
           href={redirectState.targetUrl}
-          className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition"
+          className="px-5 py-2.5 rounded-xl malnadu-gradient-bg text-white text-xs font-bold transition"
         >
           Click here if you are not redirected automatically
         </a>
@@ -1765,7 +1855,7 @@ export default function App() {
 
   if (redirectState.status === 'disabled') {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
+      <div className="min-h-screen bg-[#070a14] text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
         <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-2xl">
           <i className="fa-solid fa-link-slash"></i>
         </div>
@@ -1778,7 +1868,7 @@ export default function App() {
             window.history.pushState({}, '', '/');
             setRedirectState({ checking: false, slug: null, status: 'none' });
           }}
-          className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition"
+          className="px-5 py-2.5 rounded-xl malnadu-gradient-bg text-white text-xs font-bold transition"
         >
           Open {siteSettings.brandName} Studio
         </button>
@@ -1788,7 +1878,7 @@ export default function App() {
 
   if (redirectState.status === 'not_found') {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
+      <div className="min-h-screen bg-[#070a14] text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
         <div className="w-14 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center text-2xl">
           <i className="fa-solid fa-triangle-exclamation"></i>
         </div>
@@ -1801,7 +1891,7 @@ export default function App() {
             window.history.pushState({}, '', '/');
             setRedirectState({ checking: false, slug: null, status: 'none' });
           }}
-          className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition"
+          className="px-5 py-2.5 rounded-xl malnadu-gradient-bg text-white text-xs font-bold transition"
         >
           Go to {siteSettings.brandName} Home
         </button>
@@ -1827,26 +1917,29 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100/70 text-slate-800 font-sans pb-20 lg:pb-0">
-      {/* Top App Bar */}
-      <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 h-15 flex items-center">
-        <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 flex items-center justify-between gap-3">
-          {/* Zone 1: MALNADU MEDIA Brand Wordmark */}
+    <div className="min-h-screen flex flex-col bg-slate-950/[0.03] text-slate-800 font-sans pb-20 lg:pb-0">
+      {/* Top App Bar — Obsidian Midnight matching the MALNADU MEDIA Butterfly-Camera Logo */}
+      <header
+        className="sticky top-0 z-30 border-b border-cyan-500/25 shadow-lg"
+        style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
+      >
+        <div className="max-w-6xl w-full mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-3">
+          {/* Zone 1: MALNADU MEDIA Brand Logo & Wordmark */}
           <button
             onClick={() => setActiveRoute('studio')}
             className="text-left whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center"
           >
-            {renderBrandLogo(true)}
+            {renderBrandLogo(false)}
           </button>
 
           {/* Zone 2: Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1.5 text-xs font-bold text-slate-600">
+          <nav className="hidden lg:flex items-center gap-1.5 text-xs font-bold text-slate-300">
             <button
               onClick={() => setActiveRoute('studio')}
               className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                 activeRoute === 'studio'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                  : 'hover:bg-white/10 hover:text-white'
               }`}
             >
               Passport Studio
@@ -1857,8 +1950,8 @@ export default function App() {
                 onClick={() => openToolSection('bg-remover')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                   activeRoute === 'tools' && activeToolTab === 'bg-remover'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                    : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
                 BG Remover
@@ -1870,8 +1963,8 @@ export default function App() {
                 onClick={() => openToolSection('clarity-enhancer')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                   activeRoute === 'tools' && activeToolTab === 'clarity-enhancer'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                    : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
                 Clarity Enhancer
@@ -1883,8 +1976,8 @@ export default function App() {
                 onClick={() => openToolSection('qr-generator')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                   activeRoute === 'tools' && activeToolTab === 'qr-generator'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                    : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
                 QR Generator
@@ -1896,8 +1989,8 @@ export default function App() {
                 onClick={() => openToolSection('link-shortener')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                   activeRoute === 'tools' && activeToolTab === 'link-shortener'
-                    ? 'bg-teal-50 text-teal-700'
-                    : 'hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                    : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
                 Link Shortener
@@ -1908,8 +2001,8 @@ export default function App() {
               onClick={() => openDashboardSection('overview')}
               className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
                 activeRoute === 'dashboard'
-                  ? 'bg-teal-50 text-teal-700'
-                  : 'hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                  : 'hover:bg-white/10 hover:text-white'
               }`}
             >
               Dashboard
@@ -1919,11 +2012,11 @@ export default function App() {
               onClick={() => setActiveRoute('admin')}
               className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeRoute === 'admin'
-                  ? 'bg-slate-900 text-white'
-                  : 'hover:bg-slate-100 text-slate-700'
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-sm'
+                  : 'hover:bg-white/10 text-amber-300'
               }`}
             >
-              <i className="fa-solid fa-shield-halved text-teal-600"></i>
+              <i className="fa-solid fa-shield-halved text-amber-400"></i>
               <span>Admin Panel</span>
             </button>
           </nav>
@@ -1937,17 +2030,17 @@ export default function App() {
                   setAuthError(null);
                   setShowAuthModal(true);
                 }}
-                className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap"
+                className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-white/10 hover:bg-white/20 border border-cyan-400/30 text-white font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap"
               >
-                <i className="fa-solid fa-user"></i>
+                <i className="fa-solid fa-user text-cyan-400"></i>
                 <span>Login / Sign Up</span>
               </button>
             ) : (
               <button
                 onClick={() => openDashboardSection('overview')}
-                className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition hidden sm:flex items-center gap-1.5"
+                className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-white/10 hover:bg-white/15 border border-cyan-400/30 text-white font-bold text-xs transition hidden sm:flex items-center gap-1.5"
               >
-                <i className="fa-solid fa-circle-user text-teal-600"></i>
+                <i className="fa-solid fa-circle-user text-cyan-400"></i>
                 <span className="max-w-[110px] truncate">{userProfile?.displayName || 'Account'}</span>
               </button>
             )}
@@ -1955,7 +2048,7 @@ export default function App() {
             {activeRoute === 'studio' && (
               <button
                 onClick={() => setShowExportModal(true)}
-                className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-md active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <i className="fa-solid fa-download"></i>
                 <span>Export HD</span>
@@ -1963,19 +2056,21 @@ export default function App() {
             )}
           </div>
         </div>
+        {/* Logo Spectrum Accent Bar */}
+        <div className="h-[2px] w-full bg-gradient-to-r from-cyan-400 via-blue-500 via-purple-500 to-amber-400"></div>
       </header>
 
       {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE */}
       {activeRoute === 'studio' && (
         <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-3.5 sm:py-6 space-y-4">
-          {/* Quick Feature Suite Strip (Direct access to BG Remover, Clarity Enhancer, QR Generator, Link Shortener) */}
+          {/* Quick Feature Suite Strip (Styled with the Butterfly-Aperture Logo Colors) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             {siteSettings.enableBgRemover && (
               <button
                 onClick={() => openToolSection('bg-remover')}
-                className="bg-white hover:bg-teal-50/50 border border-slate-200/90 hover:border-teal-300 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs"
+                className="bg-white hover:bg-cyan-50/40 border border-slate-200/90 hover:border-cyan-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
               >
-                <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/15 to-blue-600/15 text-cyan-600 border border-cyan-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
                   <i className="fa-solid fa-wand-magic-sparkles"></i>
                 </div>
                 <div className="min-w-0">
@@ -1988,9 +2083,9 @@ export default function App() {
             {siteSettings.enableClarityEnhancer && (
               <button
                 onClick={() => openToolSection('clarity-enhancer')}
-                className="bg-white hover:bg-teal-50/50 border border-slate-200/90 hover:border-teal-300 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs"
+                className="bg-white hover:bg-purple-50/40 border border-slate-200/90 hover:border-purple-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
               >
-                <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/15 to-pink-500/15 text-purple-600 border border-purple-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
                   <i className="fa-solid fa-sparkles"></i>
                 </div>
                 <div className="min-w-0">
@@ -2003,9 +2098,9 @@ export default function App() {
             {siteSettings.enableQrGenerator && (
               <button
                 onClick={() => openToolSection('qr-generator')}
-                className="bg-white hover:bg-teal-50/50 border border-slate-200/90 hover:border-teal-300 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs"
+                className="bg-white hover:bg-blue-50/40 border border-slate-200/90 hover:border-blue-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
               >
-                <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/15 text-blue-600 border border-blue-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
                   <i className="fa-solid fa-qrcode"></i>
                 </div>
                 <div className="min-w-0">
@@ -2018,9 +2113,9 @@ export default function App() {
             {siteSettings.enableLinkShortener && (
               <button
                 onClick={() => openToolSection('link-shortener')}
-                className="bg-white hover:bg-teal-50/50 border border-slate-200/90 hover:border-teal-300 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs"
+                className="bg-white hover:bg-amber-50/40 border border-slate-200/90 hover:border-amber-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
               >
-                <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/15 to-pink-500/15 text-amber-600 border border-amber-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
                   <i className="fa-solid fa-link"></i>
                 </div>
                 <div className="min-w-0">
@@ -2036,7 +2131,7 @@ export default function App() {
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="min-h-[46px] px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs sm:text-sm shadow-sm active:scale-[0.98] transition flex items-center gap-2 whitespace-nowrap shrink-0"
+                className="min-h-[46px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs sm:text-sm shadow-sm active:scale-[0.98] transition flex items-center gap-2 whitespace-nowrap shrink-0"
               >
                 <i className="fa-solid fa-camera text-sm"></i>
                 <span>Upload Photo</span>
@@ -2060,7 +2155,7 @@ export default function App() {
                   onClick={() => loadSamplePortraitByIndex(idx, sampleThumbUrls[idx], false)}
                   className={`w-11 h-11 min-w-[44px] min-h-[44px] rounded-2xl overflow-hidden border-2 transition shrink-0 active:scale-95 ${
                     activeSampleIdx === idx
-                      ? 'border-teal-600 ring-2 ring-teal-500/20'
+                      ? 'border-cyan-500 ring-2 ring-purple-500/25'
                       : 'border-slate-200 opacity-80 hover:opacity-100'
                   }`}
                 >
@@ -2080,9 +2175,9 @@ export default function App() {
 
             <button
               onClick={() => triggerManualAiCutout()}
-              className="min-h-[46px] px-3.5 py-2.5 rounded-2xl bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              className="min-h-[46px] px-3.5 py-2.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
-              <i className="fa-solid fa-wand-magic-sparkles"></i>
+              <i className="fa-solid fa-wand-magic-sparkles text-purple-600"></i>
               <span className="hidden sm:inline">AI Cutout</span>
               <span className="sm:hidden">Remove BG</span>
             </button>
@@ -2099,34 +2194,34 @@ export default function App() {
                     onClick={() => setPreviewMode('single')}
                     className={`min-h-[40px] py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                       previewMode === 'single'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600'
+                        ? 'bg-[#070a14] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <i className="fa-solid fa-user-check text-teal-600"></i>
-                    <span>Photo</span>
+                    <i className="fa-solid fa-user-check text-cyan-400"></i>
+                    <span>Single Photo</span>
                   </button>
                   <button
                     onClick={() => setPreviewMode('compare')}
                     className={`min-h-[40px] py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                       previewMode === 'compare'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600'
+                        ? 'bg-[#070a14] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <i className="fa-solid fa-columns text-teal-600"></i>
+                    <i className="fa-solid fa-columns text-purple-400"></i>
                     <span>Compare</span>
                   </button>
                   <button
                     onClick={() => setPreviewMode('sheet')}
                     className={`min-h-[40px] py-2 px-2 rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
                       previewMode === 'sheet'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600'
+                        ? 'bg-[#070a14] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <i className="fa-solid fa-table-cells text-teal-600"></i>
-                    <span>6×4" Sheet</span>
+                    <i className="fa-solid fa-table-cells text-amber-400"></i>
+                    <span>6×4" Sheet ({gridInfo.total})</span>
                   </button>
                 </div>
 
@@ -2135,7 +2230,7 @@ export default function App() {
                     onClick={() => setShowBiometricGrid(!showBiometricGrid)}
                     className={`min-h-[42px] px-3 rounded-2xl border text-xs font-bold transition flex items-center gap-1.5 shrink-0 ${
                       showBiometricGrid
-                        ? 'bg-teal-50 border-teal-200 text-teal-700'
+                        ? 'bg-cyan-50 border-cyan-300 text-cyan-800'
                         : 'bg-slate-50 border-slate-200 text-slate-600'
                     }`}
                   >
@@ -2143,6 +2238,51 @@ export default function App() {
                     <span className="hidden sm:inline">Grid</span>
                   </button>
                 )}
+              </div>
+
+              {/* INDIVIDUAL PHOTO PRINT COUNT SELECTOR BAR (2, 3, 4, 5, 6, 7, 8, 9, 10, 12 Photos - Alg Alg) */}
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-cyan-50/70 via-purple-50/50 to-amber-50/60 border border-cyan-200/80 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
+                    <i className="fa-solid fa-grip text-cyan-600"></i>
+                    <span>Select Number of Photos to Print (अलग-अलग फोटो संख्या चुनें):</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-lg bg-[#070a14] text-cyan-300 font-mono text-[11px] font-bold">
+                    {gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                  {PHOTO_COUNT_OPTIONS.map((countOpt) => {
+                    const isSelected = customPhotoCount === countOpt;
+                    const label = countOpt === 'auto' ? 'Auto' : `${countOpt}`;
+                    return (
+                      <button
+                        key={String(countOpt)}
+                        onClick={() => {
+                          setCustomPhotoCount(countOpt);
+                          setPreviewMode('sheet');
+                          showToast(
+                            countOpt === 'auto'
+                              ? 'Auto Photo Grid selected on 6×4" Sheet'
+                              : `Set ${countOpt} Passport ${countOpt === 1 ? 'Photo' : 'Photos'} on Print Sheet!`
+                          );
+                        }}
+                        className={`min-h-[36px] min-w-[40px] px-2.5 py-1 rounded-xl text-xs font-extrabold transition shrink-0 active:scale-95 ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                            : 'bg-white hover:bg-cyan-50 text-slate-700 border border-slate-200'
+                        }`}
+                        title={
+                          countOpt === 'auto'
+                            ? 'Default Country Preset Count'
+                            : `Print exactly ${countOpt} Passport Size Photos`
+                        }
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* 1. SINGLE PASSPORT PHOTO CANVAS */}
@@ -2174,12 +2314,12 @@ export default function App() {
 
                   {/* AI Progress Overlay */}
                   {aiLoading && (
-                    <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-xs flex flex-col items-center justify-center text-white gap-3 z-20 p-6 text-center">
-                      <i className="fa-solid fa-wand-magic-sparkles fa-bounce text-2xl text-teal-400"></i>
+                    <div className="absolute inset-0 bg-[#070a14]/85 backdrop-blur-xs flex flex-col items-center justify-center text-white gap-3 z-20 p-6 text-center">
+                      <i className="fa-solid fa-wand-magic-sparkles fa-bounce text-2xl text-cyan-400"></i>
                       <div className="text-xs font-bold tracking-wide">{aiLoadingMsg}</div>
-                      <div className="w-44 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div className="w-44 h-2 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-teal-500 transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 transition-all duration-300"
                           style={{ width: `${aiProgress}%` }}
                         ></div>
                       </div>
@@ -2200,7 +2340,7 @@ export default function App() {
                     onClick={applyPassportHeadshotZoom}
                     className="min-h-[42px] px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition"
                   >
-                    <i className="fa-solid fa-expand text-teal-600"></i>
+                    <i className="fa-solid fa-expand text-cyan-600"></i>
                     <span>Auto-Fit Face</span>
                   </button>
                   <button
@@ -2233,7 +2373,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex flex-col items-center">
-                  <span className="text-[11px] font-bold text-emerald-700 mb-1.5">AI Cutout</span>
+                  <span className="text-[11px] font-bold text-cyan-700 mb-1.5">AI Cutout</span>
                   <div className="rounded-2xl overflow-hidden border border-slate-200 checkerboard max-h-[280px] sm:max-h-[340px] flex items-center justify-center p-1">
                     <canvas
                       ref={compareCutoutCanvasRef}
@@ -2257,14 +2397,14 @@ export default function App() {
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 w-full text-xs text-slate-600 px-1">
                   <span className="font-bold text-slate-900 font-mono">
-                    {gridInfo.total} Photos ({gridInfo.cols}×{gridInfo.rows}) on 6×4" Lab Sheet
+                    Printing Exact {gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'} (Max Grid {gridInfo.cols}×{gridInfo.rows}) on 6×4" Sheet
                   </span>
                   <label className="min-h-[40px] inline-flex items-center gap-2 cursor-pointer font-semibold">
                     <input
                       type="checkbox"
                       checked={showCutMarks}
                       onChange={(e) => setShowCutMarks(e.target.checked)}
-                      className="w-4 h-4 rounded accent-teal-600"
+                      className="w-4 h-4 rounded accent-cyan-600"
                     />
                     <span>Cut Lines</span>
                   </label>
@@ -2275,24 +2415,24 @@ export default function App() {
               <div className="pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 <button
                   onClick={() => downloadSinglePhoto('jpeg')}
-                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-white font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
                 >
-                  <i className="fa-solid fa-image"></i>
+                  <i className="fa-solid fa-image text-cyan-400"></i>
                   <span>Single HD Photo</span>
                 </button>
                 <button
                   onClick={downloadPrintSheet}
-                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-print"></i>
-                  <span>6×4" Print Sheet</span>
+                  <span>Print {gridInfo.total} Photos (6×4")</span>
                 </button>
                 <button
                   onClick={handleSavePhotoToCloud}
                   disabled={isSavingCloudPhoto}
-                  className="col-span-2 sm:col-span-1 min-h-[46px] py-2.5 px-3 rounded-2xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  className="col-span-2 sm:col-span-1 min-h-[46px] py-2.5 px-3 rounded-2xl border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
                 >
-                  <i className="fa-solid fa-cloud-arrow-up"></i>
+                  <i className="fa-solid fa-cloud-arrow-up text-purple-600"></i>
                   <span>{isSavingCloudPhoto ? 'Saving...' : 'Save to Account'}</span>
                 </button>
               </div>
@@ -2306,18 +2446,18 @@ export default function App() {
                   onClick={() => setControlTab('size')}
                   className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
                     controlTab === 'size'
-                      ? 'bg-white text-teal-700 shadow-xs'
+                      ? 'bg-[#070a14] text-cyan-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <i className="fa-solid fa-earth-americas"></i>
-                  <span>1. Country Size</span>
+                  <span>1. Size & Count</span>
                 </button>
                 <button
                   onClick={() => setControlTab('bg')}
                   className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
                     controlTab === 'bg'
-                      ? 'bg-white text-teal-700 shadow-xs'
+                      ? 'bg-[#070a14] text-purple-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -2328,7 +2468,7 @@ export default function App() {
                   onClick={() => setControlTab('adjust')}
                   className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
                     controlTab === 'adjust'
-                      ? 'bg-white text-teal-700 shadow-xs'
+                      ? 'bg-[#070a14] text-amber-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -2337,9 +2477,47 @@ export default function App() {
                 </button>
               </div>
 
-              {/* TAB 1: COUNTRY & CUSTOM SIZE */}
+              {/* TAB 1: COUNTRY, PHOTO PRINT COUNT & CUSTOM SIZE */}
               {controlTab === 'size' && (
                 <div className="p-4 sm:p-5 space-y-4">
+                  {/* Individual Photo Print Count Box (2, 3, 4, 5, 6, 7, 8, 9, 10, 12 Photos) */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-2.5 border border-cyan-500/30">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-extrabold text-cyan-300">
+                          How Many Photos to Print? (फोटो संख्या)
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Choose 2, 3, 4, 5, 6, 7, 8, 9 or 12 passport photos on sheet
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-mono text-xs font-extrabold">
+                        {gridInfo.total} pcs
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-6 gap-1.5">
+                      {PHOTO_COUNT_OPTIONS.map((countOpt) => {
+                        const isSelected = customPhotoCount === countOpt;
+                        return (
+                          <button
+                            key={String(countOpt)}
+                            onClick={() => {
+                              setCustomPhotoCount(countOpt);
+                              setPreviewMode('sheet');
+                            }}
+                            className={`min-h-[38px] rounded-xl text-xs font-extrabold transition active:scale-95 ${
+                              isSelected
+                                ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
+                                : 'bg-white/10 hover:bg-white/20 text-slate-200'
+                            }`}
+                          >
+                            {countOpt === 'auto' ? 'Auto' : `${countOpt}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <div className="relative">
                     <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
                     <input
@@ -2347,11 +2525,11 @@ export default function App() {
                       value={countrySearch}
                       onChange={(e) => setCountrySearch(e.target.value)}
                       placeholder="Search India, UK, US, UAE, PAN Card..."
-                      className="w-full min-h-[46px] pl-9 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white transition"
+                      className="w-full min-h-[46px] pl-9 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:bg-white transition"
                     />
                   </div>
 
-                  <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
                     {filteredPresets.map((preset) => {
                       const isSelected = preset.id === selectedPresetId;
                       return (
@@ -2360,7 +2538,7 @@ export default function App() {
                           onClick={() => selectCountryPreset(preset.id)}
                           className={`w-full min-h-[60px] text-left p-3 rounded-2xl border transition flex items-center justify-between gap-3 active:scale-[0.99] ${
                             isSelected
-                              ? 'bg-teal-50/90 border-teal-600 ring-1 ring-teal-600'
+                              ? 'bg-cyan-50/90 border-cyan-600 ring-1 ring-cyan-600'
                               : 'bg-white hover:bg-slate-50 border-slate-200'
                           }`}
                         >
@@ -2375,8 +2553,10 @@ export default function App() {
                               </div>
                             </div>
                           </div>
-                          <span className="text-xs font-mono font-bold text-teal-700 shrink-0">
-                            {preset.sheetCount} pcs
+                          <span className="text-xs font-mono font-bold text-cyan-700 shrink-0">
+                            {customPhotoCount === 'auto'
+                              ? `${preset.sheetCount} pcs`
+                              : `${customPhotoCount} pcs`}
                           </span>
                         </button>
                       );
@@ -2472,7 +2652,7 @@ export default function App() {
                           }}
                           className={`min-h-[76px] p-2 rounded-2xl border transition flex flex-col items-center justify-center gap-1.5 active:scale-95 ${
                             isSelected
-                              ? 'border-teal-600 bg-teal-50 ring-2 ring-teal-500/20'
+                              ? 'border-cyan-600 bg-cyan-50 ring-2 ring-cyan-500/20'
                               : 'border-slate-200 bg-white'
                           }`}
                         >
@@ -2515,28 +2695,28 @@ export default function App() {
                   </div>
 
                   {/* AI Background Remover Card */}
-                  <div className="p-4 rounded-2xl bg-teal-50/80 border border-teal-200 space-y-3">
+                  <div className="p-4 rounded-2xl bg-cyan-50/70 border border-cyan-200 space-y-3">
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-extrabold text-teal-950">
+                      <div className="text-xs font-extrabold text-slate-900">
                         AI Background Cutout (RMBG-1.4)
                       </div>
-                      <span className="text-[11px] font-bold text-emerald-700">{aiStatusText}</span>
+                      <span className="text-[11px] font-bold text-cyan-700">{aiStatusText}</span>
                     </div>
 
                     <button
                       onClick={() => triggerManualAiCutout()}
-                      className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs sm:text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                      className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs sm:text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
                     >
                       <i className="fa-solid fa-wand-magic-sparkles"></i>
                       <span>Remove Background Now</span>
                     </button>
 
-                    <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-2xl border border-teal-200 text-[11px] font-bold">
+                    <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-2xl border border-cyan-200 text-[11px] font-bold">
                       <button
                         onClick={() => handleSetCutoutEngine('rmbg')}
                         className={`min-h-[38px] rounded-xl transition ${
                           cutoutEngine === 'rmbg'
-                            ? 'bg-teal-600 text-white'
+                            ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
                         }`}
                       >
@@ -2546,7 +2726,7 @@ export default function App() {
                         onClick={() => handleSetCutoutEngine('removebg_api')}
                         className={`min-h-[38px] rounded-xl transition ${
                           cutoutEngine === 'removebg_api'
-                            ? 'bg-teal-600 text-white'
+                            ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
                         }`}
                       >
@@ -2556,7 +2736,7 @@ export default function App() {
                         onClick={() => handleSetCutoutEngine('original')}
                         className={`min-h-[38px] rounded-xl transition ${
                           cutoutEngine === 'original'
-                            ? 'bg-teal-600 text-white'
+                            ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
                         }`}
                       >
@@ -2566,8 +2746,8 @@ export default function App() {
 
                     <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-xs">
-                        <span className="font-semibold text-teal-950">Edge Refinement</span>
-                        <span className="font-mono font-bold text-teal-700">{bgTolerance}%</span>
+                        <span className="font-semibold text-slate-900">Edge Refinement</span>
+                        <span className="font-mono font-bold text-cyan-700">{bgTolerance}%</span>
                       </div>
                       <input
                         type="range"
@@ -2585,18 +2765,18 @@ export default function App() {
                     </div>
 
                     {cutoutEngine === 'removebg_api' && (
-                      <div className="space-y-2 pt-2 border-t border-teal-200">
+                      <div className="space-y-2 pt-2 border-t border-cyan-200">
                         <div className="flex gap-2">
                           <input
                             type="password"
                             value={removeBgApiKey}
                             onChange={(e) => setRemoveBgApiKey(e.target.value)}
                             placeholder="Paste remove.bg API key..."
-                            className="flex-1 min-h-[42px] px-3 py-1.5 text-xs bg-white border border-teal-300 rounded-xl"
+                            className="flex-1 min-h-[42px] px-3 py-1.5 text-xs bg-white border border-cyan-300 rounded-xl"
                           />
                           <button
                             onClick={runRemoveBgCloudApi}
-                            className="min-h-[42px] px-4 rounded-xl bg-teal-600 text-white text-xs font-bold"
+                            className="min-h-[42px] px-4 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold"
                           >
                             Apply
                           </button>
@@ -2616,7 +2796,7 @@ export default function App() {
                     </span>
                     <button
                       onClick={resetTransformAndFilters}
-                      className="min-h-[38px] px-3 rounded-xl bg-slate-100 text-xs font-bold text-teal-700"
+                      className="min-h-[38px] px-3 rounded-xl bg-slate-100 text-xs font-bold text-cyan-700"
                     >
                       Reset All
                     </button>
@@ -2625,7 +2805,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-2.5">
                     <button
                       onClick={applyPassportHeadshotZoom}
-                      className="min-h-[44px] py-2 px-3 rounded-2xl bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold active:scale-95 transition flex items-center justify-center gap-1.5"
+                      className="min-h-[44px] py-2 px-3 rounded-2xl bg-cyan-50 text-cyan-800 border border-cyan-200 text-xs font-bold active:scale-95 transition flex items-center justify-center gap-1.5"
                     >
                       <i className="fa-solid fa-user-check"></i>
                       <span>Auto Headshot</span>
@@ -2647,7 +2827,7 @@ export default function App() {
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
                         <span className="font-semibold text-slate-700">Zoom Scale</span>
-                        <span className="font-mono font-bold text-teal-700">{zoom}%</span>
+                        <span className="font-mono font-bold text-cyan-700">{zoom}%</span>
                       </div>
                       <input
                         type="range"
@@ -2662,7 +2842,7 @@ export default function App() {
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
                         <span className="font-semibold text-slate-700">Tilt / Rotate</span>
-                        <span className="font-mono font-bold text-teal-700">{rotate}°</span>
+                        <span className="font-mono font-bold text-cyan-700">{rotate}°</span>
                       </div>
                       <input
                         type="range"
@@ -2678,7 +2858,7 @@ export default function App() {
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
                         <span className="font-semibold text-slate-700">Brightness (വെളിച്ചം)</span>
-                        <span className="font-mono font-bold text-teal-700">{brightness}%</span>
+                        <span className="font-mono font-bold text-cyan-700">{brightness}%</span>
                       </div>
                       <input
                         type="range"
@@ -2693,7 +2873,7 @@ export default function App() {
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
                         <span className="font-semibold text-slate-700">Contrast (തെളിച്ചം)</span>
-                        <span className="font-mono font-bold text-teal-700">{contrast}%</span>
+                        <span className="font-mono font-bold text-cyan-700">{contrast}%</span>
                       </div>
                       <input
                         type="range"
@@ -2708,7 +2888,7 @@ export default function App() {
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
                         <span className="font-semibold text-slate-700">Saturation (നിറം)</span>
-                        <span className="font-mono font-bold text-teal-700">{saturate}%</span>
+                        <span className="font-mono font-bold text-cyan-700">{saturate}%</span>
                       </div>
                       <input
                         type="range"
@@ -2796,25 +2976,22 @@ export default function App() {
         </main>
       )}
 
-      {/* Configurable Dynamic Website Footer (Visible on Desktop & Mobile above Bottom Nav) */}
+      {/* Configurable Dynamic Website Footer (Matches the Obsidian & Spectrum Logo Theme) */}
       <footer
-        className="text-slate-300 border-t border-slate-800 mt-8"
-        style={{ backgroundColor: siteSettings.secondaryColor || '#0f172a' }}
+        className="text-slate-300 border-t border-cyan-500/20 mt-8 relative"
+        style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
       >
+        <div className="h-[2px] w-full bg-gradient-to-r from-cyan-400 via-purple-500 to-amber-400"></div>
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-center sm:text-left">
             {renderBrandLogo(false)}
-            <span className="hidden sm:inline text-slate-600">|</span>
-            <p className="text-xs text-slate-400">
-              {siteSettings.brandTagline}
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-300">
-            <span className="font-medium">{siteSettings.footerCredit}</span>
+            <span className="font-semibold text-white">{siteSettings.footerCredit}</span>
             <button
               onClick={() => setActiveRoute('admin')}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-400 text-[11px] font-bold transition flex items-center gap-1"
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-cyan-300 border border-cyan-400/30 text-[11px] font-bold transition flex items-center gap-1"
               title="Configure Footer Credit & Brand Settings in Admin Panel"
             >
               <i className="fa-solid fa-gear"></i>
@@ -2825,11 +3002,11 @@ export default function App() {
       </footer>
 
       {/* FIXED MOBILE BOTTOM TAB BAR */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-5 items-center h-16 px-1 select-none">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070a14]/95 backdrop-blur-md border-t border-cyan-500/30 grid grid-cols-5 items-center h-16 px-1 select-none text-slate-400">
         <button
           onClick={() => setActiveRoute('studio')}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'studio' ? 'text-teal-600 font-bold' : 'text-slate-500'
+            activeRoute === 'studio' ? 'text-cyan-400 font-bold' : 'text-slate-400'
           }`}
         >
           <i className="fa-solid fa-camera text-base"></i>
@@ -2841,8 +3018,8 @@ export default function App() {
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
             activeRoute === 'tools' &&
             (activeToolTab === 'bg-remover' || activeToolTab === 'clarity-enhancer')
-              ? 'text-teal-600 font-bold'
-              : 'text-slate-500'
+              ? 'text-purple-400 font-bold'
+              : 'text-slate-400'
           }`}
         >
           <i className="fa-solid fa-wand-magic-sparkles text-base"></i>
@@ -2854,8 +3031,8 @@ export default function App() {
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
             activeRoute === 'tools' &&
             (activeToolTab === 'qr-generator' || activeToolTab === 'link-shortener')
-              ? 'text-teal-600 font-bold'
-              : 'text-slate-500'
+              ? 'text-cyan-400 font-bold'
+              : 'text-slate-400'
           }`}
         >
           <i className="fa-solid fa-qrcode text-base"></i>
@@ -2865,7 +3042,7 @@ export default function App() {
         <button
           onClick={() => openDashboardSection('overview')}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'dashboard' ? 'text-teal-600 font-bold' : 'text-slate-500'
+            activeRoute === 'dashboard' ? 'text-cyan-400 font-bold' : 'text-slate-400'
           }`}
         >
           <i className="fa-solid fa-user-circle text-base"></i>
@@ -2877,7 +3054,7 @@ export default function App() {
         <button
           onClick={() => setActiveRoute('admin')}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'admin' ? 'text-teal-600 font-bold' : 'text-slate-500'
+            activeRoute === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'
           }`}
         >
           <i className="fa-solid fa-shield-halved text-base"></i>
@@ -2887,7 +3064,7 @@ export default function App() {
 
       {/* HD Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="w-10 h-1.5 bg-slate-300 rounded-full mx-auto sm:hidden"></div>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -2914,7 +3091,7 @@ export default function App() {
                     {pxW} × {pxH} px @ {dpi} DPI Studio Quality
                   </div>
                 </div>
-                <span className="px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold">
+                <span className="px-3.5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold">
                   JPG
                 </span>
               </button>
@@ -2931,24 +3108,50 @@ export default function App() {
                     Lossless / Transparent Ready
                   </div>
                 </div>
-                <span className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold">
+                <span className="px-3.5 py-2 rounded-xl bg-[#070a14] text-white text-xs font-bold">
                   PNG
                 </span>
               </button>
 
+              {/* Quick Photo Count Selector right inside Export Modal */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span>Select Photos on 6×4" Sheet:</span>
+                  <span className="font-mono text-cyan-700">{gridInfo.total} Photos</span>
+                </div>
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  {PHOTO_COUNT_OPTIONS.map((countOpt) => {
+                    const isSelected = customPhotoCount === countOpt;
+                    return (
+                      <button
+                        key={String(countOpt)}
+                        onClick={() => setCustomPhotoCount(countOpt)}
+                        className={`min-h-[32px] min-w-[34px] px-2 rounded-lg text-[11px] font-extrabold transition shrink-0 ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white'
+                            : 'bg-white border border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {countOpt === 'auto' ? 'Auto' : countOpt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <button
                 onClick={downloadPrintSheet}
-                className="w-full min-h-[56px] p-3.5 rounded-2xl bg-teal-50 hover:bg-teal-100 border border-teal-200 flex items-center justify-between active:scale-[0.99] transition"
+                className="w-full min-h-[56px] p-3.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 flex items-center justify-between active:scale-[0.99] transition"
               >
                 <div className="text-left">
-                  <div className="text-xs sm:text-sm font-bold text-teal-950">
-                    6 × 4 inch Printable Sheet ({gridInfo.total} Photos)
+                  <div className="text-xs sm:text-sm font-bold text-slate-950">
+                    6 × 4 inch Printable Sheet ({gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'})
                   </div>
-                  <div className="text-[11px] text-teal-700">
+                  <div className="text-[11px] text-cyan-800">
                     1800 × 1200 px @ 300 DPI Studio 4R Paper
                   </div>
                 </div>
-                <span className="px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold">
+                <span className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-xs font-bold">
                   6×4"
                 </span>
               </button>
@@ -2959,7 +3162,7 @@ export default function App() {
 
       {/* Login / Sign Up Modal */}
       {showAuthModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="w-10 h-1.5 bg-slate-300 rounded-full mx-auto sm:hidden"></div>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -2999,7 +3202,7 @@ export default function App() {
                   }}
                   className={`min-h-[42px] py-2 rounded-xl transition ${
                     authMode === 'login'
-                      ? 'bg-white text-teal-700 shadow-xs'
+                      ? 'bg-[#070a14] text-cyan-300 shadow-xs'
                       : 'text-slate-600'
                   }`}
                 >
@@ -3013,7 +3216,7 @@ export default function App() {
                   }}
                   className={`min-h-[42px] py-2 rounded-xl transition ${
                     authMode === 'signup'
-                      ? 'bg-white text-teal-700 shadow-xs'
+                      ? 'bg-[#070a14] text-cyan-300 shadow-xs'
                       : 'text-slate-600'
                   }`}
                 >
@@ -3041,7 +3244,7 @@ export default function App() {
                       value={authFullName}
                       onChange={(e) => setAuthFullName(e.target.value)}
                       placeholder="Enter your full name"
-                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                     />
                   </div>
                   <div>
@@ -3053,7 +3256,7 @@ export default function App() {
                       value={authPhone}
                       onChange={(e) => setAuthPhone(e.target.value)}
                       placeholder="+91 98765 43210"
-                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                     />
                   </div>
                 </>
@@ -3069,7 +3272,7 @@ export default function App() {
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
 
@@ -3086,7 +3289,7 @@ export default function App() {
                           setAuthMode('reset');
                           setAuthError(null);
                         }}
-                        className="text-xs font-bold text-teal-700"
+                        className="text-xs font-bold text-cyan-700"
                       >
                         Forgot Password?
                       </button>
@@ -3099,7 +3302,7 @@ export default function App() {
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     placeholder="Minimum 6 characters"
-                    className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   />
                 </div>
               )}
@@ -3107,7 +3310,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={isAuthSubmitting}
-                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-envelope"></i>
                 <span>
@@ -3148,9 +3351,9 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleGoogleSignIn}
-                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm active:scale-[0.98] transition flex items-center justify-center gap-2.5"
+                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-white font-bold text-sm active:scale-[0.98] transition flex items-center justify-center gap-2.5"
                 >
-                  <i className="fa-brands fa-google"></i>
+                  <i className="fa-brands fa-google text-cyan-400"></i>
                   <span>Continue with Google</span>
                 </button>
               </>
@@ -3161,11 +3364,11 @@ export default function App() {
 
       {/* Toast Notification */}
       <div
-        className={`fixed bottom-20 lg:bottom-6 right-4 left-4 sm:left-auto z-50 bg-slate-900 text-white px-4 py-3.5 rounded-2xl shadow-xl text-xs font-bold flex items-center justify-center sm:justify-start gap-2.5 transition-all duration-300 pointer-events-none ${
+        className={`fixed bottom-20 lg:bottom-6 right-4 left-4 sm:left-auto z-50 bg-[#070a14] border border-cyan-500/40 text-white px-4 py-3.5 rounded-2xl shadow-xl text-xs font-bold flex items-center justify-center sm:justify-start gap-2.5 transition-all duration-300 pointer-events-none ${
           toastMsg ? 'translate-y-0 opacity-100' : 'translate-y-16 opacity-0'
         }`}
       >
-        <i className="fa-solid fa-circle-check text-teal-400 text-sm"></i>
+        <i className="fa-solid fa-circle-check text-cyan-400 text-sm"></i>
         <span>{toastMsg || 'Ready!'}</span>
       </div>
     </div>
