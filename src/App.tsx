@@ -7,6 +7,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  sendPasswordResetEmail,
   signOut,
   User as FirebaseUser,
 } from 'firebase/auth';
@@ -45,20 +49,25 @@ import {
 } from './constants';
 import { runBriaRmbgCutout } from './rmbgEngine';
 import { UserDashboard } from './components/UserDashboard';
-import { AdminPanel } from './components/AdminPanel';
-
-const BOOTSTRAP_ADMIN_EMAIL = 'shriyanshsingh7581@gmail.com';
 
 export default function App() {
-  // Navigation & Auth State
-  const [activeRoute, setActiveRoute] = useState<'studio' | 'dashboard' | 'admin'>('studio');
+  // Navigation & Auth State (Only Studio & User Dashboard - No Admin Panel)
+  const [activeRoute, setActiveRoute] = useState<'studio' | 'dashboard'>('studio');
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
 
+  // Email & Password Auth Modal State
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'reset'>('login');
+  const [authFullName, setAuthFullName] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+
   // Firestore Collections State
-  const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
   const [verifications, setVerifications] = useState<DocumentVerificationRecord[]>([]);
   const [savedPhotos, setSavedPhotos] = useState<SavedPhotoRecord[]>([]);
@@ -151,31 +160,31 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
+        const defaultProfile: UserProfile = {
+          uid: user.uid,
+          displayName: (user.displayName || user.email?.split('@')[0] || 'Studio User').slice(0, 100),
+          email: (user.email || 'user@passportstudio.pro').slice(0, 150),
+          phone: (user.phoneNumber || '').slice(0, 30),
+          role: 'user',
+          status: 'active',
+        };
         const userRef = doc(db, 'users', user.uid);
         try {
           const snap = await getDoc(userRef);
-          const isBootAdmin = user.email === BOOTSTRAP_ADMIN_EMAIL;
           if (!snap.exists()) {
-            const newProfile: UserProfile = {
-              uid: user.uid,
-              displayName: (user.displayName || user.email?.split('@')[0] || 'Studio User').slice(0, 100),
-              email: (user.email || 'user@passportstudio.pro').slice(0, 150),
-              phone: (user.phoneNumber || '').slice(0, 30),
-              role: isBootAdmin ? 'admin' : 'user',
-              status: 'active',
-            };
             await setDoc(userRef, {
-              ...newProfile,
+              ...defaultProfile,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });
-            setUserProfile(newProfile);
+            setUserProfile(defaultProfile);
           } else {
             const existingData = snap.data() as UserProfile;
             setUserProfile(existingData);
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+          console.warn('Firestore profile sync notice:', error);
+          setUserProfile(defaultProfile);
         }
       } else {
         setUserProfile(null);
@@ -187,24 +196,18 @@ export default function App() {
   }, []);
 
   // =========================================================================
-  // 3. REAL-TIME FIRESTORE LISTENERS (GUARDED BY AUTH & ROLE)
+  // 3. REAL-TIME FIRESTORE LISTENERS (USER DASHBOARD)
   // =========================================================================
   useEffect(() => {
     if (!isAuthReady || !currentUser || !userProfile) {
-      setUsersList([]);
       setAppointments([]);
       setVerifications([]);
       setSavedPhotos([]);
       return;
     }
 
-    const isBootstrapAdmin = currentUser.email === BOOTSTRAP_ADMIN_EMAIL;
-
     // Appointments Listener
-    const aptQuery = isBootstrapAdmin
-      ? collection(db, 'appointments')
-      : query(collection(db, 'appointments'), where('userId', '==', currentUser.uid));
-
+    const aptQuery = query(collection(db, 'appointments'), where('userId', '==', currentUser.uid));
     const unsubApt = onSnapshot(
       aptQuery,
       (snap) => {
@@ -214,14 +217,11 @@ export default function App() {
         }));
         setAppointments(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'appointments')
+      (err) => console.warn('Firestore appointments listener error:', err)
     );
 
     // Document Verifications Listener
-    const verQuery = isBootstrapAdmin
-      ? collection(db, 'verifications')
-      : query(collection(db, 'verifications'), where('userId', '==', currentUser.uid));
-
+    const verQuery = query(collection(db, 'verifications'), where('userId', '==', currentUser.uid));
     const unsubVer = onSnapshot(
       verQuery,
       (snap) => {
@@ -231,14 +231,11 @@ export default function App() {
         }));
         setVerifications(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'verifications')
+      (err) => console.warn('Firestore verifications listener error:', err)
     );
 
     // Saved Photos Listener
-    const photoQuery = isBootstrapAdmin
-      ? collection(db, 'savedPhotos')
-      : query(collection(db, 'savedPhotos'), where('userId', '==', currentUser.uid));
-
+    const photoQuery = query(collection(db, 'savedPhotos'), where('userId', '==', currentUser.uid));
     const unsubPhotos = onSnapshot(
       photoQuery,
       (snap) => {
@@ -248,29 +245,13 @@ export default function App() {
         }));
         setSavedPhotos(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'savedPhotos')
+      (err) => console.warn('Firestore savedPhotos listener error:', err)
     );
-
-    // Users Directory Listener (for Bootstrap Admin)
-    let unsubUsers = () => {};
-    if (isBootstrapAdmin) {
-      unsubUsers = onSnapshot(
-        collection(db, 'users'),
-        (snap) => {
-          const list: UserProfile[] = snap.docs.map((d) => d.data() as UserProfile);
-          setUsersList(list);
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'users')
-      );
-    } else {
-      setUsersList([userProfile]);
-    }
 
     return () => {
       unsubApt();
       unsubVer();
       unsubPhotos();
-      unsubUsers();
     };
   }, [isAuthReady, currentUser, userProfile]);
 
@@ -521,7 +502,6 @@ export default function App() {
         .drawImage(processedCanvasRef.current, 0, 0);
     }
 
-    // Update compact thumbnail preview for Dashboard & Cloud saving
     const thumbCanvas = document.createElement('canvas');
     renderPassportToCanvas(thumbCanvas, false);
     const smallCanvas = document.createElement('canvas');
@@ -884,15 +864,100 @@ export default function App() {
   };
 
   // =========================================================================
-  // 8. AUTH & FIRESTORE MUTATION HANDLERS FOR DASHBOARD & ADMIN PANEL
+  // 8. AUTHENTICATION HANDLERS (EMAIL/PASSWORD + GOOGLE)
   // =========================================================================
+  const formatFirebaseAuthError = (error: any): string => {
+    const code = error?.code || '';
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+      return 'Invalid email or password. Please check your credentials and try again.';
+    }
+    if (code === 'auth/email-already-in-use') {
+      return 'This email address is already registered. Please switch to Login.';
+    }
+    if (code === 'auth/weak-password') {
+      return 'Password must be at least 6 characters long.';
+    }
+    if (code === 'auth/operation-not-allowed') {
+      return 'Email/Password sign-in is not enabled in Firebase Console (bharatchats-e963f). Enable it in Authentication → Sign-in method.';
+    }
+    return error?.message || 'Authentication error occurred. Please try again.';
+  };
+
+  const handleEmailPasswordAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setIsAuthSubmitting(true);
+
+    try {
+      if (authMode === 'reset') {
+        if (!authEmail.trim()) {
+          setAuthError('Please enter your registered email address.');
+          return;
+        }
+        await sendPasswordResetEmail(auth, authEmail.trim());
+        showToast('Password reset link sent to your email!');
+        setAuthMode('login');
+        return;
+      }
+
+      if (authMode === 'signup') {
+        if (!authFullName.trim()) {
+          setAuthError('Please enter your full name.');
+          return;
+        }
+        const userCred = await createUserWithEmailAndPassword(
+          auth,
+          authEmail.trim(),
+          authPassword
+        );
+        await updateProfile(userCred.user, {
+          displayName: authFullName.trim().slice(0, 100),
+        });
+
+        const newProfile: UserProfile = {
+          uid: userCred.user.uid,
+          displayName: authFullName.trim().slice(0, 100),
+          email: (userCred.user.email || authEmail.trim()).slice(0, 150),
+          phone: authPhone.trim().slice(0, 30),
+          role: 'user',
+          status: 'active',
+        };
+
+        try {
+          await setDoc(doc(db, 'users', userCred.user.uid), {
+            ...newProfile,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (firestoreErr) {
+          console.warn('Firestore user profile creation notice:', firestoreErr);
+        }
+
+        setUserProfile(newProfile);
+        setShowAuthModal(false);
+        setAuthPassword('');
+        showToast('Account created and signed in!');
+      } else {
+        await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
+        setShowAuthModal(false);
+        setAuthPassword('');
+        showToast('Signed in successfully!');
+      }
+    } catch (error: any) {
+      setAuthError(formatFirebaseAuthError(error));
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
       setShowAuthModal(false);
-      showToast('Signed in to PassportStudio Pro!');
+      showToast('Signed in with Google!');
     } catch (error: any) {
-      showToast(error?.message || 'Sign-in cancelled');
+      setAuthError(formatFirebaseAuthError(error));
     }
   };
 
@@ -902,6 +967,9 @@ export default function App() {
     showToast('Signed out successfully');
   };
 
+  // =========================================================================
+  // 9. FIRESTORE MUTATION HANDLERS FOR USER DASHBOARD
+  // =========================================================================
   const handleBookAppointment = async (data: {
     phone: string;
     serviceType: (typeof SERVICE_TYPES)[number];
@@ -1008,149 +1076,8 @@ export default function App() {
     }
   };
 
-  // Admin Mutations
-  const handleUpdateUserRoleOrStatus = async (
-    targetUser: UserProfile,
-    newRole: 'user' | 'admin',
-    newStatus: 'active' | 'suspended'
-  ) => {
-    try {
-      await updateDoc(doc(db, 'users', targetUser.uid), {
-        displayName: targetUser.displayName,
-        phone: targetUser.phone || '',
-        role: newRole,
-        status: newStatus,
-        updatedAt: serverTimestamp(),
-      });
-      showToast(`Updated ${targetUser.displayName} (${newRole} / ${newStatus})`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${targetUser.uid}`);
-    }
-  };
-
-  const handleUpdateAppointmentAdmin = async (
-    apt: AppointmentRecord,
-    status: AppointmentRecord['status'],
-    notes: string,
-    appointmentDate = apt.appointmentDate,
-    timeSlot = apt.timeSlot,
-    branchLocation = apt.branchLocation
-  ) => {
-    try {
-      await updateDoc(doc(db, 'appointments', apt.id), {
-        status,
-        notes: notes.slice(0, 500),
-        appointmentDate,
-        timeSlot,
-        branchLocation,
-        updatedAt: serverTimestamp(),
-      });
-      showToast(`Appointment marked as ${status.toUpperCase()}`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `appointments/${apt.id}`);
-    }
-  };
-
-  const handleDeleteAppointment = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'appointments', id));
-      showToast('Appointment deleted');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `appointments/${id}`);
-    }
-  };
-
-  const handleProcessVerificationAdmin = async (
-    ver: DocumentVerificationRecord,
-    status: DocumentVerificationRecord['status'],
-    remarks: string
-  ) => {
-    try {
-      await updateDoc(doc(db, 'verifications', ver.id), {
-        status,
-        remarks: remarks.slice(0, 500),
-        updatedAt: serverTimestamp(),
-      });
-      showToast(`Document marked as ${status.replace('_', ' ').toUpperCase()}`);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `verifications/${ver.id}`);
-    }
-  };
-
-  const handleSeedSampleData = async () => {
-    if (!currentUser || !userProfile) return;
-    try {
-      const sampleThumb1 = sampleThumbUrls[0] || currentStudioPreviewUrl;
-      const sampleThumb2 = sampleThumbUrls[1] || currentStudioPreviewUrl;
-
-      await addDoc(collection(db, 'appointments'), {
-        userId: currentUser.uid,
-        userName: 'Arjun Nair',
-        userEmail: currentUser.email || 'arjun.nair@example.com',
-        phone: '+91 98470 11223',
-        serviceType: 'Passport Photo Shoot',
-        countrySpec: 'India Standard Passport Size (35×45 mm)',
-        branchLocation: 'Kochi Main Studio — MG Road',
-        appointmentDate: '2026-11-05',
-        timeSlot: '10:30 AM',
-        status: 'pending',
-        notes: 'Requires 8 physical prints on 6×4" sheet + soft copy.',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      await addDoc(collection(db, 'appointments'), {
-        userId: currentUser.uid,
-        userName: 'Meera Krishnan',
-        userEmail: currentUser.email || 'meera.k@example.com',
-        phone: '+91 94471 88990',
-        serviceType: 'Visa Biometric Photo',
-        countrySpec: 'UK Passport & Visa (യു.കെ പാസ്‌പോർട്ട്)',
-        branchLocation: 'Trivandrum Technopark Center',
-        appointmentDate: '2026-11-06',
-        timeSlot: '02:00 PM',
-        status: 'confirmed',
-        notes: 'UK Cream/Grey (#F2F2F2) background compliance requested.',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      await addDoc(collection(db, 'verifications'), {
-        userId: currentUser.uid,
-        userName: 'Arjun Nair',
-        userEmail: currentUser.email || 'arjun.nair@example.com',
-        documentType: 'Indian Passport',
-        documentNumber: 'V8392014',
-        country: 'India Standard Passport Size (35×45 mm)',
-        photoPreviewDataUrl: sampleThumb1.slice(0, 240000),
-        status: 'pending',
-        remarks: 'Awaiting biometric eye-line & background uniformity check.',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      await addDoc(collection(db, 'verifications'), {
-        userId: currentUser.uid,
-        userName: 'Meera Krishnan',
-        userEmail: currentUser.email || 'meera.k@example.com',
-        documentType: 'UAE / Schengen Visa Form',
-        documentNumber: 'DXB992841',
-        country: 'UAE / Dubai Visa & Emirates ID (യു.എ.ഇ)',
-        photoPreviewDataUrl: sampleThumb2.slice(0, 240000),
-        status: 'under_review',
-        remarks: 'Checking 43×55 mm 300 DPI resolution compliance.',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      showToast('Loaded sample appointments & document verifications!');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'appointments');
-    }
-  };
-
   // =========================================================================
-  // 9. COMPUTED DIMENSION & SHEET LABELS
+  // 10. COMPUTED DIMENSION & SHEET LABELS
   // =========================================================================
   const wMmRounded = Math.round(widthMm * 10) / 10;
   const hMmRounded = Math.round(heightMm * 10) / 10;
@@ -1166,9 +1093,6 @@ export default function App() {
       p.country.toLowerCase().includes(countrySearch.trim().toLowerCase()) ||
       p.desc.toLowerCase().includes(countrySearch.trim().toLowerCase())
   );
-
-  const isAdminUser =
-    userProfile?.role === 'admin' || currentUser?.email === BOOTSTRAP_ADMIN_EMAIL;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800 font-sans">
@@ -1188,7 +1112,7 @@ export default function App() {
             </span>
           </button>
 
-          {/* Zone 2: Concise Navigation Links */}
+          {/* Zone 2: Concise Navigation Links (Studio + User Dashboard Only) */}
           <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
             <button
               onClick={() => setActiveRoute('studio')}
@@ -1202,8 +1126,13 @@ export default function App() {
             </button>
             <button
               onClick={() => {
-                if (!currentUser) setShowAuthModal(true);
-                else setActiveRoute('dashboard');
+                if (!currentUser) {
+                  setAuthMode('login');
+                  setAuthError(null);
+                  setShowAuthModal(true);
+                } else {
+                  setActiveRoute('dashboard');
+                }
               }}
               className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
                 activeRoute === 'dashboard'
@@ -1211,20 +1140,8 @@ export default function App() {
                   : 'border-transparent'
               }`}
             >
-              Dashboard & Appointments
+              My Dashboard
             </button>
-            {isAdminUser && (
-              <button
-                onClick={() => setActiveRoute('admin')}
-                className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-                  activeRoute === 'admin'
-                    ? 'border-indigo-600 text-indigo-600'
-                    : 'border-transparent'
-                }`}
-              >
-                Admin Panel
-              </button>
-            )}
           </nav>
 
           {/* Zone 3: Primary Action */}
@@ -1245,18 +1162,22 @@ export default function App() {
               </button>
             ) : (
               <button
-                onClick={() => setShowAuthModal(true)}
+                onClick={() => {
+                  setAuthMode('login');
+                  setAuthError(null);
+                  setShowAuthModal(true);
+                }}
                 className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition flex items-center gap-2 whitespace-nowrap shrink-0"
               >
                 <i className="fa-solid fa-right-to-bracket"></i>
-                <span>Sign In / Portal</span>
+                <span>Login / Sign Up</span>
               </button>
             )}
           </div>
         </div>
       </header>
 
-      {/* Sub-navigation bar on mobile or when signed in */}
+      {/* Sub-navigation bar when signed in */}
       {currentUser && (
         <div className="bg-slate-900 text-slate-200 border-b border-slate-800 px-4 py-2 text-xs">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
@@ -1281,18 +1202,6 @@ export default function App() {
               >
                 <i className="fa-solid fa-table-columns mr-1.5"></i>My Dashboard ({appointments.length} Appts · {verifications.length} Docs)
               </button>
-              {isAdminUser && (
-                <button
-                  onClick={() => setActiveRoute('admin')}
-                  className={`px-3 py-1 rounded-lg font-bold transition whitespace-nowrap ${
-                    activeRoute === 'admin'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-emerald-300 hover:text-white'
-                  }`}
-                >
-                  <i className="fa-solid fa-shield-halved mr-1.5"></i>Admin Verification Panel
-                </button>
-              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -2145,24 +2054,29 @@ export default function App() {
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                   <div>
                     <div className="text-xs font-bold text-indigo-600 uppercase tracking-wide">
-                      Official Studio Services & Document Verification
+                      Official Studio Services & User Dashboard
                     </div>
                     <h3 className="text-sm font-extrabold text-slate-900 mt-0.5">
-                      Need physical studio prints, appointment booking, or embassy photo verification?
+                      Need physical studio prints, appointment booking, or document verification?
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Use the Applicant Dashboard to book a studio slot or submit your ID photo for biometric verification.
+                      Sign in with Email & Password or Google to manage your bookings and saved 300 DPI photos.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => {
-                        if (!currentUser) setShowAuthModal(true);
-                        else setActiveRoute('dashboard');
+                        if (!currentUser) {
+                          setAuthMode('login');
+                          setAuthError(null);
+                          setShowAuthModal(true);
+                        } else {
+                          setActiveRoute('dashboard');
+                        }
                       }}
                       className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition whitespace-nowrap"
                     >
-                      Open User Dashboard →
+                      Open My Dashboard →
                     </button>
                   </div>
                 </div>
@@ -2188,23 +2102,6 @@ export default function App() {
             onDeleteSavedPhoto={handleDeleteSavedPhoto}
             onUpdateProfile={handleUpdateProfile}
             onNavigateToStudio={() => setActiveRoute('studio')}
-          />
-        </main>
-      )}
-
-      {/* ROUTE 3: ADMIN PANEL */}
-      {activeRoute === 'admin' && isAdminUser && (
-        <main className="flex-1">
-          <AdminPanel
-            users={usersList}
-            appointments={appointments}
-            verifications={verifications}
-            onUpdateUserRoleOrStatus={handleUpdateUserRoleOrStatus}
-            onUpdateAppointmentAdmin={handleUpdateAppointmentAdmin}
-            onDeleteAppointment={handleDeleteAppointment}
-            onProcessVerificationAdmin={handleProcessVerificationAdmin}
-            onDeleteVerification={handleDeleteVerification}
-            onSeedSampleData={handleSeedSampleData}
           />
         </main>
       )}
@@ -2320,7 +2217,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Login / Authentication Modal */}
+      {/* Email & Password + Google Login / Sign Up Modal */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-5">
@@ -2331,10 +2228,14 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900">
-                    PassportStudio Pro Portal
+                    {authMode === 'login'
+                      ? 'Login to PassportStudio Pro'
+                      : authMode === 'signup'
+                      ? 'Create Your Studio Account'
+                      : 'Reset Your Password'}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Sign in to access User Dashboard & Admin Verification Desk
+                    Access your Dashboard, Appointments & Saved Photos
                   </p>
                 </div>
               </div>
@@ -2346,35 +2247,174 @@ export default function App() {
               </button>
             </div>
 
-            <div className="space-y-3 text-xs text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <div className="font-bold text-slate-900">Portal Capabilities:</div>
-              <ul className="space-y-1.5">
-                <li className="flex items-center gap-2">
-                  <i className="fa-solid fa-check text-emerald-600"></i>
-                  <span>Book studio appointments & track live confirmation slots</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <i className="fa-solid fa-check text-emerald-600"></i>
-                  <span>Submit passport, visa & PAN photos for official verification</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <i className="fa-solid fa-check text-emerald-600"></i>
-                  <span>Save 300 DPI passport cutouts to your personal cloud gallery</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <i className="fa-solid fa-check text-emerald-600"></i>
-                  <span>Admin Panel for managing users, appointments & verifications</span>
-                </li>
-              </ul>
-            </div>
+            {/* Segmented Mode Switch: Login vs Sign Up */}
+            {authMode !== 'reset' && (
+              <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className={`py-2 rounded-lg transition ${
+                    authMode === 'login'
+                      ? 'bg-white text-indigo-600 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Login (लॉगिन)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthError(null);
+                  }}
+                  className={`py-2 rounded-lg transition ${
+                    authMode === 'signup'
+                      ? 'bg-white text-indigo-600 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Sign Up (नया अकाउंट)
+                </button>
+              </div>
+            )}
 
-            <button
-              onClick={handleGoogleSignIn}
-              className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-2.5"
-            >
-              <i className="fa-brands fa-google text-base"></i>
-              <span>Continue with Google Account</span>
-            </button>
+            {authError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                {authError}
+              </div>
+            )}
+
+            {/* Email & Password Form */}
+            <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
+              {authMode === 'signup' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Full Name (पूरा नाम)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={authFullName}
+                      onChange={(e) => setAuthFullName(e.target.value)}
+                      placeholder="Enter your full name"
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Mobile Number (मोबाइल नंबर)
+                    </label>
+                    <input
+                      type="tel"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Email ID (ईमेल आईडी)
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {authMode !== 'reset' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Password (पासवर्ड)
+                    </label>
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('reset');
+                          setAuthError(null);
+                        }}
+                        className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Minimum 6 characters"
+                    className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isAuthSubmitting}
+                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-2"
+              >
+                <i className="fa-solid fa-envelope"></i>
+                <span>
+                  {isAuthSubmitting
+                    ? 'Please wait...'
+                    : authMode === 'login'
+                    ? 'Login with Email & Password'
+                    : authMode === 'signup'
+                    ? 'Create Account with Email'
+                    : 'Send Password Reset Link'}
+                </span>
+              </button>
+
+              {authMode === 'reset' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className="w-full py-2 text-xs font-bold text-slate-600 hover:text-slate-900 text-center"
+                >
+                  ← Back to Login
+                </button>
+              )}
+            </form>
+
+            {authMode !== 'reset' && (
+              <>
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-slate-200"></div>
+                  <span className="flex-shrink mx-3 text-[11px] font-semibold text-slate-400 uppercase">
+                    Or Continue With
+                  </span>
+                  <div className="flex-grow border-t border-slate-200"></div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2.5"
+                >
+                  <i className="fa-brands fa-google text-sm"></i>
+                  <span>Sign in with Google</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
