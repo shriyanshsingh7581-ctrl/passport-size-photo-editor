@@ -2,7 +2,7 @@
   "entities": {
     "User": {
       "title": "User Profile",
-      "description": "Registered user profile in PassportStudio Pro with role-based access and status tracking.",
+      "description": "Registered user profile in MALNADU MEDIA with role-based access and approval status tracking.",
       "type": "object",
       "properties": {
         "uid": {
@@ -38,8 +38,8 @@
         },
         "status": {
           "type": "string",
-          "enum": ["active", "suspended"],
-          "description": "Account status"
+          "enum": ["pending", "approved", "active", "blocked", "removed", "suspended"],
+          "description": "Account approval status"
         },
         "createdAt": {
           "type": "string",
@@ -53,6 +53,102 @@
         }
       },
       "required": ["uid", "displayName", "email", "phone", "role", "status", "createdAt", "updatedAt"]
+    },
+    "SiteSettings": {
+      "title": "Global Website Settings",
+      "description": "Persistent branding, theme color, SEO, feature visibility, and footer credit configuration for MALNADU MEDIA.",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "brandTagline": { "type": "string", "minLength": 0, "maxLength": 160 },
+        "logoType": { "type": "string", "enum": ["svg", "url"] },
+        "logoText": { "type": "string", "minLength": 0, "maxLength": 10 },
+        "logoUrl": { "type": "string", "minLength": 0, "maxLength": 500 },
+        "faviconUrl": { "type": "string", "minLength": 0, "maxLength": 500 },
+        "primaryColor": { "type": "string", "minLength": 4, "maxLength": 20 },
+        "secondaryColor": { "type": "string", "minLength": 4, "maxLength": 20 },
+        "footerCredit": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "seoTitle": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "seoDescription": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "enablePassportStudio": { "type": "boolean" },
+        "enableBgRemover": { "type": "boolean" },
+        "enableClarityEnhancer": { "type": "boolean" },
+        "enableQrGenerator": { "type": "boolean" },
+        "enableLinkShortener": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "brandName",
+        "brandTagline",
+        "logoType",
+        "logoText",
+        "logoUrl",
+        "faviconUrl",
+        "primaryColor",
+        "secondaryColor",
+        "footerCredit",
+        "seoTitle",
+        "seoDescription",
+        "enablePassportStudio",
+        "enableBgRemover",
+        "enableClarityEnhancer",
+        "enableQrGenerator",
+        "enableLinkShortener",
+        "updatedAt"
+      ]
+    },
+    "ShortLink": {
+      "title": "Custom Short Link",
+      "description": "Shortened URL slug mapping to an original destination URL for redirection.",
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "originalUrl": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 2000
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "creatorEmail": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 150
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "clicks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "slug",
+        "originalUrl",
+        "createdBy",
+        "creatorEmail",
+        "active",
+        "clicks",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "Appointment": {
       "title": "Passport & Studio Appointment",
@@ -314,7 +410,15 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
-      "description": "Stores registered user profiles, role assignments, and account status."
+      "description": "Stores registered user profiles, role assignments, and account approval status."
+    },
+    "/siteSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SiteSettings" },
+      "description": "Stores global branding, theme colors, configurable footer credit, and feature visibility."
+    },
+    "/shortLinks/{slug}": {
+      "schema": { "$ref": "#/entities/ShortLink" },
+      "description": "Stores custom short link slugs and target destination URLs for redirection."
     },
     "/appointments/{appointmentId}": {
       "schema": { "$ref": "#/entities/Appointment" },

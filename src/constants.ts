@@ -17,6 +17,58 @@ export interface BgSwatch {
   border: string;
 }
 
+export interface SiteSettings {
+  brandName: string;
+  brandTagline: string;
+  logoType: 'svg' | 'url';
+  logoText: string;
+  logoUrl: string;
+  faviconUrl: string;
+  primaryColor: string;
+  secondaryColor: string;
+  footerCredit: string;
+  seoTitle: string;
+  seoDescription: string;
+  enablePassportStudio: boolean;
+  enableBgRemover: boolean;
+  enableClarityEnhancer: boolean;
+  enableQrGenerator: boolean;
+  enableLinkShortener: boolean;
+  updatedAt?: any;
+}
+
+export const DEFAULT_SITE_SETTINGS: SiteSettings = {
+  brandName: 'MALNADU MEDIA',
+  brandTagline: 'AI Photo Studio & Smart Media Suite',
+  logoType: 'svg',
+  logoText: 'MM',
+  logoUrl: '',
+  faviconUrl: '',
+  primaryColor: '#0d9488',
+  secondaryColor: '#0f172a',
+  footerCredit: '© 2026 MALNADU MEDIA. All rights reserved.',
+  seoTitle: 'MALNADU MEDIA — Passport Photo Editor & AI Photo Tools',
+  seoDescription:
+    'MALNADU MEDIA is a professional passport size photo editor, AI background remover, photo clarity enhancer, QR code generator, and custom link shortener platform.',
+  enablePassportStudio: true,
+  enableBgRemover: true,
+  enableClarityEnhancer: true,
+  enableQrGenerator: true,
+  enableLinkShortener: true,
+};
+
+export interface ShortLinkRecord {
+  id: string;
+  slug: string;
+  originalUrl: string;
+  createdBy: string;
+  creatorEmail: string;
+  active: boolean;
+  clicks: number;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export const COUNTRY_PRESETS: CountryPreset[] = [
   {
     id: 'in-stamp',
@@ -152,13 +204,15 @@ export const DOCUMENT_TYPES = [
   'OCI / Voter ID',
 ] as const;
 
+export type AccountStatus = 'pending' | 'approved' | 'active' | 'blocked' | 'removed' | 'suspended';
+
 export interface UserProfile {
   uid: string;
   displayName: string;
   email: string;
   phone: string;
   role: 'user' | 'admin';
-  status: 'active' | 'suspended';
+  status: AccountStatus;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -226,7 +280,7 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
       hair: '#1e1b18',
       suit: '#1e293b',
       shirt: '#ffffff',
-      tie: '#4f46e5',
+      tie: '#0d9488',
       gender: 'male',
       label: 'Sample 1 — Formal Blazer',
     },
