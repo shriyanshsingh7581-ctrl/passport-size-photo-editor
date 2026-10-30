@@ -41,6 +41,12 @@
           "enum": ["pending", "approved", "active", "blocked", "removed", "suspended"],
           "description": "Account approval status"
         },
+        "credits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Available studio photo credits for the user"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

@@ -487,6 +487,7 @@ export interface UserProfile {
   phone: string;
   role: 'user' | 'admin';
   status: AccountStatus;
+  credits?: number;
   createdAt?: any;
   updatedAt?: any;
 }

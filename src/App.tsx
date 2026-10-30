@@ -60,6 +60,7 @@ import {
 import { InteractivePrintSheetEditor } from './components/InteractivePrintSheetEditor';
 import {
   loadWalletCredits,
+  saveWalletCredits,
   deductWalletCredit,
   rechargeWalletWithPin,
   DEFAULT_ADMIN_WHATSAPP,
@@ -69,7 +70,8 @@ import { ToolsHub, ActiveToolTab } from './components/ToolsHub';
 import { StudioToolsHub, StudioSubToolId } from './components/StudioToolsHub';
 import { AkshayaToolsHub, AkshayaSubToolId } from './components/AkshayaToolsHub';
 import { MediaLiveToolsHub, MediaLiveSubToolId } from './components/MediaLiveToolsHub';
-import { AdminPanel } from './components/AdminPanel';
+import { AdminPanel, AdminTab } from './components/AdminPanel';
+import { CreditQrAndOwnerPortal } from './components/CreditQrAndOwnerPortal';
 
 const LOCAL_SETTINGS_KEY = 'malnadu_media_site_settings_v2';
 const LOCAL_SHORTLINKS_KEY = 'malnadu_media_short_links_v1';
@@ -165,6 +167,7 @@ export default function App() {
   const [dashboardSubTab, setDashboardSubTab] = useState<
     'overview' | 'appointments' | 'verifications' | 'photos' | 'profile'
   >('overview');
+  const [adminInitialTab, setAdminInitialTab] = useState<AdminTab>('credits');
 
   // Short-Link Redirection State (for /:slug URLs)
   const [redirectState, setRedirectState] = useState<{
@@ -393,14 +396,25 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // Secret Admin Shortcut: Alt + A or clicking Wallet Balance badge 5 times rapidly
+  // Secret Separate Credit Admin Shortcut:
+  // 1) Alt + A keyboard shortcut
+  // 2) URL query/hash (?credit-admin=1 or #credit-admin)
+  // 3) Clicking Wallet Balance badge 5 times rapidly (1 click opens Client QR Payment Modal)
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (
+      params.get('credit-admin') === '1' ||
+      params.get('panel') === 'credit-admin' ||
+      window.location.hash === '#credit-admin'
+    ) {
+      setShowCreditExhaustedModal(false);
+      setShowAdminRechargeModal(true);
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
-        setAdminPinInput('');
-        setAdminRechargeError(null);
-        setAdminRechargeSuccess(null);
+        setShowCreditExhaustedModal(false);
         setShowAdminRechargeModal(true);
       }
     };
@@ -419,10 +433,11 @@ export default function App() {
 
     if (walletClickCountRef.current.count >= 5) {
       walletClickCountRef.current.count = 0;
-      setAdminPinInput('');
-      setAdminRechargeError(null);
-      setAdminRechargeSuccess(null);
+      setShowCreditExhaustedModal(false);
       setShowAdminRechargeModal(true);
+    } else {
+      // Single click opens Client UPI QR Code Modal on website header
+      setShowCreditExhaustedModal(true);
     }
   };
 
@@ -2080,6 +2095,34 @@ export default function App() {
     showToast(`User role updated to ${role.toUpperCase()}`);
   };
 
+  const handleUpdateUserCredits = async (uid: string, newCredits: number) => {
+    const safeCredits = Math.max(0, Math.floor(Number(newCredits) || 0));
+    setAllUsers((prev) => {
+      const next = prev.map((u) => (u.uid === uid ? { ...u, credits: safeCredits } : u));
+      try {
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+
+    if (userProfile && userProfile.uid === uid) {
+      persistActiveUserSession({ ...userProfile, credits: safeCredits });
+      setAvailableCredits(saveWalletCredits(safeCredits));
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        credits: safeCredits,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // persisted in local state & localStorage
+    }
+    showToast(`Updated user credit balance to ${safeCredits} Photos`);
+  };
+
   const handleDeleteUserRecord = async (uid: string) => {
     setAllUsers((prev) => {
       const next = prev.filter((u) => u.uid !== uid);
@@ -2647,27 +2690,15 @@ export default function App() {
               <i className="fa-solid fa-user-check text-emerald-400"></i>
               <span>My Account</span>
             </button>
-
-            <button
-              onClick={() => setActiveRoute('admin')}
-              className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                activeRoute === 'admin'
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-sm'
-                  : 'hover:bg-white/10 text-amber-300'
-              }`}
-            >
-              <i className="fa-solid fa-shield-halved text-amber-400"></i>
-              <span>Admin Panel</span>
-            </button>
           </nav>
 
-          {/* Zone 3: Wallet Credit Badge & Contextual Actions */}
+          {/* Zone 3: Wallet Credit Badge + Client QR Code Add Credit Button & Contextual Actions */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Built-in Credit & Wallet Badge (Click 5x rapidly or press Alt+A for Secret Admin Recharge) */}
+            {/* Built-in Credit & Wallet Badge */}
             <button
               type="button"
               onClick={handleWalletBadgeSecretClick}
-              title="Available AI Cutout Credits (Admin: Click 5x rapidly or press Alt+A to Recharge)"
+              title="Click to Scan UPI QR & Add Credits (Owner: Click 5x rapidly or press Alt+A for Separate Credit Admin Panel)"
               className={`min-h-[40px] px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
                 availableCredits > 0
                   ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/40 text-emerald-300'
@@ -2679,10 +2710,24 @@ export default function App() {
                   availableCredits > 0 ? 'fa-wallet text-emerald-400' : 'fa-triangle-exclamation text-rose-400'
                 }`}
               ></i>
-              <span className="hidden sm:inline">Available Credits:</span>
+              <span className="hidden sm:inline">Credits:</span>
               <span className="font-mono font-extrabold tabular-nums text-white">
                 {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
               </span>
+            </button>
+
+            {/* Prominent Top Header "Add Credits (QR)" Button for Clients */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAdminRechargeModal(false);
+                setShowCreditExhaustedModal(true);
+              }}
+              className="min-h-[40px] px-3.5 py-1.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-extrabold text-xs shadow-sm transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              title="Scan Shriyansh Singh Rajpoot UPI QR Code to Add Studio Credits"
+            >
+              <i className="fa-solid fa-qrcode text-amber-300"></i>
+              <span>+ Add Credits (QR)</span>
             </button>
 
             {!userProfile ? (
@@ -4382,6 +4427,10 @@ export default function App() {
             shortLinks={shortLinks}
             appointments={appointments}
             verifications={verifications}
+            availableCredits={availableCredits}
+            initialAdminTab={adminInitialTab}
+            onUpdateWalletCredits={(c) => setAvailableCredits(saveWalletCredits(c))}
+            onUpdateUserCredits={handleUpdateUserCredits}
             onUpdateUserStatus={handleUpdateUserStatus}
             onUpdateUserRole={handleUpdateUserRole}
             onDeleteUserRecord={handleDeleteUserRecord}
@@ -4411,18 +4460,20 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-300">
             <span className="font-semibold text-white">{siteSettings.footerCredit}</span>
             <button
-              onClick={() => setActiveRoute('admin')}
-              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-cyan-300 border border-cyan-400/30 text-[11px] font-bold transition flex items-center gap-1"
-              title="Configure Footer Credit & Brand Settings in Admin Panel"
+              onClick={() => {
+                setShowAdminRechargeModal(false);
+                setShowCreditExhaustedModal(true);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/30 text-[11px] font-bold transition flex items-center gap-1"
             >
-              <i className="fa-solid fa-gear"></i>
-              <span>Admin Settings</span>
+              <i className="fa-solid fa-qrcode text-amber-300"></i>
+              <span>Add Credits (UPI QR)</span>
             </button>
           </div>
         </div>
       </footer>
 
-      {/* FIXED MOBILE BOTTOM TAB BAR (Home, Studio Tools, Akshaya Tools, Media & Live, My Account, Admin) */}
+      {/* FIXED MOBILE BOTTOM TAB BAR (Home, Studio Tools, Akshaya Tools, Media & Live, My Account, Add Credits QR) */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070a14]/95 backdrop-blur-md border-t border-cyan-500/30 grid grid-cols-6 items-center h-16 px-1 select-none text-slate-400">
         <button
           onClick={() => setActiveRoute('studio')}
@@ -4488,13 +4539,14 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => setActiveRoute('admin')}
-          className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'
-          }`}
+          onClick={() => {
+            setShowAdminRechargeModal(false);
+            setShowCreditExhaustedModal(true);
+          }}
+          className="min-h-[48px] flex flex-col items-center justify-center text-amber-400 font-bold transition"
         >
-          <i className="fa-solid fa-shield-halved text-sm"></i>
-          <span className="text-[9px] tracking-tight mt-1">Admin</span>
+          <i className="fa-solid fa-qrcode text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Add Credit</span>
         </button>
       </nav>
 
@@ -4818,181 +4870,22 @@ export default function App() {
         </div>
       )}
 
-      {/* Credit Quota Exhausted Popup Modal (Triggered when Available Credits = 0) */}
-      {showCreditExhaustedModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-rose-200 space-y-4 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-2xl mx-auto shadow-xs">
-              <i className="fa-solid fa-wallet"></i>
-            </div>
-            <div className="space-y-1.5">
-              <h3 className="text-lg font-extrabold text-slate-900">
-                Credit Quota Exhausted!
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Credit Quota Exhausted! Please contact your administrator or WhatsApp at{' '}
-                <span className="font-mono font-extrabold text-slate-900">
-                  {siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
-                </span>{' '}
-                to recharge your account.
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-600">Current Wallet Balance:</span>
-              <span className="font-mono font-extrabold text-rose-600 tabular-nums">
-                {availableCredits} Photos
-              </span>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <a
-                href={`https://wa.me/${(siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP).replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                  'Hello MALNADU MEDIA Admin, my studio AI Background Removal credits are exhausted (0 Photos). Please recharge my wallet.'
-                )}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition"
-              >
-                <i className="fa-brands fa-whatsapp text-base"></i>
-                <span>
-                  WhatsApp Admin ({siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP})
-                </span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCreditExhaustedModal(false);
-                  setAdminPinInput('');
-                  setAdminRechargeError(null);
-                  setAdminRechargeSuccess(null);
-                  setShowAdminRechargeModal(true);
-                }}
-                className="w-full min-h-[44px] py-2 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs flex items-center justify-center gap-2 transition"
-              >
-                <i className="fa-solid fa-key text-amber-400"></i>
-                <span>Have Admin Secret PIN? Recharge Now</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowCreditExhaustedModal(false)}
-                className="w-full min-h-[40px] py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hidden Admin Panel / Secret PIN Wallet Recharge Modal (Triggered by Alt+A or clicking Wallet Badge 5x) */}
-      {showAdminRechargeModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#070a14] text-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-cyan-500/40 space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-purple-600 flex items-center justify-center text-white shadow-sm">
-                  <i className="fa-solid fa-shield-halved"></i>
-                </div>
-                <div>
-                  <h3 className="text-sm font-extrabold text-white">
-                    Admin Credit Wallet Recharge
-                  </h3>
-                  <p className="text-[11px] text-cyan-300/80">
-                    Shortcut: Alt+A or 5x Click on Header Wallet Badge
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAdminRechargeModal(false)}
-                className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center"
-              >
-                <i className="fa-solid fa-xmark"></i>
-              </button>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-white/5 border border-cyan-500/25 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-300">Available Credits:</span>
-              <span className="font-mono text-sm font-extrabold text-emerald-400 tabular-nums">
-                {availableCredits} Photos
-              </span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">
-                Enter Secret Admin PIN
-              </label>
-              <input
-                type="password"
-                value={adminPinInput}
-                onChange={(e) => {
-                  setAdminPinInput(e.target.value);
-                  setAdminRechargeError(null);
-                }}
-                placeholder="Enter Secret PIN (e.g. 1234)"
-                className="w-full min-h-[44px] px-3.5 py-2 rounded-2xl bg-slate-900 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-
-            {adminRechargeError && (
-              <div className="p-3 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold">
-                <i className="fa-solid fa-circle-exclamation mr-1.5"></i>
-                {adminRechargeError}
-              </div>
-            )}
-
-            {adminRechargeSuccess && (
-              <div className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
-                <i className="fa-solid fa-circle-check mr-1.5"></i>
-                {adminRechargeSuccess}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                1-Click Studio Credit Top-Up Packages
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[500, 800, 1000].map((pkg) => (
-                  <button
-                    key={pkg}
-                    type="button"
-                    onClick={() => handleAdminQuickRecharge(pkg)}
-                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-mono font-extrabold text-xs shadow-sm active:scale-95 transition flex items-center justify-center gap-1"
-                  >
-                    <i className="fa-solid fa-plus text-[10px]"></i>
-                    <span>{pkg}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-white/10 flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                max={50000}
-                value={adminCustomRechargeInput}
-                onChange={(e) => setAdminCustomRechargeInput(e.target.value)}
-                placeholder="Custom credits"
-                className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-              />
-              <button
-                type="button"
-                onClick={() =>
-                  handleAdminQuickRecharge(Math.max(1, parseInt(adminCustomRechargeInput, 10) || 100))
-                }
-                className="min-h-[42px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold transition"
-              >
-                Add Custom
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Client UPI QR Code Payment Modal & Separate Owner Credit Admin Portal */}
+      <CreditQrAndOwnerPortal
+        isOpen={showCreditExhaustedModal || showAdminRechargeModal}
+        initialMode={showAdminRechargeModal ? 'owner_admin' : 'client_qr'}
+        availableCredits={availableCredits}
+        isQuotaExhausted={availableCredits <= 0}
+        users={allUsers}
+        contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
+        onClose={() => {
+          setShowCreditExhaustedModal(false);
+          setShowAdminRechargeModal(false);
+        }}
+        onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
+        onUpdateUserCredits={handleUpdateUserCredits}
+        showToast={showToast}
+      />
 
       {/* Toast Notification */}
       <div
