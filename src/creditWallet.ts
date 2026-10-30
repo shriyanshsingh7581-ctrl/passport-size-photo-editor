@@ -14,6 +14,7 @@ const WALLET_STORAGE_KEY = 'malnadu_studio_wallet_vault_v1';
 const ADMIN_PASS_VAULT_KEY = 'malnadu_studio_admin_pass_vault_v1';
 const CREDIT_LOG_STORAGE_KEY = 'malnadu_studio_credit_logs_v1';
 const USED_COUPONS_STORAGE_KEY = 'malnadu_studio_used_coupons_v1';
+const PAYMENT_REQUESTS_STORAGE_KEY = 'malnadu_studio_payment_requests_v1';
 const WALLET_SECRET_SALT = 'MALNADU_MEDIA_STUDIO_PRO_2026_VAULT_KEY_#9981';
 
 export const DEFAULT_INITIAL_CREDITS = 25;
@@ -45,6 +46,39 @@ export interface CreditRechargeLog {
   amount: number;
   balanceAfter: number;
 }
+
+export interface PaymentCreditRequest {
+  id: string;
+  clientName: string;
+  clientContact: string;
+  userId?: string;
+  packageLabel: string;
+  creditsRequested: number;
+  amountInr: string;
+  utrNumber: string;
+  paymentNote?: string;
+  paymentScreenshotDataUrl?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvedCode?: string;
+  createdAt: string;
+  processedAt?: string;
+}
+
+const DEFAULT_DEMO_PAYMENT_REQUESTS: PaymentCreditRequest[] = [
+  {
+    id: 'req-demo-101',
+    clientName: 'Arjun Nair (Studio Client)',
+    clientContact: '+91 98951 44321',
+    userId: 'user-arjun-02',
+    packageLabel: 'Studio Pro Pack',
+    creditsRequested: 500,
+    amountInr: '₹299',
+    utrNumber: '431289450112',
+    paymentNote: 'Paid ₹299 via Google Pay to 7581030272@slc. Please confirm and add 500 credits.',
+    status: 'pending',
+    createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
+  },
+];
 
 /**
  * Computes a deterministic salted 64-bit integrity signature (dual FNV-1a 32-bit rounds)
@@ -257,6 +291,168 @@ export function loadCreditRechargeLogs(): CreditRechargeLog[] {
 }
 
 /**
+ * Loads all Client UPI QR Payment Requests.
+ */
+export function loadPaymentCreditRequests(): PaymentCreditRequest[] {
+  try {
+    const raw = localStorage.getItem(PAYMENT_REQUESTS_STORAGE_KEY);
+    if (!raw) {
+      localStorage.setItem(
+        PAYMENT_REQUESTS_STORAGE_KEY,
+        JSON.stringify(DEFAULT_DEMO_PAYMENT_REQUESTS)
+      );
+      return DEFAULT_DEMO_PAYMENT_REQUESTS;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : DEFAULT_DEMO_PAYMENT_REQUESTS;
+  } catch {
+    return DEFAULT_DEMO_PAYMENT_REQUESTS;
+  }
+}
+
+export function savePaymentCreditRequests(list: PaymentCreditRequest[]): void {
+  try {
+    localStorage.setItem(PAYMENT_REQUESTS_STORAGE_KEY, JSON.stringify(list));
+    window.dispatchEvent(
+      new CustomEvent('malnadu-payment-requests-updated', { detail: { requests: list } })
+    );
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Submits a new Client UPI Payment Request after scanning the QR Code.
+ */
+export function submitClientPaymentRequest(input: {
+  clientName: string;
+  clientContact: string;
+  userId?: string;
+  packageLabel: string;
+  creditsRequested: number;
+  amountInr: string;
+  utrNumber: string;
+  paymentNote?: string;
+  paymentScreenshotDataUrl?: string;
+}): PaymentCreditRequest {
+  const current = loadPaymentCreditRequests();
+  const newReq: PaymentCreditRequest = {
+    id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    clientName: input.clientName.trim() || 'Studio Client',
+    clientContact: input.clientContact.trim() || 'Not provided',
+    userId: input.userId,
+    packageLabel: input.packageLabel,
+    creditsRequested: Math.max(1, Math.floor(Number(input.creditsRequested) || 100)),
+    amountInr: input.amountInr,
+    utrNumber: input.utrNumber.trim() || 'UPI-PAID',
+    paymentNote: input.paymentNote?.trim() || '',
+    paymentScreenshotDataUrl: input.paymentScreenshotDataUrl,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+
+  const next = [newReq, ...current].slice(0, 100);
+  savePaymentCreditRequests(next);
+  return newReq;
+}
+
+/**
+ * Confirms a Client Payment Request (Protected by Strong Admin Master Password)
+ * and immediately adds the requested credits to the Website Studio Wallet.
+ */
+export function approveClientPaymentRequest(
+  passwordInput: string,
+  requestId: string
+): {
+  ok: boolean;
+  newBalance: number;
+  approvedRequest?: PaymentCreditRequest;
+  generatedCode?: string;
+  error?: string;
+} {
+  if (!verifyAdminSecretPin(passwordInput)) {
+    return {
+      ok: false,
+      newBalance: loadWalletCredits(),
+      error: 'Invalid Admin Master Password! Access denied.',
+    };
+  }
+
+  const all = loadPaymentCreditRequests();
+  const target = all.find((r) => r.id === requestId);
+  if (!target) {
+    return {
+      ok: false,
+      newBalance: loadWalletCredits(),
+      error: 'Payment request not found.',
+    };
+  }
+
+  if (target.status === 'approved') {
+    return {
+      ok: false,
+      newBalance: loadWalletCredits(),
+      error: 'This payment request has already been confirmed and credited.',
+    };
+  }
+
+  const addAmount = Math.max(1, Math.floor(Number(target.creditsRequested) || 100));
+  const currentCredits = loadWalletCredits();
+  const nextCredits = saveWalletCredits(currentCredits + addAmount);
+
+  const codeGen = generateSignedRechargeCode(passwordInput, addAmount);
+
+  const updatedReq: PaymentCreditRequest = {
+    ...target,
+    status: 'approved',
+    approvedCode: codeGen.code,
+    processedAt: new Date().toISOString(),
+  };
+
+  const nextList = all.map((r) => (r.id === requestId ? updatedReq : r));
+  savePaymentCreditRequests(nextList);
+
+  appendCreditRechargeLog({
+    targetName: `${target.clientName} (UPI QR Confirmed)`,
+    targetEmail: `${target.clientContact} · UTR: ${target.utrNumber}`,
+    action: 'add',
+    amount: addAmount,
+    balanceAfter: nextCredits,
+  });
+
+  return {
+    ok: true,
+    newBalance: nextCredits,
+    approvedRequest: updatedReq,
+    generatedCode: codeGen.code,
+  };
+}
+
+/**
+ * Rejects a Client Payment Request (Protected by Strong Admin Master Password).
+ */
+export function rejectClientPaymentRequest(
+  passwordInput: string,
+  requestId: string
+): { ok: boolean; error?: string } {
+  if (!verifyAdminSecretPin(passwordInput)) {
+    return {
+      ok: false,
+      error: 'Invalid Admin Master Password! Access denied.',
+    };
+  }
+
+  const all = loadPaymentCreditRequests();
+  const nextList = all.map((r) =>
+    r.id === requestId
+      ? { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() }
+      : r
+  );
+  savePaymentCreditRequests(nextList);
+  return { ok: true };
+}
+
+/**
  * Recharges the studio wallet with +100, +500, +800, +1000 (or custom amount) when the valid Master Admin Password is supplied.
  */
 export function rechargeWalletWithPin(
@@ -417,4 +613,3 @@ export function redeemSignedRechargeCode(rawCode: string): {
     newBalance: next,
   };
 }
-

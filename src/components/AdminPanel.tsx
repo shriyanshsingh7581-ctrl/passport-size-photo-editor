@@ -58,6 +58,7 @@ interface AdminPanelProps {
     remarks: string
   ) => Promise<void>;
   onNavigateToStudio: () => void;
+  onOpenPaymentCreditAdmin?: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -82,9 +83,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateAppointmentStatus,
   onUpdateVerificationStatus,
   onNavigateToStudio,
+  onOpenPaymentCreditAdmin,
   showToast,
 }) => {
-  const [adminTab, setAdminTab] = useState<AdminTab>(initialAdminTab || 'credits');
+  const [adminTab, setAdminTab] = useState<AdminTab>(initialAdminTab || 'users');
 
   useEffect(() => {
     if (initialAdminTab) {
@@ -354,6 +356,101 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const baseOrigin =
     typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
 
+  // Require Strong Master Password to unlock the Website Control Admin Panel
+  if (!isCreditVaultUnlocked) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-10">
+        <div className="bg-[#070a14] text-white rounded-3xl border border-cyan-500/40 p-6 sm:p-8 shadow-2xl space-y-6">
+          <div className="flex flex-col items-center text-center space-y-3">
+            <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-cyan-500 via-blue-600 to-purple-600 flex items-center justify-center text-2xl text-white shadow-lg">
+              <i className="fa-solid fa-sliders"></i>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[10px] font-extrabold uppercase tracking-wider">
+                Website Control Admin Panel
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 border border-purple-400/40 text-purple-300 font-mono text-[10px] font-extrabold">
+                /website-admin
+              </span>
+            </div>
+            <h1 className="text-lg sm:text-xl font-extrabold text-white">
+              {siteSettings.brandName} — Website Control Center
+            </h1>
+            <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+              Protected by Strong Master Password. Unlock this panel to manage website branding, theme colors, registered users, tool categories, custom tool thumbnails, and short links.
+            </p>
+          </div>
+
+          <form onSubmit={handleUnlockCreditVault} className="space-y-4">
+            <div>
+              <label className="block text-xs font-extrabold text-slate-300 mb-2">
+                Strong Admin Master Password
+              </label>
+              <div className="relative">
+                <i className="fa-solid fa-key absolute left-4 top-1/2 -translate-y-1/2 text-cyan-400 text-xs"></i>
+                <input
+                  type={showVaultPassword ? 'text' : 'password'}
+                  required
+                  value={vaultPasswordInput}
+                  onChange={(e) => {
+                    setVaultPasswordInput(e.target.value);
+                    setVaultError(null);
+                  }}
+                  placeholder="Enter Strong Master Password..."
+                  className="w-full min-h-[48px] pl-10 pr-12 py-2.5 rounded-2xl bg-slate-900 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-cyan-400"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowVaultPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center text-xs"
+                  title={showVaultPassword ? 'Hide Password' : 'Show Password'}
+                >
+                  <i className={`fa-solid ${showVaultPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                </button>
+              </div>
+            </div>
+
+            {vaultError && (
+              <div className="p-3.5 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2">
+                <i className="fa-solid fa-triangle-exclamation text-sm shrink-0"></i>
+                <span>{vaultError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-sm shadow-lg active:scale-[0.99] transition flex items-center justify-center gap-2"
+            >
+              <i className="fa-solid fa-unlock-keyhole"></i>
+              <span>Unlock Website Control Admin Panel</span>
+            </button>
+          </form>
+
+          <div className="pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
+            {onOpenPaymentCreditAdmin && (
+              <button
+                type="button"
+                onClick={onOpenPaymentCreditAdmin}
+                className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-xs font-extrabold flex items-center gap-1.5 transition"
+              >
+                <i className="fa-solid fa-money-check-dollar"></i>
+                <span>Go to /credit-admin</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onNavigateToStudio}
+              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition"
+            >
+              ← Back to Website
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
       {/* Top Admin Header Banner — MALNADU MEDIA Butterfly-Camera Logo Theme */}
@@ -369,25 +466,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-base sm:text-xl font-extrabold tracking-tight">
-                {siteSettings.brandName} — Admin Control Center
+                {siteSettings.brandName} — Website Control Admin Panel
               </h1>
-              <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border border-cyan-400/30">
-                Super Admin
+              <span className="px-2.5 py-0.5 rounded-lg font-mono text-[10px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                /website-admin
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Password-protected Credit Admin Vault, user account approvals, brand identity, and studio tools.
+              Control website branding, users, tool catalog, custom thumbnails, short links, and appointments.
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onOpenPaymentCreditAdmin && (
+            <button
+              type="button"
+              onClick={onOpenPaymentCreditAdmin}
+              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white text-xs font-extrabold shadow-sm transition flex items-center gap-2"
+            >
+              <i className="fa-solid fa-money-check-dollar"></i>
+              <span>Go to /credit-admin</span>
+            </button>
+          )}
+
           <button
-            onClick={() => setAdminTab('credits')}
-            className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white text-xs font-extrabold shadow-sm transition flex items-center gap-2"
+            type="button"
+            onClick={handleLockCreditVault}
+            className="min-h-[42px] px-3.5 py-2 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold transition flex items-center gap-1.5"
           >
-            <i className={`fa-solid ${isCreditVaultUnlocked ? 'fa-unlock-keyhole' : 'fa-lock'}`}></i>
-            <span>Add Credits (Admin Vault)</span>
+            <i className="fa-solid fa-lock"></i>
+            <span>Lock Admin</span>
           </button>
 
           <button
@@ -1409,7 +1518,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     />
                   </div>
 
-                  <div className="lg:col-span-4">
+                  <div className="lg:col-span-3">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">
                       Tool Description
                     </label>
@@ -1430,7 +1539,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     />
                   </div>
 
-                  <div className="lg:col-span-2 flex items-center justify-end gap-2">
+                  <div className="lg:col-span-3 flex items-center justify-end gap-1.5 flex-wrap">
+                    <label
+                      className="min-h-[38px] px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-800 text-[11px] font-extrabold cursor-pointer flex items-center gap-1 transition"
+                      title="Upload or Redesign Custom Tool Thumbnail Image"
+                    >
+                      <i className="fa-solid fa-image"></i>
+                      <span>{tool.thumbnailUrl ? 'Change Thumb' : 'Upload Thumb'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const dataUrl = ev.target?.result as string;
+                            if (!dataUrl) return;
+                            const updated = (
+                              formSettings.toolCatalog || DEFAULT_TOOL_CATALOG
+                            ).map((item) =>
+                              item.id === tool.id ? { ...item, thumbnailUrl: dataUrl } : item
+                            );
+                            setFormSettings({ ...formSettings, toolCatalog: updated });
+                            showToast(`Thumbnail updated for ${tool.name}! Click Save to apply.`);
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                    </label>
+
                     <button
                       type="button"
                       onClick={() => {
@@ -1441,7 +1580,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         );
                         setFormSettings({ ...formSettings, toolCatalog: updated });
                       }}
-                      className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+                      className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
                         tool.enabled
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           : 'bg-rose-100 text-rose-800 border border-rose-200'

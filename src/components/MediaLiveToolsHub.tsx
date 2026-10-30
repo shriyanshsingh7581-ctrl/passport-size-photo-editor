@@ -119,14 +119,26 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
   );
 
   // =========================================================================
-  // 2. YOUTUBE THUMBNAIL MAKER STATE (1280×720)
+  // 2. YOUTUBE THUMBNAIL MAKER & REDESIGN STUDIO STATE (1280×720)
   // =========================================================================
-  const [ytTemplate, setYtTemplate] = useState<'cyber' | 'fire' | 'studio'>('cyber');
+  const [ytTemplate, setYtTemplate] = useState<
+    'redesign-glow' | 'breaking-banner' | 'split-before-after' | 'cyber' | 'fire' | 'studio'
+  >('redesign-glow');
+  const [uploadedThumbUrl, setUploadedThumbUrl] = useState<string>('');
   const [ytTitle, setYtTitle] = useState('PRO LIVE STREAM SETUP');
   const [ytSubtitle, setYtSubtitle] = useState('4K MULTI-CAM STUDIO WORKFLOW!');
-  const [ytBadgeText, setYtBadgeText] = useState('FULL TUTORIAL');
+  const [ytBadgeText, setYtBadgeText] = useState('NEW REDESIGN');
   const [ytOutlineWidth, setYtOutlineWidth] = useState<number>(8);
   const [ytShadowBlur, setYtShadowBlur] = useState<number>(18);
+  const [ytRedesignBrightness, setYtRedesignBrightness] = useState<number>(106);
+  const [ytRedesignContrast, setYtRedesignContrast] = useState<number>(115);
+  const [ytRedesignSaturation, setYtRedesignSaturation] = useState<number>(122);
+  const [ytRedesignTintOpacity, setYtRedesignTintOpacity] = useState<number>(45);
+  const [ytRedesignZoom, setYtRedesignZoom] = useState<number>(100);
+  const [ytShowSubjectOverlay, setYtShowSubjectOverlay] = useState<boolean>(true);
+  const [ytShowNeonFrame, setYtShowNeonFrame] = useState<boolean>(true);
+  const uploadedThumbImgRef = useRef<HTMLImageElement | null>(null);
+  const thumbUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   // =========================================================================
   // 3. LIVE COUNTDOWN MAKER STATE
@@ -229,7 +241,9 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
   const [descKeywords, setDescKeywords] = useState(
     'Wedding Live, Kerala Wedding, Malnadu Media, 4K Live Stream, Bride and Groom'
   );
-  const [descLanguage, setDescLanguage] = useState<'English' | 'Hindi' | 'Hinglish'>('English');
+  const [descLanguage, setDescLanguage] = useState<
+    'Standard Broadcast' | 'High-CTR SEO' | 'Formal Event'
+  >('Standard Broadcast');
   const [descCategory, setDescCategory] = useState<
     'Wedding Live' | 'Church / Devotional' | 'Tech / Tutorial' | 'Vlog / Entertainment'
   >('Wedding Live');
@@ -379,7 +393,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
 
   const handleImageAssetUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
-    target: 'bg' | 'subject' | 'logo'
+    target: 'bg' | 'subject' | 'logo' | 'thumbnail'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -389,13 +403,19 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       if (!res) return;
       const img = new Image();
       img.onload = () => {
-        if (target === 'bg') {
+        if (target === 'thumbnail') {
+          uploadedThumbImgRef.current = img;
+          setUploadedThumbUrl(res);
+          setYtShowSubjectOverlay(false);
+          showToast('Existing Thumbnail Uploaded! Adjust redesign styles & text below.');
+        } else if (target === 'bg') {
           bgImgRef.current = img;
           setCustomBgUrl(res);
           showToast('Background image updated!');
         } else if (target === 'subject') {
           subjectImgRef.current = img;
           setSubjectPhotoUrl(res);
+          setYtShowSubjectOverlay(true);
           showToast('Event / Subject photo updated!');
         } else {
           logoImgRef.current = img;
@@ -522,7 +542,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
         ctx.fillText(livePosterUrl, 80, 590);
       }
 
-      // 2. YOUTUBE THUMBNAIL MAKER (1280×720)
+      // 2. YOUTUBE THUMBNAIL MAKER & EXISTING THUMBNAIL REDESIGN STUDIO (1280×720)
       else if (activeSubTool === 'youtube-thumbnail') {
         const w = 1280;
         const h = 720;
@@ -530,14 +550,99 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
         canvas.height = h;
 
         const stops: Record<string, [string, string, string]> = {
+          'redesign-glow': ['#070a14', '#0e7490', '#3b0764'],
+          'breaking-banner': ['#090d16', '#7f1d1d', '#1e1b4b'],
+          'split-before-after': ['#070a14', '#1e293b', '#0f172a'],
           cyber: ['#070a14', '#0e7490', '#3b0764'],
           fire: ['#18181b', '#7f1d1d', '#9a3412'],
           studio: ['#0f172a', '#1e3a8a', '#172554'],
         };
-        drawCoverBackground(ctx, w, h, stops[ytTemplate] || stops.cyber);
 
-        // Creator Image on right
-        if (subjectImgRef.current) {
+        const activeBaseImg = uploadedThumbImgRef.current || bgImgRef.current;
+
+        if (ytTemplate === 'split-before-after' && activeBaseImg) {
+          // Left Half = Original Thumbnail ("BEFORE"), Right Half = Redesigned Color-Graded ("AFTER")
+          const halfW = w / 2;
+          const sc = Math.max(halfW / activeBaseImg.width, h / activeBaseImg.height);
+          const dW = activeBaseImg.width * sc;
+          const dH = activeBaseImg.height * sc;
+
+          // Left: Original
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, halfW, h);
+          ctx.clip();
+          ctx.drawImage(activeBaseImg, (halfW - dW) / 2, (h - dH) / 2, dW, dH);
+          ctx.fillStyle = 'rgba(0,0,0,0.25)';
+          ctx.fillRect(0, 0, halfW, h);
+          ctx.restore();
+
+          // Right: Redesigned Enhanced
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(halfW, 0, halfW, h);
+          ctx.clip();
+          ctx.filter = `brightness(${ytRedesignBrightness}%) contrast(${ytRedesignContrast}%) saturate(${ytRedesignSaturation}%)`;
+          ctx.drawImage(activeBaseImg, halfW + (halfW - dW) / 2, (h - dH) / 2, dW, dH);
+          ctx.filter = 'none';
+          const rightGrad = ctx.createLinearGradient(halfW, 0, w, h);
+          rightGrad.addColorStop(0, 'rgba(6, 182, 212, 0.15)');
+          rightGrad.addColorStop(1, `rgba(7, 10, 20, ${ytRedesignTintOpacity / 100})`);
+          ctx.fillStyle = rightGrad;
+          ctx.fillRect(halfW, 0, halfW, h);
+          ctx.restore();
+
+          // Center Divider Line
+          ctx.strokeStyle = accentColor;
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.moveTo(halfW, 0);
+          ctx.lineTo(halfW, h);
+          ctx.stroke();
+
+          // BEFORE & AFTER Pills
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+          ctx.beginPath();
+          ctx.roundRect(36, h - 76, 165, 48, 12);
+          ctx.fill();
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = `800 20px "${fontFamily}", sans-serif`;
+          ctx.fillText('OLD THUMBNAIL', 48, h - 45);
+
+          ctx.fillStyle = accentColor;
+          ctx.beginPath();
+          ctx.roundRect(w - 225, h - 76, 190, 48, 12);
+          ctx.fill();
+          ctx.fillStyle = '#070a14';
+          ctx.font = `900 20px "${fontFamily}", sans-serif`;
+          ctx.fillText('NEW REDESIGN', w - 208, h - 45);
+        } else if (activeBaseImg) {
+          // Draw Uploaded Existing Thumbnail with Real-Time Redesign Adjustments (Brightness, Contrast, Saturation, Zoom)
+          ctx.save();
+          ctx.filter = `brightness(${ytRedesignBrightness}%) contrast(${ytRedesignContrast}%) saturate(${ytRedesignSaturation}%)`;
+          const zoomFactor = ytRedesignZoom / 100;
+          const baseScale = Math.max(w / activeBaseImg.width, h / activeBaseImg.height) * zoomFactor;
+          const dW = activeBaseImg.width * baseScale;
+          const dH = activeBaseImg.height * baseScale;
+          ctx.drawImage(activeBaseImg, (w - dW) / 2, (h - dH) / 2, dW, dH);
+          ctx.restore();
+
+          // Cinematic Redesign Gradient Overlay
+          const overlayAlpha = ytRedesignTintOpacity / 100;
+          if (overlayAlpha > 0) {
+            const grad = ctx.createLinearGradient(0, 0, w * 0.78, h);
+            grad.addColorStop(0, `rgba(7, 10, 20, ${Math.min(0.92, overlayAlpha + 0.18)})`);
+            grad.addColorStop(0.55, `rgba(15, 23, 42, ${overlayAlpha * 0.65})`);
+            grad.addColorStop(1, `rgba(7, 10, 20, ${overlayAlpha * 0.25})`);
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+          }
+        } else {
+          drawCoverBackground(ctx, w, h, stops[ytTemplate] || stops.cyber);
+        }
+
+        // Optional Creator / Subject Cutout on Right
+        if (ytShowSubjectOverlay && subjectImgRef.current) {
           const img = subjectImgRef.current;
           const targetH = 660;
           const targetW = Math.round((img.width / img.height) * targetH);
@@ -548,14 +653,39 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
           ctx.restore();
         }
 
+        // Optional Neon Frame Border for Redesigned Thumbnails
+        if (ytShowNeonFrame) {
+          ctx.save();
+          ctx.strokeStyle = accentColor;
+          ctx.lineWidth = 6;
+          ctx.shadowColor = accentColor;
+          ctx.shadowBlur = 18;
+          ctx.strokeRect(18, 18, w - 36, h - 36);
+          ctx.restore();
+        }
+
+        // Breaking News Top Strip if breaking-banner template
+        if (ytTemplate === 'breaking-banner') {
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(18, 18, w - 36, 54);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `900 22px "${fontFamily}", sans-serif`;
+          ctx.fillText(
+            `● LIVE BROADCAST REDESIGN · ${siteSettings.brandName.toUpperCase()}`,
+            46,
+            53
+          );
+        }
+
         // Top Badge
+        const badgeY = ytTemplate === 'breaking-banner' ? 92 : 62;
         ctx.fillStyle = '#f59e0b';
         ctx.beginPath();
-        ctx.roundRect(58, 62, 280, 56, 14);
+        ctx.roundRect(58, badgeY, 300, 56, 14);
         ctx.fill();
         ctx.fillStyle = '#070a14';
         ctx.font = `900 24px "${fontFamily}", sans-serif`;
-        ctx.fillText(ytBadgeText.toUpperCase(), 82, 99);
+        ctx.fillText(ytBadgeText.toUpperCase().slice(0, 18), 82, badgeY + 37);
 
         // Big Outlined Title
         ctx.save();
@@ -581,13 +711,18 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
         ctx.restore();
 
         // Subtitle Banner
-        ctx.fillStyle = 'rgba(7, 10, 20, 0.85)';
-        ctx.beginPath();
-        ctx.roundRect(58, 430, 680, 74, 16);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `800 28px "${fontFamily}", sans-serif`;
-        ctx.fillText(ytSubtitle, 82, 478);
+        if (ytSubtitle.trim()) {
+          ctx.fillStyle = 'rgba(7, 10, 20, 0.88)';
+          ctx.beginPath();
+          ctx.roundRect(58, 430, 700, 74, 16);
+          ctx.fill();
+          ctx.strokeStyle = accentColor;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `800 28px "${fontFamily}", sans-serif`;
+          ctx.fillText(ytSubtitle.slice(0, 38), 82, 478);
+        }
 
         if (logoImgRef.current) {
           ctx.drawImage(logoImgRef.current, 58, 575, 120, 80);
@@ -1190,11 +1325,19 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       livePosterUrl,
       livePosterDesc,
       ytTemplate,
+      uploadedThumbUrl,
       ytTitle,
       ytSubtitle,
       ytBadgeText,
       ytOutlineWidth,
       ytShadowBlur,
+      ytRedesignBrightness,
+      ytRedesignContrast,
+      ytRedesignSaturation,
+      ytRedesignTintOpacity,
+      ytRedesignZoom,
+      ytShowSubjectOverlay,
+      ytShowNeonFrame,
       cdEventTitle,
       cdStyle,
       cdRemaining,
@@ -1326,10 +1469,10 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       const hashtags = kwList.map((k) => `#${k.replace(/\s+/g, '')}`).join(' ');
 
       let output = '';
-      if (descLanguage === 'Hindi') {
-        output = `🔴 ${descTitle}\n\nनमस्कार दोस्तों! ${siteSettings.brandName} के आधिकारिक यूट्यूब चैनल में आपका स्वागत है।\n\n📌 वीडियो के बारे में:\n${descTopic}\n\n⏱️ मुख्य समय (Timestamps):\n00:00 - लाइव स्ट्रीम की शुरुआत (Intro)\n05:30 - मुख्य कार्यक्रम / समारोह\n25:00 - विशेष झलकियां (Highlights)\n45:00 - समापन और धन्यवाद\n\n📞 लाइव स्ट्रीमिंग और स्टूडियो बुकिंग के लिए संपर्क करें:\n${descCta}\n\n🔔 हमारे चैनल को सब्सक्राइब करें और बेल आइकन दबाएं ताकि कोई भी लाइव अपडेट मिस न हो!\n\n${hashtags} #MalnaduMedia #LiveStreamIndia`;
-      } else if (descLanguage === 'Hinglish') {
-        output = `🔴 ${descTitle}\n\nWelcome to ${siteSettings.brandName} Official YouTube Channel! Aaj ke is special video/live stream mein dekhiye:\n\n📌 About This Video:\n${descTopic}\n\n⏱️ Video Chapters & Timestamps:\n00:00 - Broadcast Countdown & Intro\n04:00 - Main Event Entry & Welcome\n20:00 - Special Ceremony & Stage Moments\n50:00 - Closing & Blessings\n\n📢 ${descCta}\n\n👉 Agar aapko video pasand aaye toh LIKE karein, SHARE karein, aur channel ko SUBSCRIBE zaroor karein!\n\n${hashtags} #MalnaduMedia #4KLiveStream #StudioPro`;
+      if (descLanguage === 'High-CTR SEO') {
+        output = `🔴 ${descTitle}\n\nWelcome to the official channel of ${siteSettings.brandName}! Watch this complete 4K high-definition broadcast and exclusive coverage.\n\n🔥 WHAT YOU WILL WATCH IN THIS VIDEO:\n${descTopic}\n\n⏱️ VIDEO CHAPTERS & TIMESTAMPS:\n00:00 - Broadcast Countdown & Intro\n04:00 - Main Event Entry & Welcome\n20:00 - Special Ceremony & Stage Highlights\n50:00 - Grand Finale & Closing Remarks\n\n📢 BOOKING & STUDIO CONTACT:\n${descCta}\n\n👉 Make sure to LIKE, SHARE, and SUBSCRIBE with the notification bell turned on so you never miss our next live stream!\n\n🏷️ SEO TAGS:\n${descKeywords}\n\n${hashtags} #MalnaduMedia #4KLiveStream #StudioPro`;
+      } else if (descLanguage === 'Formal Event') {
+        output = `${descTitle}\n\nOfficial Live Broadcast presented by ${siteSettings.brandName} (${siteSettings.brandTagline}).\n\nEVENT OVERVIEW:\n${descTopic}\n\nSCHEDULE & TIMESTAMPS:\n00:00 - Pre-Broadcast Stand-By\n05:00 - Opening Service & Welcome Address\n25:00 - Principal Ceremony\n45:00 - Concluding Remarks\n\nINQUIRIES & BROADCAST SERVICES:\n${descCta}\n\n${hashtags} #MalnaduMedia #LiveBroadcast`;
       } else {
         output = `🔴 ${descTitle}\n\nWelcome to the official broadcast by ${siteSettings.brandName} (${siteSettings.brandTagline}).\n\n📌 ABOUT THIS BROADCAST:\n${descTopic}\n\n⏱️ TIMESTAMPS / CHAPTERS:\n00:00 - Live Stream Countdown & Welcome\n05:00 - Opening Ceremony & Introduction\n20:00 - Main Event / Keynote Highlights\n45:00 - Special Moments & Concluding Remarks\n\n📞 BOOKING & STUDIO INQUIRIES:\n${descCta}\n\n🔔 Don't forget to LIKE, SHARE, and SUBSCRIBE for high-definition 4K live broadcasts and studio updates!\n\n🏷️ TAGS & KEYWORDS:\n${descKeywords}\n\n${hashtags} #MalnaduMedia #LiveBroadcast #4KStudio`;
       }
@@ -1578,6 +1721,13 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
         onChange={(e) => handleImageAssetUpload(e, 'logo')}
         className="hidden"
       />
+      <input
+        ref={thumbUploadInputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => handleImageAssetUpload(e, 'thumbnail')}
+        className="hidden"
+      />
 
       {/* =====================================================================
           VIEW 0: MEDIA & LIVE TOOLS CATEGORY LANDING GRID
@@ -1712,38 +1862,206 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
             )}
 
             {activeSubTool === 'youtube-thumbnail' && (
-              <div className="space-y-3">
-                <h2 className="text-base font-extrabold text-slate-900">
-                  YouTube Thumbnail Maker (1280×720)
-                </h2>
-                <select
-                  value={ytTemplate}
-                  onChange={(e) => setYtTemplate(e.target.value as any)}
-                  className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
-                >
-                  <option value="cyber">Cyber Cyan & Purple</option>
-                  <option value="fire">High-Contrast Crimson</option>
-                  <option value="studio">Royal Studio Blue</option>
-                </select>
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Thumbnail Upload & Redesign Studio (1280×720)
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Upload any existing thumbnail to redesign it or build a fresh 16:9 HD thumbnail.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Prominent Upload Existing Thumbnail Card */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-50 via-cyan-50 to-indigo-50 border-2 border-dashed border-purple-300 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-purple-950 flex items-center gap-1.5">
+                      <i className="fa-solid fa-wand-magic-sparkles text-purple-600"></i>
+                      <span>Upload Existing Thumbnail to Redesign</span>
+                    </span>
+                    {uploadedThumbUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          uploadedThumbImgRef.current = null;
+                          setUploadedThumbUrl('');
+                          setYtShowSubjectOverlay(true);
+                          showToast('Cleared uploaded thumbnail.');
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                      >
+                        Reset Image
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => thumbUploadInputRef.current?.click()}
+                      className="flex-1 min-h-[42px] py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-extrabold text-xs shadow-xs flex items-center justify-center gap-2 transition"
+                    >
+                      <i className="fa-solid fa-cloud-arrow-up"></i>
+                      <span>
+                        {uploadedThumbUrl
+                          ? 'Replace Existing Thumbnail Image'
+                          : 'Upload Thumbnail Image (JPG / PNG / WebP)'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Redesign Style / Makeover Layout
+                  </label>
+                  <select
+                    value={ytTemplate}
+                    onChange={(e) => setYtTemplate(e.target.value as any)}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    <option value="redesign-glow">Vibrant Glow & Contrast Redesign</option>
+                    <option value="breaking-banner">Breaking Broadcast Frame Redesign</option>
+                    <option value="split-before-after">Before vs. After Split Redesign</option>
+                    <option value="cyber">Cyber Cyan & Purple Studio</option>
+                    <option value="fire">High-Contrast Crimson Action</option>
+                    <option value="studio">Royal Studio Blue</option>
+                  </select>
+                </div>
+
+                {/* Color Grading & Image Redesign Sliders */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700">
+                      Thumbnail Image Color Grading & Frame
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setYtRedesignBrightness(106);
+                        setYtRedesignContrast(115);
+                        setYtRedesignSaturation(122);
+                        setYtRedesignTintOpacity(45);
+                        setYtRedesignZoom(100);
+                      }}
+                      className="text-[10px] font-bold text-cyan-700 hover:underline"
+                    >
+                      Reset Filters
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                        Brightness ({ytRedesignBrightness}%)
+                      </label>
+                      <input
+                        type="range"
+                        min={60}
+                        max={150}
+                        value={ytRedesignBrightness}
+                        onChange={(e) => setYtRedesignBrightness(parseInt(e.target.value, 10))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                        Contrast ({ytRedesignContrast}%)
+                      </label>
+                      <input
+                        type="range"
+                        min={70}
+                        max={160}
+                        value={ytRedesignContrast}
+                        onChange={(e) => setYtRedesignContrast(parseInt(e.target.value, 10))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                        Saturation ({ytRedesignSaturation}%)
+                      </label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={200}
+                        value={ytRedesignSaturation}
+                        onChange={(e) => setYtRedesignSaturation(parseInt(e.target.value, 10))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                        Dark Gradient Tint ({ytRedesignTintOpacity}%)
+                      </label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={85}
+                        value={ytRedesignTintOpacity}
+                        onChange={(e) => setYtRedesignTintOpacity(parseInt(e.target.value, 10))}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                      Thumbnail Zoom / Crop Scale ({ytRedesignZoom}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={85}
+                      max={150}
+                      value={ytRedesignZoom}
+                      onChange={(e) => setYtRedesignZoom(parseInt(e.target.value, 10))}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ytShowSubjectOverlay}
+                        onChange={(e) => setYtShowSubjectOverlay(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-purple-600 rounded"
+                      />
+                      <span>Right Subject Cutout</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ytShowNeonFrame}
+                        onChange={(e) => setYtShowNeonFrame(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-cyan-600 rounded"
+                      />
+                      <span>Neon Border Frame</span>
+                    </label>
+                  </div>
+                </div>
+
                 <input
                   type="text"
                   value={ytTitle}
                   onChange={(e) => setYtTitle(e.target.value)}
-                  placeholder="Thumbnail Headline"
+                  placeholder="Redesigned Thumbnail Headline"
                   className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
                 />
                 <input
                   type="text"
                   value={ytSubtitle}
                   onChange={(e) => setYtSubtitle(e.target.value)}
-                  placeholder="Subtitle Text"
+                  placeholder="Subtitle Banner Text"
                   className="w-full min-h-[42px] px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
                 />
                 <input
                   type="text"
                   value={ytBadgeText}
                   onChange={(e) => setYtBadgeText(e.target.value)}
-                  placeholder="Top Tag Badge"
+                  placeholder="Top Tag Badge (e.g. NEW REDESIGN)"
                   className="w-full min-h-[42px] px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
                 />
                 <div className="grid grid-cols-2 gap-2">
@@ -2493,15 +2811,15 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
             </div>
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Language</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tone & Style</label>
                 <select
                   value={descLanguage}
                   onChange={(e) => setDescLanguage(e.target.value as any)}
                   className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
                 >
-                  <option value="English">English</option>
-                  <option value="Hindi">Hindi (हिंदी)</option>
-                  <option value="Hinglish">Hinglish</option>
+                  <option value="Standard Broadcast">Standard Broadcast (English)</option>
+                  <option value="High-CTR SEO">High-CTR SEO (English)</option>
+                  <option value="Formal Event">Formal Event (English)</option>
                 </select>
               </div>
               <div>

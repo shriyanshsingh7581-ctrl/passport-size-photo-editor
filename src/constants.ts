@@ -28,6 +28,7 @@ export interface ToolCatalogItem {
   description: string;
   icon: string;
   badge?: string;
+  thumbnailUrl?: string;
   enabled: boolean;
 }
 
@@ -165,10 +166,10 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
   {
     id: 'youtube-thumbnail',
     category: 'media-live',
-    name: 'YouTube Thumbnail Maker',
-    description: 'Create high-CTR 1280×720 (16:9) YouTube thumbnails with cutouts, outlines, and bold typography.',
+    name: 'Thumbnail Upload & Redesign Studio',
+    description: 'Upload any existing thumbnail to redesign with color grading, layouts & overlays, or create 1280×720 HD YouTube thumbnails.',
     icon: 'fa-brands fa-youtube',
-    badge: '1280×720 HD',
+    badge: 'Upload & Redesign',
     enabled: true,
   },
   {
@@ -241,9 +242,9 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
     id: 'youtube-description',
     category: 'media-live',
     name: 'YouTube Description Generator',
-    description: 'Generate SEO-optimized YouTube descriptions, timestamps, CTAs & hashtags in English, Hindi & Hinglish.',
+    description: 'Generate SEO-optimized YouTube descriptions, timestamps, CTAs & hashtags in English.',
     icon: 'fa-pen-nib',
-    badge: 'Multi-Lang',
+    badge: 'SEO Ready',
     enabled: true,
   },
   {
@@ -368,7 +369,7 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
   },
   {
     id: 'uk-passport',
-    country: 'UK Passport & Visa (യു.കെ പാസ്‌പോർട്ട്)',
+    country: 'UK Passport & Visa (35×45 mm)',
     flag: '🇬🇧',
     widthMm: 35,
     heightMm: 45,
@@ -379,7 +380,7 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
   },
   {
     id: 'us-passport',
-    country: 'US Passport & Visa (യു.എസ് പാസ്‌പോർട്ട്)',
+    country: 'US Passport & Visa (2×2 inch)',
     flag: '🇺🇸',
     widthMm: 50.8,
     heightMm: 50.8,
@@ -390,7 +391,7 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
   },
   {
     id: 'uae-visa',
-    country: 'UAE / Dubai Visa & Emirates ID (യു.എ.ഇ)',
+    country: 'UAE / Dubai Visa & Emirates ID (43×55 mm)',
     flag: '🇦🇪',
     widthMm: 43,
     heightMm: 55,
@@ -401,7 +402,7 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
   },
   {
     id: 'schengen-visa',
-    country: 'Schengen / Europe Visa (യൂറോപ്പ് വിസ)',
+    country: 'Schengen / Europe Visa (35×45 mm)',
     flag: '🇪🇺',
     widthMm: 35,
     heightMm: 45,
@@ -412,7 +413,7 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
   },
   {
     id: 'in-pan',
-    country: 'India PAN Card / Kerala PSC (25×35 mm)',
+    country: 'India PAN Card / PSC Portal (25×35 mm)',
     flag: '🇮🇳',
     widthMm: 25,
     heightMm: 35,
@@ -435,14 +436,14 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
 ];
 
 export const BG_SWATCHES: BgSwatch[] = [
-  { name: 'Pure White', mal: 'വെള്ള', hex: '#FFFFFF', color: '#FFFFFF', border: '#cbd5e1' },
-  { name: 'UK Cream/Grey', mal: 'ഓഫ് വൈറ്റ്', hex: '#F2F2F2', color: '#F2F2F2', border: '#cbd5e1' },
-  { name: 'Light Blue', mal: 'ഇളം നീല', hex: '#D0E7FF', color: '#D0E7FF', border: '#93c5fd' },
-  { name: 'Sky Blue', mal: 'സ്കൈ ബ്ലൂ', hex: '#7CC0FF', color: '#7CC0FF', border: '#60a5fa' },
-  { name: 'Royal Blue', mal: 'കടും നീല', hex: '#1E40AF', color: '#1E40AF', border: '#1e3a8a' },
-  { name: 'Light Grey', mal: 'ചാരനിറം', hex: '#E2E8F0', color: '#E2E8F0', border: '#94a3b8' },
-  { name: 'ID Red', mal: 'ചുവപ്പ്', hex: '#DC2626', color: '#DC2626', border: '#b91c1c' },
-  { name: 'Transparent', mal: 'ട്രാൻസ്പരന്റ്', hex: 'transparent', color: 'transparent', checker: true, border: '#94a3b8' },
+  { name: 'Pure White', mal: 'Studio White', hex: '#FFFFFF', color: '#FFFFFF', border: '#cbd5e1' },
+  { name: 'UK Cream/Grey', mal: 'Off White', hex: '#F2F2F2', color: '#F2F2F2', border: '#cbd5e1' },
+  { name: 'Light Blue', mal: 'Passport Blue', hex: '#D0E7FF', color: '#D0E7FF', border: '#93c5fd' },
+  { name: 'Sky Blue', mal: 'Sky Blue', hex: '#7CC0FF', color: '#7CC0FF', border: '#60a5fa' },
+  { name: 'Royal Blue', mal: 'Deep Blue', hex: '#1E40AF', color: '#1E40AF', border: '#1e3a8a' },
+  { name: 'Light Grey', mal: 'Neutral Grey', hex: '#E2E8F0', color: '#E2E8F0', border: '#94a3b8' },
+  { name: 'ID Red', mal: 'Official Red', hex: '#DC2626', color: '#DC2626', border: '#b91c1c' },
+  { name: 'Transparent', mal: 'Alpha PNG', hex: 'transparent', color: 'transparent', checker: true, border: '#94a3b8' },
 ];
 
 export const SERVICE_TYPES = [

@@ -63,6 +63,7 @@ import {
   saveWalletCredits,
   deductWalletCredit,
   rechargeWalletWithPin,
+  loadPaymentCreditRequests,
   DEFAULT_ADMIN_WHATSAPP,
 } from './creditWallet';
 import { UserDashboard } from './components/UserDashboard';
@@ -158,6 +159,7 @@ export default function App() {
     | 'tools'
     | 'dashboard'
     | 'admin'
+    | 'credit-admin'
   >('studio');
   const [activeToolTab, setActiveToolTab] = useState<ActiveToolTab>('bg-remover');
   const [activeStudioSubTool, setActiveStudioSubTool] = useState<StudioSubToolId>('landing');
@@ -305,8 +307,11 @@ export default function App() {
   const [aiLoadingMsg, setAiLoadingMsg] = useState('Processing AI Cutout...');
   const [aiProgress, setAiProgress] = useState(20);
 
-  // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Admin PIN)
+  // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Strong Master Password)
   const [availableCredits, setAvailableCredits] = useState<number>(() => loadWalletCredits());
+  const [pendingPaymentRequestsCount, setPendingPaymentRequestsCount] = useState<number>(
+    () => loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
+  );
   const [showCreditExhaustedModal, setShowCreditExhaustedModal] = useState(false);
   const [showAdminRechargeModal, setShowAdminRechargeModal] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
@@ -396,31 +401,95 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // Secret Separate Credit Admin Shortcut:
-  // 1) Alt + A keyboard shortcut
-  // 2) URL query/hash (?credit-admin=1 or #credit-admin)
-  // 3) Clicking Wallet Balance badge 5 times rapidly (1 click opens Client QR Payment Modal)
+  const navigateToAdminPath = useCallback(
+    (target: 'website-admin' | 'credit-admin' | 'home') => {
+      try {
+        if (target === 'website-admin') {
+          window.history.pushState({}, '', '/website-admin');
+          setAdminInitialTab('users');
+          setActiveRoute('admin');
+        } else if (target === 'credit-admin') {
+          window.history.pushState({}, '', '/credit-admin');
+          setShowCreditExhaustedModal(false);
+          setShowAdminRechargeModal(false);
+          setActiveRoute('credit-admin');
+        } else {
+          window.history.pushState({}, '', '/');
+          setActiveRoute('studio');
+        }
+      } catch {
+        if (target === 'website-admin') setActiveRoute('admin');
+        else if (target === 'credit-admin') setActiveRoute('credit-admin');
+        else setActiveRoute('studio');
+      }
+    },
+    []
+  );
+
+  // Separate URL Path Routing for Both Admin Panels:
+  // Path 1: /website-admin (or /admin, /#/website-admin, ?path=website-admin) -> Website Control Admin Panel
+  // Path 2: /credit-admin (or /payment-admin, /#/credit-admin, ?path=credit-admin) -> Payment & Credit Confirmation Admin Panel
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (
-      params.get('credit-admin') === '1' ||
-      params.get('panel') === 'credit-admin' ||
-      window.location.hash === '#credit-admin'
-    ) {
-      setShowCreditExhaustedModal(false);
-      setShowAdminRechargeModal(true);
-    }
+    const syncAdminRouteFromLocation = () => {
+      const cleanPath = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+      const cleanHash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const queryPath = (params.get('path') || params.get('panel') || '').toLowerCase();
+
+      if (
+        cleanPath === 'website-admin' ||
+        cleanPath === 'admin' ||
+        cleanHash === 'website-admin' ||
+        cleanHash === 'admin' ||
+        queryPath === 'website-admin' ||
+        queryPath === 'admin'
+      ) {
+        setAdminInitialTab('users');
+        setActiveRoute('admin');
+        return;
+      }
+
+      if (
+        cleanPath === 'credit-admin' ||
+        cleanPath === 'payment-admin' ||
+        cleanHash === 'credit-admin' ||
+        cleanHash === 'payment-admin' ||
+        queryPath === 'credit-admin' ||
+        queryPath === 'payment-admin' ||
+        params.get('credit-admin') === '1'
+      ) {
+        setShowCreditExhaustedModal(false);
+        setShowAdminRechargeModal(false);
+        setActiveRoute('credit-admin');
+        return;
+      }
+    };
+
+    syncAdminRouteFromLocation();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
-        setShowCreditExhaustedModal(false);
-        setShowAdminRechargeModal(true);
+        navigateToAdminPath('credit-admin');
       }
     };
+    const handleSyncPaymentRequests = () => {
+      setPendingPaymentRequestsCount(
+        loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
+      );
+    };
+
+    window.addEventListener('popstate', syncAdminRouteFromLocation);
+    window.addEventListener('hashchange', syncAdminRouteFromLocation);
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    window.addEventListener('malnadu-payment-requests-updated', handleSyncPaymentRequests);
+    return () => {
+      window.removeEventListener('popstate', syncAdminRouteFromLocation);
+      window.removeEventListener('hashchange', syncAdminRouteFromLocation);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('malnadu-payment-requests-updated', handleSyncPaymentRequests);
+    };
+  }, [navigateToAdminPath]);
 
   const handleWalletBadgeSecretClick = () => {
     const now = Date.now();
@@ -433,8 +502,7 @@ export default function App() {
 
     if (walletClickCountRef.current.count >= 5) {
       walletClickCountRef.current.count = 0;
-      setShowCreditExhaustedModal(false);
-      setShowAdminRechargeModal(true);
+      navigateToAdminPath('credit-admin');
     } else {
       // Single click opens Client UPI QR Code Modal on website header
       setShowCreditExhaustedModal(true);
@@ -486,6 +554,9 @@ export default function App() {
         'tools',
         'dashboard',
         'admin',
+        'website-admin',
+        'credit-admin',
+        'payment-admin',
       ];
       if (systemPaths.includes(rawPath.toLowerCase())) {
         setRedirectState({ checking: false, slug: null, status: 'none' });
@@ -2692,14 +2763,14 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: Wallet Credit Badge + Client QR Code Add Credit Button & Contextual Actions */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Zone 3: Wallet Credit Badge + Client QR Code Button */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Built-in Credit & Wallet Badge */}
             <button
               type="button"
               onClick={handleWalletBadgeSecretClick}
-              title="Click to Scan UPI QR & Add Credits (Owner: Click 5x rapidly or press Alt+A for Separate Credit Admin Panel)"
-              className={`min-h-[40px] px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
+              title="Click to Scan UPI QR & Add Credits"
+              className={`min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
                 availableCredits > 0
                   ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/40 text-emerald-300'
                   : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-400/50 text-rose-300 animate-pulse'
@@ -2710,21 +2781,21 @@ export default function App() {
                   availableCredits > 0 ? 'fa-wallet text-emerald-400' : 'fa-triangle-exclamation text-rose-400'
                 }`}
               ></i>
-              <span className="hidden sm:inline">Credits:</span>
+              <span className="hidden xl:inline">Credits:</span>
               <span className="font-mono font-extrabold tabular-nums text-white">
                 {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
               </span>
             </button>
 
-            {/* Prominent Top Header "Add Credits (QR)" Button for Clients */}
+            {/* Client UPI QR Code & Submit Payment Request Button */}
             <button
               type="button"
               onClick={() => {
                 setShowAdminRechargeModal(false);
                 setShowCreditExhaustedModal(true);
               }}
-              className="min-h-[40px] px-3.5 py-1.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-extrabold text-xs shadow-sm transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-              title="Scan Shriyansh Singh Rajpoot UPI QR Code to Add Studio Credits"
+              className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-extrabold text-xs shadow-sm transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              title="Scan UPI QR Code & Submit Payment Request to Add Credits"
             >
               <i className="fa-solid fa-qrcode text-amber-300"></i>
               <span>+ Add Credits (QR)</span>
@@ -2896,7 +2967,7 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { id: 'youtube-thumbnail', label: 'YouTube Thumbnail' },
+                    { id: 'youtube-thumbnail', label: 'Upload & Redesign Thumbnail' },
                     { id: 'lower-third', label: 'Lower Third' },
                     { id: 'wedding-live-poster', label: 'Wedding Live' },
                     { id: 'obs-vmix-export', label: 'OBS / vMix' },
@@ -4406,9 +4477,8 @@ export default function App() {
             onDeleteVerification={handleDeleteVerification}
             onDeleteSavedPhoto={handleDeleteSavedPhoto}
             onUpdateProfile={handleUpdateProfile}
-            onNavigateToStudio={() => setActiveRoute('studio')}
+            onNavigateToStudio={() => navigateToAdminPath('home')}
             onLoadSavedPhotoInStudio={handleSendImageToStudio}
-            onOpenAdminPanel={() => setActiveRoute('admin')}
             onSelfApproveForDemo={async () => {
               await handleUpdateUserStatus(userProfile.uid, 'approved');
             }}
@@ -4417,7 +4487,7 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 4: ADMIN PANEL */}
+      {/* ROUTE 4: SEPARATE PATH 1 — WEBSITE CONTROL ADMIN PANEL (/website-admin) */}
       {activeRoute === 'admin' && (
         <main className="flex-1">
           <AdminPanel
@@ -4440,7 +4510,29 @@ export default function App() {
             onDeleteShortLink={handleDeleteShortLink}
             onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
             onUpdateVerificationStatus={handleUpdateVerificationStatus}
-            onNavigateToStudio={() => setActiveRoute('studio')}
+            onNavigateToStudio={() => navigateToAdminPath('home')}
+            onOpenPaymentCreditAdmin={() => navigateToAdminPath('credit-admin')}
+            showToast={showToast}
+          />
+        </main>
+      )}
+
+      {/* ROUTE 5: SEPARATE PATH 2 — PAYMENT CONFIRMATION & CREDIT ADMIN PANEL (/credit-admin) */}
+      {activeRoute === 'credit-admin' && (
+        <main className="flex-1">
+          <CreditQrAndOwnerPortal
+            isOpen={true}
+            initialMode="owner_admin"
+            standalonePage={true}
+            availableCredits={availableCredits}
+            isQuotaExhausted={availableCredits <= 0}
+            users={allUsers}
+            currentUserProfile={userProfile}
+            contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
+            onClose={() => navigateToAdminPath('home')}
+            onSwitchToWebsiteAdmin={() => navigateToAdminPath('website-admin')}
+            onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
+            onUpdateUserCredits={handleUpdateUserCredits}
             showToast={showToast}
           />
         </main>
@@ -4457,7 +4549,7 @@ export default function App() {
             {renderBrandLogo(false)}
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-300">
+          <div className="flex flex-wrap items-center justify-center gap-2.5 text-xs text-slate-300">
             <span className="font-semibold text-white">{siteSettings.footerCredit}</span>
             <button
               onClick={() => {
@@ -4845,23 +4937,15 @@ export default function App() {
                   <span>Continue with Google</span>
                 </button>
 
-                {/* Instant 1-Click Demo Login Strip for Testing User Dashboard & Admin Panel */}
-                <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+                {/* Instant 1-Click Demo User Login Strip */}
+                <div className="pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => handleQuickDemoLogin(false)}
-                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-900 text-[11px] font-extrabold transition flex items-center justify-center gap-1.5"
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-900 text-[11px] font-extrabold transition flex items-center justify-center gap-1.5"
                   >
                     <i className="fa-solid fa-bolt text-cyan-600"></i>
-                    <span>1-Click Demo User</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin(true)}
-                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 text-[11px] font-extrabold transition flex items-center justify-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-shield-halved text-purple-600"></i>
-                    <span>1-Click Admin Login</span>
+                    <span>1-Click Demo Studio User Login</span>
                   </button>
                 </div>
               </>
@@ -4870,17 +4954,23 @@ export default function App() {
         </div>
       )}
 
-      {/* Client UPI QR Code Payment Modal & Separate Owner Credit Admin Portal */}
+      {/* Client UPI QR Code Payment Modal */}
       <CreditQrAndOwnerPortal
         isOpen={showCreditExhaustedModal || showAdminRechargeModal}
         initialMode={showAdminRechargeModal ? 'owner_admin' : 'client_qr'}
         availableCredits={availableCredits}
         isQuotaExhausted={availableCredits <= 0}
         users={allUsers}
+        currentUserProfile={userProfile}
         contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
         onClose={() => {
           setShowCreditExhaustedModal(false);
           setShowAdminRechargeModal(false);
+        }}
+        onSwitchToWebsiteAdmin={() => {
+          setShowCreditExhaustedModal(false);
+          setShowAdminRechargeModal(false);
+          navigateToAdminPath('website-admin');
         }}
         onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
         onUpdateUserCredits={handleUpdateUserCredits}
