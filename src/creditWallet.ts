@@ -11,6 +11,7 @@
  */
 
 const WALLET_STORAGE_KEY = 'malnadu_studio_wallet_vault_v1';
+const ADMIN_POOL_STORAGE_KEY = 'malnadu_studio_admin_pool_vault_v1';
 const ADMIN_PASS_VAULT_KEY = 'malnadu_studio_admin_pass_vault_v1';
 const CREDIT_LOG_STORAGE_KEY = 'malnadu_studio_credit_logs_v1';
 const USED_COUPONS_STORAGE_KEY = 'malnadu_studio_used_coupons_v1';
@@ -18,6 +19,7 @@ const PAYMENT_REQUESTS_STORAGE_KEY = 'malnadu_studio_payment_requests_v1';
 const WALLET_SECRET_SALT = 'MALNADU_MEDIA_STUDIO_PRO_2026_VAULT_KEY_#9981';
 
 export const DEFAULT_INITIAL_CREDITS = 25;
+export const DEFAULT_INITIAL_ADMIN_POOL = 500;
 export const DEFAULT_ADMIN_PASSWORD = 'Malnadu@Admin#7581!$';
 // Backward-compatible alias
 export const DEFAULT_ADMIN_PIN = DEFAULT_ADMIN_PASSWORD;
@@ -52,6 +54,7 @@ export interface PaymentCreditRequest {
   clientName: string;
   clientContact: string;
   userId?: string;
+  targetType?: 'client_wallet' | 'admin_pool';
   packageLabel: string;
   creditsRequested: number;
   amountInr: string;
@@ -70,6 +73,7 @@ const DEFAULT_DEMO_PAYMENT_REQUESTS: PaymentCreditRequest[] = [
     clientName: 'Arjun Nair (Studio Client)',
     clientContact: '+91 98951 44321',
     userId: 'user-arjun-02',
+    targetType: 'client_wallet',
     packageLabel: 'Studio Pro Pack',
     creditsRequested: 500,
     amountInr: '₹299',
@@ -196,6 +200,203 @@ export function deductWalletCredit(): { success: boolean; remaining: number } {
   }
   const next = saveWalletCredits(current - 1);
   return { success: true, remaining: next };
+}
+
+/**
+ * ============================================================================
+ * 2-TIER DISTRIBUTOR SYSTEM: WEBSITE ADMIN CREDIT POOL (/website-admin)
+ * ============================================================================
+ * The Super Owner (/credit-admin) allocates a bounded pool of credits to the
+ * Website Admin (/website-admin). The Website Admin can only give credits to
+ * registered users (or the studio wallet) by deducting from this Admin Pool.
+ */
+export function saveAdminCreditPool(credits: number): number {
+  const safeCredits = Math.max(0, Math.floor(Number(credits) || 0));
+  const payload: WalletVaultPayload = {
+    c: safeCredits,
+    u: Date.now(),
+    n: Math.random().toString(36).slice(2, 10),
+  };
+
+  try {
+    const rawJson = JSON.stringify(payload);
+    const p = encryptPayloadString(rawJson);
+    const s = computeVaultSignature(`ADMIN_POOL::${p}`);
+    const envelope: SignedWalletEnvelope = { p, s };
+    localStorage.setItem(ADMIN_POOL_STORAGE_KEY, JSON.stringify(envelope));
+    window.dispatchEvent(
+      new CustomEvent('malnadu-admin-pool-updated', { detail: { adminCreditPool: safeCredits } })
+    );
+  } catch (err) {
+    console.warn('Unable to persist admin credit pool:', err);
+  }
+
+  return safeCredits;
+}
+
+export function loadAdminCreditPool(): number {
+  try {
+    const raw = localStorage.getItem(ADMIN_POOL_STORAGE_KEY);
+    if (!raw) {
+      return saveAdminCreditPool(DEFAULT_INITIAL_ADMIN_POOL);
+    }
+
+    const envelope = JSON.parse(raw) as SignedWalletEnvelope;
+    if (!envelope || typeof envelope.p !== 'string' || typeof envelope.s !== 'string') {
+      return saveAdminCreditPool(0);
+    }
+
+    const expectedSig = computeVaultSignature(`ADMIN_POOL::${envelope.p}`);
+    if (expectedSig !== envelope.s) {
+      console.warn('Admin Pool tampering detected! Signature mismatch — locking pool to 0.');
+      return saveAdminCreditPool(0);
+    }
+
+    const decryptedJson = decryptPayloadString(envelope.p);
+    const parsed = JSON.parse(decryptedJson) as WalletVaultPayload;
+    if (typeof parsed.c !== 'number' || isNaN(parsed.c) || parsed.c < 0) {
+      return saveAdminCreditPool(0);
+    }
+
+    return Math.floor(parsed.c);
+  } catch {
+    return saveAdminCreditPool(0);
+  }
+}
+
+/**
+ * Super Owner (/credit-admin) adds credits into the Website Admin's Distributable Pool.
+ */
+export function rechargeAdminPoolWithPassword(
+  passwordInput: string,
+  amountToAdd: number
+): { ok: boolean; newPoolBalance: number; error?: string } {
+  if (!verifyAdminSecretPin(passwordInput)) {
+    return {
+      ok: false,
+      newPoolBalance: loadAdminCreditPool(),
+      error: 'Invalid Admin Master Password! Access denied.',
+    };
+  }
+
+  const add = Math.max(1, Math.floor(Number(amountToAdd) || 0));
+  const current = loadAdminCreditPool();
+  const next = saveAdminCreditPool(current + add);
+  appendCreditRechargeLog({
+    targetName: 'Website Admin Credit Pool (Distributor)',
+    targetEmail: '/website-admin Pool Recharged by Owner',
+    action: 'add',
+    amount: add,
+    balanceAfter: next,
+  });
+  return {
+    ok: true,
+    newPoolBalance: next,
+  };
+}
+
+/**
+ * Super Owner (/credit-admin) sets an exact credit balance for the Website Admin's Distributable Pool.
+ */
+export function setExactAdminPoolWithPassword(
+  passwordInput: string,
+  exactAmount: number
+): { ok: boolean; newPoolBalance: number; error?: string } {
+  if (!verifyAdminSecretPin(passwordInput)) {
+    return {
+      ok: false,
+      newPoolBalance: loadAdminCreditPool(),
+      error: 'Invalid Admin Master Password! Access denied.',
+    };
+  }
+
+  const target = Math.max(0, Math.floor(Number(exactAmount) || 0));
+  const next = saveAdminCreditPool(target);
+  appendCreditRechargeLog({
+    targetName: 'Website Admin Credit Pool (Distributor)',
+    targetEmail: '/website-admin Pool Set by Owner',
+    action: 'set',
+    amount: target,
+    balanceAfter: next,
+  });
+  return {
+    ok: true,
+    newPoolBalance: next,
+  };
+}
+
+/**
+ * Website Admin (/website-admin)redeems a signed Owner Recharge Code into the Website Admin Credit Pool.
+ */
+export function redeemAdminPoolRechargeCode(rawCode: string): {
+  ok: boolean;
+  addedCredits?: number;
+  newPoolBalance: number;
+  error?: string;
+} {
+  const clean = rawCode.trim().toUpperCase();
+  const parts = clean.split('-');
+  if (parts.length !== 4 || parts[0] !== 'MM') {
+    return {
+      ok: false,
+      newPoolBalance: loadAdminCreditPool(),
+      error: 'Invalid Recharge Code format. Example: MM-500-AB12C-9F8E7D6C',
+    };
+  }
+
+  const amount = parseInt(parts[1], 10);
+  const nonce = parts[2];
+  const providedSig = parts[3];
+
+  if (!amount || isNaN(amount) || amount <= 0 || amount > 100000) {
+    return {
+      ok: false,
+      newPoolBalance: loadAdminCreditPool(),
+      error: 'Invalid credit amount in recharge code.',
+    };
+  }
+
+  const payload = `${amount}-${nonce}`;
+  const expectedSig = computeVaultSignature(`COUPON::${payload}`).slice(0, 8).toUpperCase();
+  if (providedSig !== expectedSig) {
+    return {
+      ok: false,
+      newPoolBalance: loadAdminCreditPool(),
+      error: 'Invalid or tampered Recharge Code! Verification failed.',
+    };
+  }
+
+  try {
+    const usedRaw = localStorage.getItem(USED_COUPONS_STORAGE_KEY);
+    const usedList: string[] = usedRaw ? JSON.parse(usedRaw) : [];
+    if (usedList.includes(clean)) {
+      return {
+        ok: false,
+        newPoolBalance: loadAdminCreditPool(),
+        error: 'This Recharge Code has already been used!',
+      };
+    }
+    usedList.push(clean);
+    localStorage.setItem(USED_COUPONS_STORAGE_KEY, JSON.stringify(usedList));
+  } catch {
+    // ignore
+  }
+
+  const current = loadAdminCreditPool();
+  const next = saveAdminCreditPool(current + amount);
+  appendCreditRechargeLog({
+    targetName: 'Website Admin Credit Pool (Code Redeemed)',
+    targetEmail: `Code: ${clean}`,
+    action: 'add',
+    amount,
+    balanceAfter: next,
+  });
+
+  return {
+    ok: true,
+    addedCredits: amount,
+    newPoolBalance: next,
+  };
 }
 
 /**
@@ -328,6 +529,7 @@ export function submitClientPaymentRequest(input: {
   clientName: string;
   clientContact: string;
   userId?: string;
+  targetType?: 'client_wallet' | 'admin_pool';
   packageLabel: string;
   creditsRequested: number;
   amountInr: string;
@@ -341,6 +543,7 @@ export function submitClientPaymentRequest(input: {
     clientName: input.clientName.trim() || 'Studio Client',
     clientContact: input.clientContact.trim() || 'Not provided',
     userId: input.userId,
+    targetType: input.targetType || 'client_wallet',
     packageLabel: input.packageLabel,
     creditsRequested: Math.max(1, Math.floor(Number(input.creditsRequested) || 100)),
     amountInr: input.amountInr,
@@ -358,14 +561,18 @@ export function submitClientPaymentRequest(input: {
 
 /**
  * Confirms a Client Payment Request (Protected by Strong Admin Master Password)
- * and immediately adds the requested credits to the Website Studio Wallet.
+ * and immediately adds the requested credits to either the Website Studio Wallet
+ * or the Website Admin Credit Pool (Distributor Balance).
  */
 export function approveClientPaymentRequest(
   passwordInput: string,
-  requestId: string
+  requestId: string,
+  creditTargetOverride?: 'client_wallet' | 'admin_pool'
 ): {
   ok: boolean;
   newBalance: number;
+  newAdminPoolBalance: number;
+  creditedTo: 'client_wallet' | 'admin_pool';
   approvedRequest?: PaymentCreditRequest;
   generatedCode?: string;
   error?: string;
@@ -374,6 +581,8 @@ export function approveClientPaymentRequest(
     return {
       ok: false,
       newBalance: loadWalletCredits(),
+      newAdminPoolBalance: loadAdminCreditPool(),
+      creditedTo: 'client_wallet',
       error: 'Invalid Admin Master Password! Access denied.',
     };
   }
@@ -384,6 +593,8 @@ export function approveClientPaymentRequest(
     return {
       ok: false,
       newBalance: loadWalletCredits(),
+      newAdminPoolBalance: loadAdminCreditPool(),
+      creditedTo: 'client_wallet',
       error: 'Payment request not found.',
     };
   }
@@ -392,18 +603,29 @@ export function approveClientPaymentRequest(
     return {
       ok: false,
       newBalance: loadWalletCredits(),
+      newAdminPoolBalance: loadAdminCreditPool(),
+      creditedTo: target.targetType || 'client_wallet',
       error: 'This payment request has already been confirmed and credited.',
     };
   }
 
   const addAmount = Math.max(1, Math.floor(Number(target.creditsRequested) || 100));
-  const currentCredits = loadWalletCredits();
-  const nextCredits = saveWalletCredits(currentCredits + addAmount);
+  const destination = creditTargetOverride || target.targetType || 'client_wallet';
+
+  let nextWalletCredits = loadWalletCredits();
+  let nextAdminPoolCredits = loadAdminCreditPool();
+
+  if (destination === 'admin_pool') {
+    nextAdminPoolCredits = saveAdminCreditPool(nextAdminPoolCredits + addAmount);
+  } else {
+    nextWalletCredits = saveWalletCredits(nextWalletCredits + addAmount);
+  }
 
   const codeGen = generateSignedRechargeCode(passwordInput, addAmount);
 
   const updatedReq: PaymentCreditRequest = {
     ...target,
+    targetType: destination,
     status: 'approved',
     approvedCode: codeGen.code,
     processedAt: new Date().toISOString(),
@@ -413,16 +635,21 @@ export function approveClientPaymentRequest(
   savePaymentCreditRequests(nextList);
 
   appendCreditRechargeLog({
-    targetName: `${target.clientName} (UPI QR Confirmed)`,
+    targetName:
+      destination === 'admin_pool'
+        ? `${target.clientName} → Website Admin Pool`
+        : `${target.clientName} (UPI QR Confirmed)`,
     targetEmail: `${target.clientContact} · UTR: ${target.utrNumber}`,
     action: 'add',
     amount: addAmount,
-    balanceAfter: nextCredits,
+    balanceAfter: destination === 'admin_pool' ? nextAdminPoolCredits : nextWalletCredits,
   });
 
   return {
     ok: true,
-    newBalance: nextCredits,
+    newBalance: nextWalletCredits,
+    newAdminPoolBalance: nextAdminPoolCredits,
+    creditedTo: destination,
     approvedRequest: updatedReq,
     generatedCode: codeGen.code,
   };
@@ -515,7 +742,7 @@ export function setExactWalletCreditsWithPassword(
 
 /**
  * Generates a cryptographically signed One-Time Client Recharge Code that the Owner can share
- * with a client after verifying their UPI QR payment.
+ * with a client or Website Admin after verifying their UPI QR payment.
  */
 export function generateSignedRechargeCode(
   passwordInput: string,

@@ -61,6 +61,8 @@ import { InteractivePrintSheetEditor } from './components/InteractivePrintSheetE
 import {
   loadWalletCredits,
   saveWalletCredits,
+  loadAdminCreditPool,
+  saveAdminCreditPool,
   deductWalletCredit,
   rechargeWalletWithPin,
   loadPaymentCreditRequests,
@@ -309,6 +311,7 @@ export default function App() {
 
   // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Strong Master Password)
   const [availableCredits, setAvailableCredits] = useState<number>(() => loadWalletCredits());
+  const [adminCreditPool, setAdminCreditPool] = useState<number>(() => loadAdminCreditPool());
   const [pendingPaymentRequestsCount, setPendingPaymentRequestsCount] = useState<number>(
     () => loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
   );
@@ -478,16 +481,21 @@ export default function App() {
         loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
       );
     };
+    const handleSyncAdminPool = () => {
+      setAdminCreditPool(loadAdminCreditPool());
+    };
 
     window.addEventListener('popstate', syncAdminRouteFromLocation);
     window.addEventListener('hashchange', syncAdminRouteFromLocation);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('malnadu-payment-requests-updated', handleSyncPaymentRequests);
+    window.addEventListener('malnadu-admin-pool-updated', handleSyncAdminPool);
     return () => {
       window.removeEventListener('popstate', syncAdminRouteFromLocation);
       window.removeEventListener('hashchange', syncAdminRouteFromLocation);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('malnadu-payment-requests-updated', handleSyncPaymentRequests);
+      window.removeEventListener('malnadu-admin-pool-updated', handleSyncAdminPool);
     };
   }, [navigateToAdminPath]);
 
@@ -654,6 +662,10 @@ export default function App() {
       (snap) => {
         if (snap.exists()) {
           const data = snap.data() as Partial<SiteSettings>;
+          if (typeof data.adminCreditPool === 'number') {
+            const syncedPool = saveAdminCreditPool(data.adminCreditPool);
+            setAdminCreditPool(syncedPool);
+          }
           setSiteSettings((prev) => ({
             ...prev,
             ...data,
@@ -2213,14 +2225,38 @@ export default function App() {
     showToast('User account permanently removed');
   };
 
+  const handleUpdateAdminCreditPool = async (newPoolCredits: number) => {
+    const safePool = saveAdminCreditPool(newPoolCredits);
+    setAdminCreditPool(safePool);
+    setSiteSettings((prev) => {
+      const updated = { ...prev, adminCreditPool: safePool };
+      try {
+        localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+    try {
+      await updateDoc(doc(db, 'siteSettings', 'global'), {
+        adminCreditPool: safePool,
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // persisted in local vault & localStorage
+    }
+  };
+
   const handleCreateManagedUser = async (
     displayName: string,
     email: string,
     phone: string,
     role: 'user' | 'admin',
-    status: AccountStatus
+    status: AccountStatus,
+    initialCredits = 25
   ) => {
     const uid = `user-${Date.now()}`;
+    const safeCredits = Math.max(0, Math.floor(Number(initialCredits) || 0));
     const newUser: UserProfile = {
       uid,
       displayName: displayName.slice(0, 100),
@@ -2228,6 +2264,7 @@ export default function App() {
       phone: phone.slice(0, 30),
       role,
       status,
+      credits: safeCredits,
       createdAt: new Date().toISOString(),
     };
     upsertUserInLocalState(newUser);
@@ -2240,19 +2277,26 @@ export default function App() {
     } catch {
       // persisted locally
     }
-    showToast(`Added user ${displayName} (${status})`);
+    showToast(`Added user ${displayName} (${safeCredits} Credits · ${status})`);
   };
 
   const handleSaveSiteSettings = async (newSettings: SiteSettings) => {
-    setSiteSettings(newSettings);
+    const mergedSettings: SiteSettings = {
+      ...newSettings,
+      adminCreditPool:
+        typeof newSettings.adminCreditPool === 'number'
+          ? newSettings.adminCreditPool
+          : adminCreditPool,
+    };
+    setSiteSettings(mergedSettings);
     try {
-      localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(newSettings));
+      localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(mergedSettings));
     } catch {
       // ignore
     }
     try {
       await setDoc(doc(db, 'siteSettings', 'global'), {
-        ...newSettings,
+        ...mergedSettings,
         updatedAt: serverTimestamp(),
       });
     } catch {
@@ -4498,8 +4542,10 @@ export default function App() {
             appointments={appointments}
             verifications={verifications}
             availableCredits={availableCredits}
+            adminCreditPool={adminCreditPool}
             initialAdminTab={adminInitialTab}
             onUpdateWalletCredits={(c) => setAvailableCredits(saveWalletCredits(c))}
+            onUpdateAdminCreditPool={handleUpdateAdminCreditPool}
             onUpdateUserCredits={handleUpdateUserCredits}
             onUpdateUserStatus={handleUpdateUserStatus}
             onUpdateUserRole={handleUpdateUserRole}
@@ -4524,12 +4570,14 @@ export default function App() {
             initialMode="owner_admin"
             standalonePage={true}
             availableCredits={availableCredits}
+            adminCreditPool={adminCreditPool}
             isQuotaExhausted={availableCredits <= 0}
             users={allUsers}
             currentUserProfile={userProfile}
             contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
             onClose={() => navigateToAdminPath('home')}
             onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
+            onAdminPoolUpdated={handleUpdateAdminCreditPool}
             onUpdateUserCredits={handleUpdateUserCredits}
             showToast={showToast}
           />
@@ -4957,6 +5005,7 @@ export default function App() {
         isOpen={showCreditExhaustedModal || showAdminRechargeModal}
         initialMode={showAdminRechargeModal ? 'owner_admin' : 'client_qr'}
         availableCredits={availableCredits}
+        adminCreditPool={adminCreditPool}
         isQuotaExhausted={availableCredits <= 0}
         users={allUsers}
         currentUserProfile={userProfile}
@@ -4966,6 +5015,7 @@ export default function App() {
           setShowAdminRechargeModal(false);
         }}
         onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
+        onAdminPoolUpdated={handleUpdateAdminCreditPool}
         onUpdateUserCredits={handleUpdateUserCredits}
         showToast={showToast}
       />

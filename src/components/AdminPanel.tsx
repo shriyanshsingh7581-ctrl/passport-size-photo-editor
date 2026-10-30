@@ -12,9 +12,14 @@ import {
   ToolCategoryId,
 } from '../constants';
 import {
+  ADMIN_ACCOUNT_HOLDER,
+  ADMIN_QR_IMAGE_PATH,
+  ADMIN_UPI_ID,
   verifyAdminSecretPin,
-  rechargeWalletWithPin,
-  setExactWalletCreditsWithPassword,
+  saveWalletCredits,
+  saveAdminCreditPool,
+  redeemAdminPoolRechargeCode,
+  submitClientPaymentRequest,
   updateAdminMasterPassword,
   loadCreditRechargeLogs,
   appendCreditRechargeLog,
@@ -31,8 +36,10 @@ interface AdminPanelProps {
   appointments: AppointmentRecord[];
   verifications: DocumentVerificationRecord[];
   availableCredits: number;
+  adminCreditPool: number;
   initialAdminTab?: AdminTab;
   onUpdateWalletCredits: (newCredits: number) => void;
+  onUpdateAdminCreditPool: (newPoolCredits: number) => void;
   onUpdateUserCredits: (uid: string, newCredits: number) => Promise<void>;
   onUpdateUserStatus: (uid: string, status: AccountStatus) => Promise<void>;
   onUpdateUserRole: (uid: string, role: 'user' | 'admin') => Promise<void>;
@@ -42,7 +49,8 @@ interface AdminPanelProps {
     email: string,
     phone: string,
     role: 'user' | 'admin',
-    status: AccountStatus
+    status: AccountStatus,
+    initialCredits?: number
   ) => Promise<void>;
   onSaveSiteSettings: (newSettings: SiteSettings) => Promise<void>;
   onToggleShortLinkStatus: (slug: string, currentActive: boolean) => Promise<void>;
@@ -69,8 +77,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   appointments,
   verifications,
   availableCredits,
+  adminCreditPool,
   initialAdminTab,
   onUpdateWalletCredits,
+  onUpdateAdminCreditPool,
   onUpdateUserCredits,
   onUpdateUserStatus,
   onUpdateUserRole,
@@ -98,10 +108,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [showVaultPassword, setShowVaultPassword] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [unlockedPasswordCache, setUnlockedPasswordCache] = useState('');
-  const [customCreditAddInput, setCustomCreditAddInput] = useState('500');
+  const [customCreditAddInput, setCustomCreditAddInput] = useState('100');
   const [exactCreditSetInput, setExactCreditSetInput] = useState(String(availableCredits));
   const [creditLogs, setCreditLogs] = useState<CreditRechargeLog[]>(() => loadCreditRechargeLogs());
   const [userCustomCreditInputs, setUserCustomCreditInputs] = useState<Record<string, string>>({});
+  const [poolActionNotice, setPoolActionNotice] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
+  // Redeem Owner Code / Request Admin Pool Top-Up State
+  const [adminPoolCouponInput, setAdminPoolCouponInput] = useState('');
+  const [showAdminPoolQrModal, setShowAdminPoolQrModal] = useState(false);
+  const [poolReqAmount, setPoolReqAmount] = useState<number>(1000);
+  const [poolReqUtr, setPoolReqUtr] = useState('');
+  const [poolReqNote, setPoolReqNote] = useState('');
 
   // Change Master Password Form State
   const [showChangePassForm, setShowChangePassForm] = useState(false);
@@ -120,7 +141,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setVaultError(null);
     if (!verifyAdminSecretPin(vaultPasswordInput)) {
       setVaultError(
-        'Incorrect Admin Master Password! Only the authorized Administrator can unlock the Credit Vault.'
+        'Incorrect Admin Master Password! Only the authorized Administrator can unlock the Website Admin Panel.'
       );
       return;
     }
@@ -128,7 +149,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsCreditVaultUnlocked(true);
     setVaultPasswordInput('');
     setCreditLogs(loadCreditRechargeLogs());
-    showToast('Credit Admin Vault Unlocked!');
+    showToast('Website Admin Panel Unlocked!');
   };
 
   const handleLockCreditVault = () => {
@@ -136,60 +157,193 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setUnlockedPasswordCache('');
     setVaultPasswordInput('');
     setVaultError(null);
-    showToast('Credit Admin Vault Locked');
+    showToast('Website Admin Panel Locked');
   };
 
+  /**
+   * Transfers credits from the Website Admin's Distributable Credit Pool to the Local Studio Wallet.
+   */
   const handleStudioWalletAddCredits = (amount: number) => {
     if (!isCreditVaultUnlocked) return;
-    const res = rechargeWalletWithPin(unlockedPasswordCache, amount);
-    if (!res.ok) {
-      setVaultError(res.error || 'Password verification failed');
-      setIsCreditVaultUnlocked(false);
+    setPoolActionNotice(null);
+    const addAmt = Math.max(1, Math.floor(amount));
+    if (addAmt > adminCreditPool) {
+      const msg = `Insufficient Website Admin Credit Pool! You only have ${adminCreditPool} credits available, but tried to allocate ${addAmt} credits. Please get more credits from the Owner.`;
+      setPoolActionNotice({ type: 'err', text: msg });
+      showToast(`Insufficient Admin Pool (${adminCreditPool} Credits left)`);
       return;
     }
-    onUpdateWalletCredits(res.newBalance);
-    setCreditLogs(loadCreditRechargeLogs());
-    showToast(`Added +${amount} Credits! Total Studio Balance: ${res.newBalance} Photos`);
+
+    const nextPool = saveAdminCreditPool(adminCreditPool - addAmt);
+    const nextWallet = saveWalletCredits(availableCredits + addAmt);
+    onUpdateAdminCreditPool(nextPool);
+    onUpdateWalletCredits(nextWallet);
+
+    const updatedLogs = appendCreditRechargeLog({
+      targetName: 'Studio Wallet (From Admin Pool)',
+      targetEmail: `Admin Pool Remaining: ${nextPool}`,
+      action: 'add',
+      amount: addAmt,
+      balanceAfter: nextWallet,
+    });
+    setCreditLogs(updatedLogs);
+    setPoolActionNotice({
+      type: 'ok',
+      text: `Transferred +${addAmt} Credits from Website Admin Pool to Studio Wallet! Remaining Admin Pool: ${nextPool} Photos.`,
+    });
+    showToast(`Allocated +${addAmt} Credits! (Admin Pool Left: ${nextPool})`);
   };
 
   const handleStudioWalletSetExact = (exactAmount: number) => {
     if (!isCreditVaultUnlocked) return;
-    const res = setExactWalletCreditsWithPassword(unlockedPasswordCache, exactAmount);
-    if (!res.ok) {
-      setVaultError(res.error || 'Password verification failed');
-      setIsCreditVaultUnlocked(false);
+    setPoolActionNotice(null);
+    const target = Math.max(0, Math.floor(exactAmount));
+    const delta = target - availableCredits;
+    if (delta === 0) return;
+
+    if (delta > 0 && delta > adminCreditPool) {
+      const msg = `Insufficient Website Admin Credit Pool! Adding +${delta} credits requires ${delta} credits in your Admin Pool (Available: ${adminCreditPool}).`;
+      setPoolActionNotice({ type: 'err', text: msg });
+      showToast(`Insufficient Admin Pool (${adminCreditPool} Credits left)`);
       return;
     }
-    onUpdateWalletCredits(res.newBalance);
-    setCreditLogs(loadCreditRechargeLogs());
-    showToast(`Studio Credit Balance Set to ${res.newBalance} Photos`);
+
+    const nextPool = saveAdminCreditPool(adminCreditPool - delta);
+    const nextWallet = saveWalletCredits(target);
+    onUpdateAdminCreditPool(nextPool);
+    onUpdateWalletCredits(nextWallet);
+
+    const updatedLogs = appendCreditRechargeLog({
+      targetName: 'Studio Wallet (Pool Adjusted)',
+      targetEmail: `Admin Pool Remaining: ${nextPool}`,
+      action: 'set',
+      amount: target,
+      balanceAfter: nextWallet,
+    });
+    setCreditLogs(updatedLogs);
+    setPoolActionNotice({
+      type: 'ok',
+      text:
+        delta > 0
+          ? `Allocated +${delta} Credits from Admin Pool to Studio Wallet. Remaining Pool: ${nextPool} Photos.`
+          : `Reclaimed ${Math.abs(delta)} Credits back into Website Admin Pool. New Pool: ${nextPool} Photos.`,
+    });
+    showToast(`Studio Balance Set to ${nextWallet} (Admin Pool: ${nextPool})`);
   };
 
+  /**
+   * Distributes credits to a Registered User strictly from the Website Admin's Credit Pool.
+   * If credits are reduced on a user, the difference returns to the Website Admin's Credit Pool.
+   */
   const handleAdjustUserCredits = async (
     user: UserProfile,
-    mode: 'add' | 'set',
+    mode: 'add' | 'set' | 'deduct',
     amount: number
   ) => {
     if (!isCreditVaultUnlocked) {
       setAdminTab('credits');
-      showToast('Please unlock the Credit Admin Vault with your Master Password first.');
+      showToast('Please unlock the Website Admin Panel with your Master Password first.');
       return;
     }
+    setPoolActionNotice(null);
     const currentUserCredits = typeof user.credits === 'number' ? user.credits : 25;
-    const nextCredits =
-      mode === 'add'
-        ? Math.max(0, currentUserCredits + Math.floor(amount))
-        : Math.max(0, Math.floor(amount));
+    let nextUserCredits = currentUserCredits;
+    if (mode === 'add') {
+      nextUserCredits = currentUserCredits + Math.max(1, Math.floor(amount));
+    } else if (mode === 'deduct') {
+      nextUserCredits = Math.max(0, currentUserCredits - Math.max(1, Math.floor(amount)));
+    } else {
+      nextUserCredits = Math.max(0, Math.floor(amount));
+    }
 
-    await onUpdateUserCredits(user.uid, nextCredits);
+    const deltaNeeded = nextUserCredits - currentUserCredits;
+    if (deltaNeeded === 0) return;
+
+    if (deltaNeeded > 0 && deltaNeeded > adminCreditPool) {
+      const msg = `Insufficient Website Admin Credit Pool! Giving +${deltaNeeded} credits to ${user.displayName} requires ${deltaNeeded} credits, but your Admin Pool only has ${adminCreditPool} credits left.`;
+      setPoolActionNotice({ type: 'err', text: msg });
+      showToast(`Insufficient Admin Pool! Only ${adminCreditPool} Credits available.`);
+      return;
+    }
+
+    const nextPool = saveAdminCreditPool(adminCreditPool - deltaNeeded);
+    onUpdateAdminCreditPool(nextPool);
+    await onUpdateUserCredits(user.uid, nextUserCredits);
+
     const updatedLogs = appendCreditRechargeLog({
-      targetName: user.displayName || 'Studio User',
-      targetEmail: user.email,
-      action: mode,
-      amount: Math.abs(Math.floor(amount)),
-      balanceAfter: nextCredits,
+      targetName: `${user.displayName || 'User'} (${deltaNeeded > 0 ? 'Given from Pool' : 'Reclaimed to Pool'})`,
+      targetEmail: `${user.email} · Pool Left: ${nextPool}`,
+      action: deltaNeeded > 0 ? 'add' : 'deduct',
+      amount: Math.abs(deltaNeeded),
+      balanceAfter: nextUserCredits,
     });
     setCreditLogs(updatedLogs);
+
+    if (deltaNeeded > 0) {
+      setPoolActionNotice({
+        type: 'ok',
+        text: `Gave +${deltaNeeded} Credits to ${user.displayName} (${nextUserCredits} total). Remaining Website Admin Pool: ${nextPool} Photos.`,
+      });
+      showToast(
+        `Gave +${deltaNeeded} Credits to ${user.displayName}! (Admin Pool Left: ${nextPool})`
+      );
+    } else {
+      setPoolActionNotice({
+        type: 'ok',
+        text: `Reclaimed ${Math.abs(deltaNeeded)} Credits from ${user.displayName} back to Website Admin Pool (New Pool: ${nextPool} Photos).`,
+      });
+      showToast(
+        `Reclaimed ${Math.abs(deltaNeeded)} Credits to Admin Pool! (Pool: ${nextPool})`
+      );
+    }
+  };
+
+  const handleRedeemOwnerCodeForAdminPool = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPoolActionNotice(null);
+    if (!adminPoolCouponInput.trim()) return;
+    const res = redeemAdminPoolRechargeCode(adminPoolCouponInput);
+    if (!res.ok) {
+      setPoolActionNotice({ type: 'err', text: res.error || 'Invalid Owner Activation Code.' });
+      return;
+    }
+    onUpdateAdminCreditPool(res.newPoolBalance);
+    setCreditLogs(loadCreditRechargeLogs());
+    setAdminPoolCouponInput('');
+    setPoolActionNotice({
+      type: 'ok',
+      text: `Owner Code Redeemed! Added +${res.addedCredits} Credits to your Website Admin Pool. Total Distributable Pool: ${res.newPoolBalance} Photos.`,
+    });
+    showToast(`+${res.addedCredits} Credits Added to Website Admin Pool!`);
+  };
+
+  const handleRequestAdminPoolFromOwner = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!poolReqUtr.trim()) {
+      setPoolActionNotice({
+        type: 'err',
+        text: 'Please enter the UPI UTR / Reference ID for your payment to the Owner.',
+      });
+      return;
+    }
+    const created = submitClientPaymentRequest({
+      clientName: `${siteSettings.brandName} — Website Admin`,
+      clientContact: currentUserProfile?.email || siteSettings.contactPhone || 'Website Admin',
+      targetType: 'admin_pool',
+      packageLabel: 'Website Admin Distributor Pool Top-Up',
+      creditsRequested: poolReqAmount,
+      amountInr: `Pool +${poolReqAmount}`,
+      utrNumber: poolReqUtr.trim(),
+      paymentNote: poolReqNote.trim() || 'Website Admin Pool Recharge Request',
+    });
+    setPoolReqUtr('');
+    setPoolReqNote('');
+    setShowAdminPoolQrModal(false);
+    setPoolActionNotice({
+      type: 'ok',
+      text: `Admin Pool Recharge Request (#${created.id.slice(-5).toUpperCase()}) for +${poolReqAmount} Credits submitted to Owner! Once confirmed by the Owner, your Admin Pool will be updated.`,
+    });
+    showToast(`Submitted +${poolReqAmount} Admin Pool Request to Owner!`);
   };
 
   const handleChangeMasterPasswordSubmit = (e: React.FormEvent) => {
@@ -221,7 +375,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
-  const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('pending');
+  const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('approved');
+  const [newUserInitialCredits, setNewUserInitialCredits] = useState('25');
 
   // Branding & Footer Credit Form State
   const [formSettings, setFormSettings] = useState<SiteSettings>(() => ({
@@ -265,18 +420,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleAddUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserName.trim() || !newUserEmail.trim()) return;
+    const initCredits = Math.max(0, parseInt(newUserInitialCredits, 10) || 0);
+    if (initCredits > adminCreditPool) {
+      showToast(
+        `Insufficient Website Admin Pool! You only have ${adminCreditPool} credits available to assign.`
+      );
+      return;
+    }
+    if (initCredits > 0) {
+      const nextPool = saveAdminCreditPool(adminCreditPool - initCredits);
+      onUpdateAdminCreditPool(nextPool);
+      const updatedLogs = appendCreditRechargeLog({
+        targetName: `${newUserName.trim()} (New User Created)`,
+        targetEmail: `${newUserEmail.trim()} · Pool Left: ${nextPool}`,
+        action: 'add',
+        amount: initCredits,
+        balanceAfter: initCredits,
+      });
+      setCreditLogs(updatedLogs);
+    }
     await onCreateManagedUser(
       newUserName.trim(),
       newUserEmail.trim(),
       newUserPhone.trim(),
       newUserRole,
-      newUserStatus
+      newUserStatus,
+      initCredits
     );
     setNewUserName('');
     setNewUserEmail('');
     setNewUserPhone('');
     setNewUserRole('user');
-    setNewUserStatus('pending');
+    setNewUserStatus('approved');
+    setNewUserInitialCredits('25');
     setShowAddUserForm(false);
   };
 
@@ -486,14 +662,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Summary Statistics Cards (Studio Credits, Total, Approved, Pending, Blocked) */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      {/* Summary Statistics Cards (Website Admin Pool, Studio Credits, Total, Approved, Pending, Blocked) */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <button
           onClick={() => setAdminTab('credits')}
-          className="bg-[#070a14] text-white rounded-3xl p-4 border border-amber-400/40 text-left hover:border-amber-400 transition shadow-sm col-span-2 lg:col-span-1"
+          className="bg-[#070a14] text-white rounded-3xl p-4 border border-cyan-400/50 text-left hover:border-cyan-300 transition shadow-sm"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-300">Studio Wallet Credits</span>
+            <span className="text-xs font-bold text-cyan-300">Admin Credit Pool</span>
+            <span className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-xs">
+              <i className="fa-solid fa-boxes-stacked"></i>
+            </span>
+          </div>
+          <div className="text-2xl font-extrabold font-mono text-cyan-400 mt-2 tabular-nums">
+            {adminCreditPool}
+          </div>
+          <div className="text-[11px] text-slate-300 font-semibold mt-0.5">
+            Available to Give Users
+          </div>
+        </button>
+
+        <button
+          onClick={() => setAdminTab('credits')}
+          className="bg-[#070a14] text-white rounded-3xl p-4 border border-amber-400/40 text-left hover:border-amber-400 transition shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-300">Studio Wallet</span>
             <span className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs">
               <i className={`fa-solid ${isCreditVaultUnlocked ? 'fa-coins' : 'fa-lock'}`}></i>
             </span>
@@ -501,8 +695,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="text-2xl font-extrabold font-mono text-emerald-400 mt-2 tabular-nums">
             {availableCredits}
           </div>
-          <div className="text-[11px] text-cyan-300 font-semibold mt-0.5">
-            {isCreditVaultUnlocked ? 'Vault Unlocked · Click to Add' : 'Password Protected Vault'}
+          <div className="text-[11px] text-amber-300 font-semibold mt-0.5">
+            Local Studio Photos
           </div>
         </button>
 
@@ -588,8 +782,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         {[
           {
             id: 'credits',
-            label: 'Credit Admin Vault (Add Credits)',
-            icon: isCreditVaultUnlocked ? 'fa-unlock-keyhole' : 'fa-lock',
+            label: `Admin Credit Pool (${adminCreditPool}) & User Credits`,
+            icon: 'fa-coins',
           },
           { id: 'users', label: 'User Management & Approval', icon: 'fa-users-gear' },
           { id: 'tools', label: 'Tools & Categories Manager', icon: 'fa-layer-group' },
@@ -615,464 +809,594 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       </div>
 
       {/* =====================================================================
-          TAB 0: DEDICATED PASSWORD-PROTECTED CREDIT ADMIN VAULT
+          TAB 0: WEBSITE ADMIN DISTRIBUTOR CREDIT POOL & USER ALLOCATION
          ===================================================================== */}
       {adminTab === 'credits' && (
         <div className="space-y-5">
-          {!isCreditVaultUnlocked ? (
-            /* STRONG MASTER PASSWORD LOCK SCREEN */
-            <div className="bg-[#070a14] text-white rounded-3xl border border-amber-500/40 p-6 sm:p-10 shadow-xl max-w-xl mx-auto space-y-6">
-              <div className="flex flex-col items-center text-center space-y-3">
-                <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-amber-500 via-orange-500 to-rose-600 flex items-center justify-center text-2xl text-white shadow-lg">
-                  <i className="fa-solid fa-shield-halved"></i>
+          {/* Top Distributor Pool Banner & Controls */}
+          <div className="bg-[#070a14] text-white rounded-3xl p-5 sm:p-6 border border-cyan-500/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-md">
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 flex items-center justify-center text-xl shrink-0">
+                <i className="fa-solid fa-boxes-stacked"></i>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base sm:text-lg font-extrabold text-white">
+                    Website Admin Credit Pool & User Credit Distributor
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                    Distributor System Active
+                  </span>
                 </div>
-                <span className="px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
-                  Restricted Super Admin Vault
+                <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
+                  The Owner allocates credits to your <strong>Website Admin Credit Pool</strong>. You can distribute these credits to your registered users or to the local Studio Wallet. When your Admin Pool reaches 0, request a top-up or redeem an Owner Activation Code.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-auto">
+              <div className="px-4 py-2 rounded-2xl bg-cyan-950/80 border border-cyan-400/40 text-right">
+                <div className="text-[10px] font-extrabold uppercase text-cyan-300">
+                  Admin Pool Balance
+                </div>
+                <div className="text-lg font-mono font-extrabold text-cyan-400 tabular-nums">
+                  {adminCreditPool} Photos
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAdminPoolQrModal((v) => !v)}
+                className="min-h-[42px] px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5 shadow-sm"
+              >
+                <i className="fa-solid fa-qrcode"></i>
+                <span>Get More Pool Credits (UPI QR)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowChangePassForm((v) => !v)}
+                className="min-h-[42px] px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-amber-300 border border-amber-400/30 text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-key"></i>
+                <span>Change Password</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Pool Action Feedback Notice Banner */}
+          {poolActionNotice && (
+            <div
+              className={`p-4 rounded-2xl border text-xs font-extrabold flex items-center justify-between gap-3 ${
+                poolActionNotice.type === 'ok'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                  : 'bg-rose-50 border-rose-300 text-rose-900'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <i
+                  className={`fa-solid ${
+                    poolActionNotice.type === 'ok'
+                      ? 'fa-circle-check text-emerald-600'
+                      : 'fa-triangle-exclamation text-rose-600'
+                  } text-base`}
+                ></i>
+                <span>{poolActionNotice.text}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPoolActionNotice(null)}
+                className="text-xs font-bold underline opacity-75 hover:opacity-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Redeem Owner Code or Request Pool Recharge via UPI QR Panel */}
+          <div className="bg-white rounded-3xl border border-cyan-200 p-5 space-y-4 shadow-xs">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-700">
+                  Recharge Website Admin Pool (From Owner)
                 </span>
-                <h2 className="text-lg sm:text-xl font-extrabold text-white">
-                  Credit Recharge Admin Panel (Password Protected)
-                </h2>
-                <p className="text-xs text-slate-400 max-w-md leading-relaxed">
-                  Only the authorized Administrator can unlock this panel and add or modify studio photo credits. Enter your strong Master Password below to continue.
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                  Redeem Owner Activation Code to Add Credits to Your Admin Pool
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Enter an activation code provided by the Owner (e.g. <span className="font-mono font-bold">MM-500-...</span>) to instantly increase your Website Admin Credit Pool.
                 </p>
               </div>
 
-              <form onSubmit={handleUnlockCreditVault} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-extrabold text-slate-300 mb-2">
-                    Enter Strong Admin Master Password
-                  </label>
-                  <div className="relative">
-                    <i className="fa-solid fa-key absolute left-4 top-1/2 -translate-y-1/2 text-amber-400 text-xs"></i>
-                    <input
-                      type={showVaultPassword ? 'text' : 'password'}
-                      required
-                      value={vaultPasswordInput}
-                      onChange={(e) => {
-                        setVaultPasswordInput(e.target.value);
-                        setVaultError(null);
-                      }}
-                      placeholder="Enter Master Password..."
-                      className="w-full min-h-[48px] pl-10 pr-12 py-2.5 rounded-2xl bg-slate-900 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-amber-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowVaultPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center text-xs"
-                      title={showVaultPassword ? 'Hide Password' : 'Show Password'}
-                    >
-                      <i className={`fa-solid ${showVaultPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                    </button>
-                  </div>
-                </div>
-
-                {vaultError && (
-                  <div className="p-3.5 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2">
-                    <i className="fa-solid fa-triangle-exclamation text-sm shrink-0"></i>
-                    <span>{vaultError}</span>
-                  </div>
-                )}
-
+              <form
+                onSubmit={handleRedeemOwnerCodeForAdminPool}
+                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0"
+              >
+                <input
+                  type="text"
+                  value={adminPoolCouponInput}
+                  onChange={(e) => setAdminPoolCouponInput(e.target.value)}
+                  placeholder="Enter Owner Code (MM-...)"
+                  className="min-h-[42px] px-3.5 py-2 text-xs font-mono font-bold uppercase bg-slate-50 border border-slate-300 rounded-xl w-full sm:w-60 focus:outline-none focus:border-cyan-500"
+                />
                 <button
                   type="submit"
-                  className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white font-extrabold text-sm shadow-lg active:scale-[0.99] transition flex items-center justify-center gap-2"
+                  className="min-h-[42px] px-4 py-2 rounded-xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 text-xs font-extrabold whitespace-nowrap transition flex items-center justify-center gap-1.5"
                 >
-                  <i className="fa-solid fa-unlock-keyhole"></i>
-                  <span>Unlock Credit Admin Panel</span>
+                  <i className="fa-solid fa-bolt"></i>
+                  <span>Redeem to Admin Pool</span>
                 </button>
               </form>
             </div>
-          ) : (
-            /* UNLOCKED CREDIT ADMIN VAULT */
-            <div className="space-y-5">
-              {/* Top Vault Status & Lock Bar */}
-              <div className="bg-[#070a14] text-white rounded-3xl p-5 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 flex items-center justify-center text-xl shrink-0">
-                    <i className="fa-solid fa-vault"></i>
+
+            {/* Optional Collapsible UPI QR Request Form for Website Admin Pool Top-Up */}
+            {showAdminPoolQrModal && (
+              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-12 gap-5 items-center bg-slate-50 p-4 rounded-2xl">
+                <div className="md:col-span-4 flex flex-col items-center text-center space-y-2">
+                  <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs max-w-[180px]">
+                    <img
+                      src={ADMIN_QR_IMAGE_PATH}
+                      alt="Owner UPI QR"
+                      className="w-full h-auto rounded-xl object-contain"
+                    />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="text-base sm:text-lg font-extrabold text-white">
-                        Admin Credit Recharge & Wallet Control Center
-                      </h2>
-                      <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        <i className="fa-solid fa-shield-check mr-1"></i> Unlocked
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Add unlimited credits to the Studio Wallet or manage individual user credit quotas.
-                    </p>
+                  <div className="text-xs font-extrabold text-slate-900">
+                    {ADMIN_ACCOUNT_HOLDER}
+                  </div>
+                  <div className="text-[11px] font-mono font-bold text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-lg border border-purple-200">
+                    UPI ID: {ADMIN_UPI_ID}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 self-start sm:self-auto">
-                  <button
-                    type="button"
-                    onClick={() => setShowChangePassForm((v) => !v)}
-                    className="min-h-[40px] px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-amber-300 border border-amber-400/30 text-xs font-bold transition flex items-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-key"></i>
-                    <span>Change Password</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleLockCreditVault}
-                    className="min-h-[40px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold transition flex items-center gap-1.5 shadow-xs"
-                  >
-                    <i className="fa-solid fa-lock"></i>
-                    <span>Lock Vault</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Change Master Password Panel */}
-              {showChangePassForm && (
                 <form
-                  onSubmit={handleChangeMasterPasswordSubmit}
-                  className="bg-white rounded-3xl border border-amber-300 p-5 space-y-4 shadow-xs"
+                  onSubmit={handleRequestAdminPoolFromOwner}
+                  className="md:col-span-8 space-y-3"
                 >
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <div>
-                      <h3 className="text-sm font-extrabold text-slate-900">
-                        Update Admin Master Password
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Set a new strong password (minimum 8 characters) for unlocking the Credit Admin Vault.
-                      </p>
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-extrabold text-slate-900">
+                      Request Admin Pool Top-Up from Owner
+                    </h4>
                     <button
                       type="button"
-                      onClick={() => setShowChangePassForm(false)}
+                      onClick={() => setShowAdminPoolQrModal(false)}
                       className="text-xs font-bold text-slate-500 hover:text-slate-800"
                     >
                       Close
                     </button>
                   </div>
-
-                  {changePassMsg && (
-                    <div
-                      className={`p-3 rounded-2xl text-xs font-bold ${
-                        changePassMsg.type === 'ok'
-                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                          : 'bg-rose-50 text-rose-800 border border-rose-200'
-                      }`}
-                    >
-                      {changePassMsg.text}
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <p className="text-xs text-slate-600">
+                    Scan the Owner UPI QR code, complete payment, and submit your UTR number below. Once the Owner confirms your payment, the credits will be added directly to your <strong>Website Admin Pool</strong>.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        Current Master Password
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Pool Credits Needed
                       </label>
-                      <input
-                        type="password"
-                        required
-                        value={currentPassForChange}
-                        onChange={(e) => setCurrentPassForChange(e.target.value)}
-                        placeholder="Enter current password"
-                        className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl"
-                      />
+                      <select
+                        value={poolReqAmount}
+                        onChange={(e) => setPoolReqAmount(Number(e.target.value))}
+                        className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl"
+                      >
+                        {[200, 500, 1000, 2500, 5000, 10000].map((amt) => (
+                          <option key={amt} value={amt}>
+                            +{amt} Pool Credits
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        New Strong Password
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        UPI UTR / Ref Number *
                       </label>
                       <input
                         type="text"
                         required
-                        minLength={8}
-                        value={newStrongPassword}
-                        onChange={(e) => setNewStrongPassword(e.target.value)}
-                        placeholder="Min 8 chars (e.g. MyAdmin@2026#)"
-                        className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl"
+                        value={poolReqUtr}
+                        onChange={(e) => setPoolReqUtr(e.target.value)}
+                        placeholder="12-digit UTR Number"
+                        className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded-xl"
                       />
                     </div>
                     <div>
-                      <button
-                        type="submit"
-                        className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-[#070a14] hover:bg-slate-800 text-amber-300 text-xs font-extrabold transition"
-                      >
-                        Save New Password
-                      </button>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Note (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={poolReqNote}
+                        onChange={(e) => setPoolReqNote(e.target.value)}
+                        placeholder="Admin Pool Recharge"
+                        className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl"
+                      />
                     </div>
                   </div>
+                  <button
+                    type="submit"
+                    className="min-h-[42px] px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white text-xs font-extrabold shadow-sm transition"
+                  >
+                    Submit Admin Pool Request to Owner
+                  </button>
                 </form>
+              </div>
+            )}
+          </div>
+
+          {/* Change Master Password Panel */}
+          {showChangePassForm && (
+            <form
+              onSubmit={handleChangeMasterPasswordSubmit}
+              className="bg-white rounded-3xl border border-amber-300 p-5 space-y-4 shadow-xs"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Update Admin Master Password
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Set a new strong password (minimum 8 characters) for unlocking the Website Admin Panel.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowChangePassForm(false)}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+
+              {changePassMsg && (
+                <div
+                  className={`p-3 rounded-2xl text-xs font-bold ${
+                    changePassMsg.type === 'ok'
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {changePassMsg.text}
+                </div>
               )}
 
-              {/* SECTION 1: ACTIVE STUDIO WALLET CREDIT RECHARGE */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                    <div>
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-600">
-                        Primary Studio Wallet
-                      </span>
-                      <h3 className="text-base font-extrabold text-slate-900">
-                        1-Click Studio Credit Recharge
-                      </h3>
-                    </div>
-                    <div className="px-4 py-2 rounded-2xl bg-[#070a14] border border-emerald-500/30 text-right">
-                      <div className="text-[10px] font-bold uppercase text-slate-400">
-                        Available Balance
-                      </div>
-                      <div className="text-lg font-mono font-extrabold text-emerald-400 tabular-nums">
-                        {availableCredits} Photos
-                      </div>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Current Master Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={currentPassForChange}
+                    onChange={(e) => setCurrentPassForChange(e.target.value)}
+                    placeholder="Enter current password"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    New Strong Password
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    minLength={8}
+                    value={newStrongPassword}
+                    onChange={(e) => setNewStrongPassword(e.target.value)}
+                    placeholder="Min 8 chars (e.g. MyAdmin@2026#)"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <button
+                    type="submit"
+                    className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-[#070a14] hover:bg-slate-800 text-amber-300 text-xs font-extrabold transition"
+                  >
+                    Save New Password
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
 
-                  {/* Quick Add Buttons */}
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-700">
-                      Instant Top-Up Packages (Click to Add Credits Immediately)
-                    </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                      {[25, 50, 100, 250, 500, 800, 1000, 5000].map((pkg) => (
+          {/* SECTION 1: REGISTERED USER ACCOUNTS — DISTRIBUTE CREDITS FROM ADMIN POOL */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200 text-[10px] font-extrabold uppercase">
+                    Step 1 · Give Credits to Users
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-mono text-[11px] font-extrabold">
+                    Your Distributable Pool: {adminCreditPool} Credits
+                  </span>
+                </div>
+                <h3 className="text-base font-extrabold text-slate-900 mt-1">
+                  Registered User Accounts — Distribute Credits from Your Admin Pool
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Every credit you give to a user is deducted from your Website Admin Credit Pool ({adminCreditPool} available). Reclaiming credits from a user returns them to your pool.
+                </p>
+              </div>
+              <div className="relative w-full sm:w-72">
+                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Search user by name or email..."
+                  className="w-full min-h-[40px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {filteredUsers.map((u) => {
+                const userCredits = typeof u.credits === 'number' ? u.credits : 25;
+                const customVal = userCustomCreditInputs[u.uid] ?? '50';
+                return (
+                  <div
+                    key={u.uid}
+                    className="p-3.5 rounded-2xl border border-slate-200 hover:border-cyan-300 bg-slate-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-2xl bg-[#070a14] text-cyan-300 font-extrabold text-xs flex items-center justify-center shrink-0">
+                        {(u.displayName || u.email || 'U').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
+                            {u.displayName}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono text-xs font-extrabold">
+                            <i className="fa-solid fa-coins mr-1 text-emerald-600"></i>
+                            {userCredits} Credits
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate">{u.email}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {[25, 50, 100, 500].map((amt) => (
                         <button
-                          key={pkg}
+                          key={amt}
                           type="button"
-                          onClick={() => handleStudioWalletAddCredits(pkg)}
-                          className="min-h-[48px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-mono font-extrabold text-xs shadow-sm active:scale-95 transition flex items-center justify-center gap-1.5"
+                          disabled={adminCreditPool < amt}
+                          onClick={() => handleAdjustUserCredits(u, 'add', amt)}
+                          className="min-h-[36px] px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-mono text-xs font-extrabold transition"
+                          title={`Give +${amt} Credits from Admin Pool`}
                         >
-                          <i className="fa-solid fa-plus text-[10px]"></i>
-                          <span>{pkg} Credits</span>
+                          Give +{amt}
                         </button>
                       ))}
-                    </div>
-                  </div>
 
-                  {/* Custom Credit Amount Add & Exact Balance Set */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                      <label className="block text-xs font-bold text-slate-700">
-                        Add Custom Credits
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={100000}
-                          value={customCreditAddInput}
-                          onChange={(e) => setCustomCreditAddInput(e.target.value)}
-                          placeholder="e.g. 500"
-                          className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
-                        />
+                      {userCredits >= 25 && (
                         <button
                           type="button"
-                          onClick={() =>
-                            handleStudioWalletAddCredits(
-                              Math.max(1, parseInt(customCreditAddInput, 10) || 100)
-                            )
-                          }
-                          className="min-h-[40px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold whitespace-nowrap transition"
+                          onClick={() => handleAdjustUserCredits(u, 'deduct', 25)}
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-mono text-xs font-extrabold transition"
+                          title="Reclaim 25 Credits from user back to Admin Pool"
                         >
-                          + Add
+                          -25
                         </button>
-                      </div>
-                    </div>
+                      )}
 
-                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                      <label className="block text-xs font-bold text-slate-700">
-                        Set Exact Credit Balance
-                      </label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5">
                         <input
                           type="number"
                           min={0}
                           max={100000}
-                          value={exactCreditSetInput}
-                          onChange={(e) => setExactCreditSetInput(e.target.value)}
-                          placeholder="e.g. 0 or 1000"
-                          className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
+                          value={customVal}
+                          onChange={(e) =>
+                            setUserCustomCreditInputs((prev) => ({
+                              ...prev,
+                              [u.uid]: e.target.value,
+                            }))
+                          }
+                          className="w-16 h-7 text-xs font-mono font-bold text-slate-900 focus:outline-none"
                         />
                         <button
                           type="button"
                           onClick={() =>
-                            handleStudioWalletSetExact(
-                              Math.max(0, parseInt(exactCreditSetInput, 10) || 0)
+                            handleAdjustUserCredits(
+                              u,
+                              'add',
+                              Math.max(1, parseInt(customVal, 10) || 50)
                             )
                           }
-                          className="min-h-[40px] px-4 rounded-xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 text-xs font-extrabold whitespace-nowrap transition"
+                          className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-extrabold"
                         >
-                          Set Exact
+                          Give
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleAdjustUserCredits(
+                              u,
+                              'set',
+                              Math.max(0, parseInt(customVal, 10) || 0)
+                            )
+                          }
+                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold"
+                        >
+                          Set
                         </button>
                       </div>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* SECTION 2: TRANSFER FROM ADMIN POOL TO LOCAL STUDIO WALLET + AUDIT LOG */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-600">
+                    Local Studio Counter Wallet
+                  </span>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Transfer Credits from Admin Pool to Studio Wallet
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Move credits from your Admin Pool ({adminCreditPool} left) into this browser's Studio Wallet.
+                  </p>
                 </div>
-
-                {/* Recent Credit Recharge Audit Log */}
-                <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <div>
-                        <h3 className="text-sm font-extrabold text-slate-900">
-                          Recent Credit Recharge History
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          Audit trail of admin credit top-ups and adjustments
-                        </p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-mono text-[11px] font-bold">
-                        {creditLogs.length} Logs
-                      </span>
-                    </div>
-
-                    {creditLogs.length === 0 ? (
-                      <div className="py-10 text-center text-xs text-slate-400">
-                        No credit transactions logged in this session yet.
-                      </div>
-                    ) : (
-                      <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                        {creditLogs.slice(0, 12).map((log) => (
-                          <div
-                            key={log.id}
-                            className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="min-w-0">
-                              <div className="font-extrabold text-slate-800 truncate">
-                                {log.targetName}
-                              </div>
-                              <div className="text-[10px] text-slate-500 truncate">
-                                {new Date(log.timestamp).toLocaleString()}
-                              </div>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <div
-                                className={`font-mono font-extrabold ${
-                                  log.action === 'add'
-                                    ? 'text-emerald-600'
-                                    : 'text-cyan-700'
-                                }`}
-                              >
-                                {log.action === 'add' ? `+${log.amount}` : `Set: ${log.amount}`}
-                              </div>
-                              <div className="text-[10px] font-mono text-slate-500">
-                                Bal: {log.balanceAfter}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                <div className="px-4 py-2 rounded-2xl bg-[#070a14] border border-emerald-500/30 text-right">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Studio Wallet
+                  </div>
+                  <div className="text-lg font-mono font-extrabold text-emerald-400 tabular-nums">
+                    {availableCredits} Photos
                   </div>
                 </div>
               </div>
 
-              {/* SECTION 2: REGISTERED USER ACCOUNTS CREDIT MANAGER */}
-              <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-                  <div>
-                    <h3 className="text-base font-extrabold text-slate-900">
-                      Registered User Accounts — Individual Credit Allocation
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Add or set photo credits for any registered user account in Firestore & Local Studio Storage.
-                    </p>
-                  </div>
-                  <div className="relative w-full sm:w-72">
-                    <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+              {/* Quick Transfer Buttons */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  1-Click Transfer from Admin Pool ({adminCreditPool} Available)
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {[25, 50, 100, 250, 500, 1000].map((pkg) => (
+                    <button
+                      key={pkg}
+                      type="button"
+                      disabled={adminCreditPool < pkg}
+                      onClick={() => handleStudioWalletAddCredits(pkg)}
+                      className="min-h-[44px] py-2 px-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-40 text-white font-mono font-extrabold text-xs shadow-sm active:scale-95 transition flex items-center justify-center gap-1"
+                    >
+                      <i className="fa-solid fa-plus text-[10px]"></i>
+                      <span>{pkg}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Credit Amount Add & Exact Balance Set */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Transfer Custom Amount from Pool
+                  </label>
+                  <div className="flex items-center gap-2">
                     <input
-                      type="text"
-                      value={userSearch}
-                      onChange={(e) => setUserSearch(e.target.value)}
-                      placeholder="Search user to add credits..."
-                      className="w-full min-h-[40px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                      type="number"
+                      min={1}
+                      max={100000}
+                      value={customCreditAddInput}
+                      onChange={(e) => setCustomCreditAddInput(e.target.value)}
+                      placeholder="e.g. 100"
+                      className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
                     />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleStudioWalletAddCredits(
+                          Math.max(1, parseInt(customCreditAddInput, 10) || 100)
+                        )
+                      }
+                      className="min-h-[40px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold whitespace-nowrap transition"
+                    >
+                      + Transfer
+                    </button>
                   </div>
                 </div>
 
-                <div className="space-y-2.5">
-                  {filteredUsers.map((u) => {
-                    const userCredits = typeof u.credits === 'number' ? u.credits : 25;
-                    const customVal = userCustomCreditInputs[u.uid] ?? '100';
-                    return (
-                      <div
-                        key={u.uid}
-                        className="p-3.5 rounded-2xl border border-slate-200 hover:border-cyan-300 bg-slate-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-2xl bg-[#070a14] text-cyan-300 font-extrabold text-xs flex items-center justify-center shrink-0">
-                            {(u.displayName || u.email || 'U').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
-                                {u.displayName}
-                              </span>
-                              <span className="px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 font-mono text-xs font-extrabold">
-                                <i className="fa-solid fa-coins mr-1 text-emerald-600"></i>
-                                {userCredits} Credits
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-500 truncate">{u.email}</div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                          {[50, 100, 500].map((amt) => (
-                            <button
-                              key={amt}
-                              type="button"
-                              onClick={() => handleAdjustUserCredits(u, 'add', amt)}
-                              className="min-h-[36px] px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-extrabold transition"
-                            >
-                              +{amt}
-                            </button>
-                          ))}
-
-                          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5">
-                            <input
-                              type="number"
-                              min={0}
-                              max={100000}
-                              value={customVal}
-                              onChange={(e) =>
-                                setUserCustomCreditInputs((prev) => ({
-                                  ...prev,
-                                  [u.uid]: e.target.value,
-                                }))
-                              }
-                              className="w-16 h-7 text-xs font-mono font-bold text-slate-900 focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleAdjustUserCredits(
-                                  u,
-                                  'add',
-                                  Math.max(1, parseInt(customVal, 10) || 100)
-                                )
-                              }
-                              className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-extrabold"
-                            >
-                              Add
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleAdjustUserCredits(
-                                  u,
-                                  'set',
-                                  Math.max(0, parseInt(customVal, 10) || 0)
-                                )
-                              }
-                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold"
-                            >
-                              Set
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Set Studio Wallet Balance
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      value={exactCreditSetInput}
+                      onChange={(e) => setExactCreditSetInput(e.target.value)}
+                      placeholder="e.g. 100"
+                      className="w-full min-h-[40px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleStudioWalletSetExact(
+                          Math.max(0, parseInt(exactCreditSetInput, 10) || 0)
+                        )
+                      }
+                      className="min-h-[40px] px-4 rounded-xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 text-xs font-extrabold whitespace-nowrap transition"
+                    >
+                      Set Balance
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          )}
+
+            {/* Recent Credit Recharge Audit Log */}
+            <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">
+                      Credit Distribution & Pool History
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Audit trail of credits distributed from your Admin Pool
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-mono text-[11px] font-bold">
+                    {creditLogs.length} Logs
+                  </span>
+                </div>
+
+                {creditLogs.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-400">
+                    No credit transactions logged in this session yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                    {creditLogs.slice(0, 12).map((log) => (
+                      <div
+                        key={log.id}
+                        className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-extrabold text-slate-800 truncate">
+                            {log.targetName}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate">
+                            {log.targetEmail} · {new Date(log.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div
+                            className={`font-mono font-extrabold ${
+                              log.action === 'add'
+                                ? 'text-emerald-600'
+                                : log.action === 'deduct'
+                                ? 'text-amber-600'
+                                : 'text-cyan-700'
+                            }`}
+                          >
+                            {log.action === 'add'
+                              ? `+${log.amount}`
+                              : log.action === 'deduct'
+                              ? `-${log.amount}`
+                              : `Set: ${log.amount}`}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500">
+                            Bal: {log.balanceAfter}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1083,11 +1407,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
-              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
-                User Account Approval & Access Control
-              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+                  User Account Approval & Credit Distribution
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 font-mono text-xs font-extrabold">
+                  Admin Pool Available: {adminCreditPool} Credits
+                </span>
+              </div>
               <p className="text-xs text-slate-500">
-                Approve pending registrations, block/unblock accounts, or remove users permanently.
+                Approve pending registrations, give credits to users from your Admin Pool, or manage user access.
               </p>
             </div>
 
@@ -1100,11 +1429,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
           </div>
 
+          {poolActionNotice && (
+            <div
+              className={`p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 ${
+                poolActionNotice.type === 'ok'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-rose-50 border-rose-200 text-rose-900'
+              }`}
+            >
+              <span>{poolActionNotice.text}</span>
+              <button
+                type="button"
+                onClick={() => setPoolActionNotice(null)}
+                className="text-[11px] underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Add New User Form */}
           {showAddUserForm && (
             <form
               onSubmit={handleAddUserSubmit}
-              className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end"
+              className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end"
             >
               <div className="sm:col-span-2">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">Full Name</label>
@@ -1126,6 +1474,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) => setNewUserEmail(e.target.value)}
                   placeholder="ramesh@malnadumedia.com"
                   className="w-full min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Give Credits (Pool: {adminCreditPool})
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={adminCreditPool}
+                  value={newUserInitialCredits}
+                  onChange={(e) => setNewUserInitialCredits(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
                 />
               </div>
               <div>
@@ -1239,12 +1600,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   {/* Admin Account Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button
+                      type="button"
+                      disabled={adminCreditPool < 25}
+                      onClick={() => handleAdjustUserCredits(u, 'add', 25)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
+                      title="Give +25 Credits from Website Admin Pool"
+                    >
+                      <i className="fa-solid fa-plus text-[10px]"></i>
+                      <span>Give 25</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={adminCreditPool < 100}
+                      onClick={() => handleAdjustUserCredits(u, 'add', 100)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
+                      title="Give +100 Credits from Website Admin Pool"
+                    >
+                      <i className="fa-solid fa-plus text-[10px]"></i>
+                      <span>Give 100</span>
+                    </button>
+
+                    <button
                       onClick={() => setAdminTab('credits')}
                       className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5"
-                      title="Add Credits to User in Credit Vault"
+                      title="Open Full Credit Pool Distributor"
                     >
                       <i className="fa-solid fa-coins"></i>
-                      <span>+ Credits</span>
+                      <span>Custom Credits</span>
                     </button>
 
                     {u.status !== 'approved' && (

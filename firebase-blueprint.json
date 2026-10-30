@@ -81,6 +81,12 @@
         "enableClarityEnhancer": { "type": "boolean" },
         "enableQrGenerator": { "type": "boolean" },
         "enableLinkShortener": { "type": "boolean" },
+        "adminCreditPool": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000,
+          "description": "Distributable credit pool allocated by the Super Owner (/credit-admin) to the Website Admin (/website-admin) for user credit distribution"
+        },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [

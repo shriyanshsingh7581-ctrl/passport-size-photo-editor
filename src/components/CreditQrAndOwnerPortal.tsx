@@ -9,11 +9,14 @@ import {
   appendCreditRechargeLog,
   approveClientPaymentRequest,
   generateSignedRechargeCode,
+  loadAdminCreditPool,
   loadCreditRechargeLogs,
   loadPaymentCreditRequests,
+  rechargeAdminPoolWithPassword,
   rechargeWalletWithPin,
   redeemSignedRechargeCode,
   rejectClientPaymentRequest,
+  setExactAdminPoolWithPassword,
   setExactWalletCreditsWithPassword,
   submitClientPaymentRequest,
   updateAdminMasterPassword,
@@ -26,12 +29,14 @@ interface CreditQrAndOwnerPortalProps {
   initialMode: 'client_qr' | 'owner_admin';
   standalonePage?: boolean;
   availableCredits: number;
+  adminCreditPool?: number;
   isQuotaExhausted?: boolean;
   users?: UserProfile[];
   currentUserProfile?: UserProfile | null;
   contactPhone?: string;
   onClose: () => void;
   onCreditsUpdated: (newBalance: number) => void;
+  onAdminPoolUpdated?: (newPoolBalance: number) => void;
   onUpdateUserCredits?: (uid: string, newCredits: number) => Promise<void>;
   showToast: (msg: string) => void;
 }
@@ -48,12 +53,14 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
   initialMode,
   standalonePage = false,
   availableCredits,
+  adminCreditPool = 500,
   isQuotaExhausted = false,
   users = [],
   currentUserProfile = null,
   contactPhone,
   onClose,
   onCreditsUpdated,
+  onAdminPoolUpdated,
   onUpdateUserCredits,
   showToast,
 }) => {
@@ -102,6 +109,8 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
   // Owner Credit Controls
   const [customAddAmount, setCustomAddAmount] = useState('500');
   const [exactBalanceInput, setExactBalanceInput] = useState(String(availableCredits));
+  const [adminPoolCustomAdd, setAdminPoolCustomAdd] = useState('1000');
+  const [adminPoolExactInput, setAdminPoolExactInput] = useState(String(adminCreditPool));
   const [ownerActionBanner, setOwnerActionBanner] = useState<{
     type: 'error' | 'success';
     text: string;
@@ -139,6 +148,10 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
   useEffect(() => {
     setExactBalanceInput(String(availableCredits));
   }, [availableCredits]);
+
+  useEffect(() => {
+    setAdminPoolExactInput(String(adminCreditPool));
+  }, [adminCreditPool]);
 
   useEffect(() => {
     const syncRequests = () => {
@@ -249,9 +262,12 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     showToast('Credit & Payment Confirmation Admin Panel Unlocked');
   };
 
-  const handleConfirmClientPaymentRequest = async (reqItem: PaymentCreditRequest) => {
+  const handleConfirmClientPaymentRequest = async (
+    reqItem: PaymentCreditRequest,
+    destinationOverride?: 'client_wallet' | 'admin_pool'
+  ) => {
     setOwnerActionBanner(null);
-    const res = approveClientPaymentRequest(passwordInput, reqItem.id);
+    const res = approveClientPaymentRequest(passwordInput, reqItem.id, destinationOverride);
     if (!res.ok) {
       setOwnerActionBanner({
         type: 'error',
@@ -261,9 +277,12 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     }
 
     onCreditsUpdated(res.newBalance);
+    if (onAdminPoolUpdated) {
+      onAdminPoolUpdated(res.newAdminPoolBalance);
+    }
 
-    // If the request belongs to a registered user account, also update their user profile credits
-    if (reqItem.userId && onUpdateUserCredits) {
+    // If credited to client_wallet and belongs to a registered user account, also update their user profile credits
+    if (res.creditedTo === 'client_wallet' && reqItem.userId && onUpdateUserCredits) {
       const matchedUser = users.find((u) => u.uid === reqItem.userId);
       if (matchedUser) {
         const currentCreds = typeof matchedUser.credits === 'number' ? matchedUser.credits : 25;
@@ -273,13 +292,23 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
 
     setPaymentRequests(loadPaymentCreditRequests());
     setCreditLogs(loadCreditRechargeLogs());
-    setOwnerActionBanner({
-      type: 'success',
-      text: `Payment Confirmed for ${reqItem.clientName}! Added +${reqItem.creditsRequested} Credits to Website Wallet (New Balance: ${res.newBalance} Photos).`,
-    });
-    showToast(
-      `Confirmed Payment & Added +${reqItem.creditsRequested} Credits! (Balance: ${res.newBalance})`
-    );
+    if (res.creditedTo === 'admin_pool') {
+      setOwnerActionBanner({
+        type: 'success',
+        text: `Payment Confirmed! Allocated +${reqItem.creditsRequested} Credits to Website Admin Pool (New Admin Pool: ${res.newAdminPoolBalance} Photos).`,
+      });
+      showToast(
+        `Allocated +${reqItem.creditsRequested} Credits to Website Admin Pool! (Total Pool: ${res.newAdminPoolBalance})`
+      );
+    } else {
+      setOwnerActionBanner({
+        type: 'success',
+        text: `Payment Confirmed for ${reqItem.clientName}! Added +${reqItem.creditsRequested} Credits to Website Wallet (New Balance: ${res.newBalance} Photos).`,
+      });
+      showToast(
+        `Confirmed Payment & Added +${reqItem.creditsRequested} Credits! (Balance: ${res.newBalance})`
+      );
+    }
   };
 
   const handleRejectClientPaymentRequest = (reqItem: PaymentCreditRequest) => {
@@ -298,6 +327,43 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
       text: `Marked payment request from ${reqItem.clientName} as Rejected.`,
     });
     showToast('Payment request marked as Rejected.');
+  };
+
+  const handleOwnerQuickAddAdminPool = (amount: number) => {
+    setOwnerActionBanner(null);
+    const res = rechargeAdminPoolWithPassword(passwordInput, amount);
+    if (!res.ok) {
+      setOwnerActionBanner({ type: 'error', text: res.error || 'Password verification failed.' });
+      return;
+    }
+    if (onAdminPoolUpdated) {
+      onAdminPoolUpdated(res.newPoolBalance);
+    }
+    setCreditLogs(loadCreditRechargeLogs());
+    setOwnerActionBanner({
+      type: 'success',
+      text: `Allocated +${amount} Credits to Website Admin Pool (/website-admin)! Website Admin now has ${res.newPoolBalance} Credits to distribute to users.`,
+    });
+    showToast(`+${amount} Credits Allocated to Website Admin Pool (Total: ${res.newPoolBalance})`);
+  };
+
+  const handleOwnerSetExactAdminPool = () => {
+    setOwnerActionBanner(null);
+    const target = Math.max(0, parseInt(adminPoolExactInput, 10) || 0);
+    const res = setExactAdminPoolWithPassword(passwordInput, target);
+    if (!res.ok) {
+      setOwnerActionBanner({ type: 'error', text: res.error || 'Password verification failed.' });
+      return;
+    }
+    if (onAdminPoolUpdated) {
+      onAdminPoolUpdated(res.newPoolBalance);
+    }
+    setCreditLogs(loadCreditRechargeLogs());
+    setOwnerActionBanner({
+      type: 'success',
+      text: `Website Admin Pool Balance set to ${res.newPoolBalance} Photos.`,
+    });
+    showToast(`Website Admin Pool Set: ${res.newPoolBalance} Photos`);
   };
 
   const handleOwnerQuickAdd = (amount: number) => {
@@ -891,16 +957,32 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
             <div className="space-y-5">
               {/* Top Status Strip */}
               <div className="p-4 rounded-2xl bg-white/5 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center">
-                    <i className="fa-solid fa-wallet"></i>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                      Active Website Credit Balance
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-3 pr-4 border-r border-white/10">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-300 flex items-center justify-center">
+                      <i className="fa-solid fa-building-columns"></i>
                     </div>
-                    <div className="font-mono text-xl font-extrabold text-emerald-400 tabular-nums">
-                      {availableCredits} Photos
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                        Website Admin Credit Pool (/website-admin)
+                      </div>
+                      <div className="font-mono text-xl font-extrabold text-amber-400 tabular-nums">
+                        {adminCreditPool} Photos Available to Distribute
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center">
+                      <i className="fa-solid fa-wallet"></i>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        Active Studio Header Wallet
+                      </div>
+                      <div className="font-mono text-xl font-extrabold text-emerald-400 tabular-nums">
+                        {availableCredits} Photos
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -948,8 +1030,8 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                       : 'text-slate-300 hover:bg-white/10'
                   }`}
                 >
-                  <i className="fa-solid fa-coins"></i>
-                  <span>Direct Add Credits</span>
+                  <i className="fa-solid fa-building-columns"></i>
+                  <span>Give Credits to Website Admin</span>
                 </button>
                 <button
                   type="button"
@@ -1004,10 +1086,10 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h4 className="text-sm font-extrabold text-white">
-                        Client UPI Payment Confirmation Queue
+                        Client & Website Admin UPI Payment Confirmation Queue
                       </h4>
                       <p className="text-xs text-slate-400">
-                        Verify the client's UPI payment ({ADMIN_UPI_ID}) and click "Confirm Payment & Add Credits" to immediately credit the website.
+                        Verify incoming UPI payments ({ADMIN_UPI_ID}) and allocate credits to the Website Admin Pool or directly to the Website Wallet.
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -1053,6 +1135,11 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                               <span className="px-2.5 py-0.5 rounded-lg bg-purple-500/20 border border-purple-400/40 font-mono text-xs font-extrabold text-purple-300">
                                 +{req.creditsRequested} Photos ({req.amountInr})
                               </span>
+                              {req.targetType === 'admin_pool' && (
+                                <span className="px-2 py-0.5 rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[10px] font-extrabold uppercase">
+                                  Website Admin Pool Request
+                                </span>
+                              )}
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
                                   req.status === 'pending'
@@ -1109,12 +1196,26 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                               <>
                                 <button
                                   type="button"
-                                  onClick={() => handleConfirmClientPaymentRequest(req)}
-                                  className="min-h-[42px] px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-md flex items-center gap-2 transition"
+                                  onClick={() =>
+                                    handleConfirmClientPaymentRequest(req, 'admin_pool')
+                                  }
+                                  className="min-h-[42px] px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-extrabold text-xs shadow-md flex items-center gap-1.5 transition"
+                                >
+                                  <i className="fa-solid fa-building-columns"></i>
+                                  <span>
+                                    Add +{req.creditsRequested} to Website Admin Pool
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleConfirmClientPaymentRequest(req, 'client_wallet')
+                                  }
+                                  className="min-h-[42px] px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-md flex items-center gap-1.5 transition"
                                 >
                                   <i className="fa-solid fa-circle-check"></i>
                                   <span>
-                                    Confirm Payment & Add +{req.creditsRequested} Credits
+                                    Add +{req.creditsRequested} to Website Wallet
                                   </span>
                                 </button>
                                 <button
@@ -1135,73 +1236,159 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
               )}
 
               {/* ===============================================================
-                  SUB-TAB 2: DIRECT INSTANT WEBSITE CREDIT TOP-UP
+                  SUB-TAB 2: ALLOCATE CREDITS TO WEBSITE ADMIN POOL & STUDIO WALLET
                  =============================================================== */}
               {ownerSubTab === 'direct_credits' && (
-                <div className="p-5 rounded-2xl bg-white/5 border border-white/10 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-extrabold text-cyan-300">
-                        Instant Website Credit Top-Up (Direct Balance Control)
-                      </h4>
-                      <p className="text-xs text-slate-400">
-                        Add credits directly to the website header balance or set an exact number of credits.
-                      </p>
+                <div className="space-y-4">
+                  {/* CARD 1: ALLOCATE / GIVE CREDITS TO WEBSITE ADMIN POOL (/website-admin) */}
+                  <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-400/40 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-400/20 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider mb-1">
+                          <i className="fa-solid fa-sitemap"></i>
+                          <span>2-Tier Distributor Control</span>
+                        </div>
+                        <h4 className="text-sm sm:text-base font-extrabold text-amber-300">
+                          1. Allocate Credits to Website Admin Pool (/website-admin)
+                        </h4>
+                        <p className="text-xs text-slate-300">
+                          Give credits to the Website Admin here. The Website Admin can only distribute credits to their users from this assigned pool balance.
+                        </p>
+                      </div>
+                      <div className="px-4 py-2 rounded-2xl bg-slate-950/90 border border-amber-400/40 text-right">
+                        <div className="text-[10px] font-bold uppercase text-amber-200/80">
+                          Website Admin Pool
+                        </div>
+                        <div className="font-mono text-lg font-extrabold text-amber-400 tabular-nums">
+                          {adminCreditPool} Photos
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {[100, 250, 500, 1000, 2000, 5000, 10000, 25000].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => handleOwnerQuickAddAdminPool(amt)}
+                          className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-mono font-extrabold text-xs shadow-xs active:scale-95 transition"
+                        >
+                          Give +{amt} to Admin
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-amber-400/20">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={1000000}
+                          value={adminPoolCustomAdd}
+                          onChange={(e) => setAdminPoolCustomAdd(e.target.value)}
+                          placeholder="Custom Pool Credits"
+                          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOwnerQuickAddAdminPool(
+                              Math.max(1, parseInt(adminPoolCustomAdd, 10) || 500)
+                            )
+                          }
+                          className="min-h-[42px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold transition whitespace-nowrap"
+                        >
+                          + Give to Admin Pool
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={1000000}
+                          value={adminPoolExactInput}
+                          onChange={(e) => setAdminPoolExactInput(e.target.value)}
+                          placeholder="Exact Admin Pool"
+                          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleOwnerSetExactAdminPool}
+                          className="min-h-[42px] px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 text-amber-300 text-xs font-extrabold transition whitespace-nowrap"
+                        >
+                          Set Exact Admin Pool
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {[25, 50, 100, 250, 500, 800, 1000, 5000].map((amt) => (
-                      <button
-                        key={amt}
-                        type="button"
-                        onClick={() => handleOwnerQuickAdd(amt)}
-                        className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-mono font-extrabold text-xs shadow-xs active:scale-95 transition"
-                      >
-                        +{amt} Credits
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        max={100000}
-                        value={customAddAmount}
-                        onChange={(e) => setCustomAddAmount(e.target.value)}
-                        placeholder="Custom Credits"
-                        className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleOwnerQuickAdd(Math.max(1, parseInt(customAddAmount, 10) || 100))
-                        }
-                        className="min-h-[42px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold transition whitespace-nowrap"
-                      >
-                        + Add Custom Credits
-                      </button>
+                  {/* CARD 2: DIRECT WEBSITE HEADER WALLET TOP-UP */}
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-sm font-extrabold text-cyan-300">
+                          2. Direct Website Studio Wallet Balance
+                        </h4>
+                        <p className="text-xs text-slate-400">
+                          Add credits directly to the active studio header wallet or set an exact balance.
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        max={100000}
-                        value={exactBalanceInput}
-                        onChange={(e) => setExactBalanceInput(e.target.value)}
-                        placeholder="Set Exact Balance"
-                        className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleOwnerSetExact}
-                        className="min-h-[42px] px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-extrabold transition whitespace-nowrap"
-                      >
-                        Set Exact Balance
-                      </button>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {[25, 50, 100, 250, 500, 800, 1000, 5000].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => handleOwnerQuickAdd(amt)}
+                          className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-mono font-extrabold text-xs shadow-xs active:scale-95 transition"
+                        >
+                          +{amt} Studio Wallet
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-white/10">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={100000}
+                          value={customAddAmount}
+                          onChange={(e) => setCustomAddAmount(e.target.value)}
+                          placeholder="Custom Credits"
+                          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOwnerQuickAdd(Math.max(1, parseInt(customAddAmount, 10) || 100))
+                          }
+                          className="min-h-[42px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold transition whitespace-nowrap"
+                        >
+                          + Add Custom Credits
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100000}
+                          value={exactBalanceInput}
+                          onChange={(e) => setExactBalanceInput(e.target.value)}
+                          placeholder="Set Exact Balance"
+                          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleOwnerSetExact}
+                          className="min-h-[42px] px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-extrabold transition whitespace-nowrap"
+                        >
+                          Set Exact Balance
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

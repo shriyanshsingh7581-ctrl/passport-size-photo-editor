@@ -303,6 +303,7 @@ export interface SiteSettings {
   enableAkshayaToolsCategory: boolean;
   enableMediaLiveToolsCategory: boolean;
   contactPhone?: string;
+  adminCreditPool?: number;
   toolCatalog?: ToolCatalogItem[];
   updatedAt?: any;
 }
@@ -329,6 +330,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   enableAkshayaToolsCategory: true,
   enableMediaLiveToolsCategory: true,
   contactPhone: '+91 98450 11223',
+  adminCreditPool: 500,
   toolCatalog: DEFAULT_TOOL_CATALOG,
 };
 

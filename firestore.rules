@@ -78,8 +78,9 @@ service cloud.firestore {
                'seoTitle', 'seoDescription', 'enablePassportStudio', 'enableBgRemover',
                'enableClarityEnhancer', 'enableQrGenerator', 'enableLinkShortener',
                'enableStudioToolsCategory', 'enableAkshayaToolsCategory', 'enableMediaLiveToolsCategory',
-               'contactPhone', 'toolCatalog', 'updatedAt'
+               'contactPhone', 'adminCreditPool', 'toolCatalog', 'updatedAt'
              ]) &&
+             (!('adminCreditPool' in data) || (data.adminCreditPool is int && data.adminCreditPool >= 0 && data.adminCreditPool <= 10000000)) &&
              data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 100 &&
              data.brandTagline is string && data.brandTagline.size() >= 0 && data.brandTagline.size() <= 160 &&
              data.logoType is string && (data.logoType == 'svg' || data.logoType == 'url') &&
