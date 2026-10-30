@@ -3221,7 +3221,7 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
                     <i className="fa-solid fa-grip text-cyan-600"></i>
-                    <span>Select Number of Photos to Print (अलग-अलग फोटो संख्या चुनें):</span>
+                    <span>Select Number of Photos to Print:</span>
                   </div>
                   <span className="px-2 py-0.5 rounded-lg bg-[#070a14] text-cyan-300 font-mono text-[11px] font-bold">
                     {gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'}
@@ -4125,7 +4125,7 @@ export default function App() {
 
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
-                        <span className="font-semibold text-slate-700">Brightness (വെളിച്ചം)</span>
+                        <span className="font-semibold text-slate-700">Brightness</span>
                         <span className="font-mono font-bold text-cyan-700">{brightness}%</span>
                       </div>
                       <input
@@ -4140,7 +4140,7 @@ export default function App() {
 
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
-                        <span className="font-semibold text-slate-700">Contrast (തെളിച്ചം)</span>
+                        <span className="font-semibold text-slate-700">Contrast</span>
                         <span className="font-mono font-bold text-cyan-700">{contrast}%</span>
                       </div>
                       <input
@@ -4155,7 +4155,7 @@ export default function App() {
 
                     <div>
                       <div className="flex justify-between text-xs mb-1.5">
-                        <span className="font-semibold text-slate-700">Saturation (നിറം)</span>
+                        <span className="font-semibold text-slate-700">Saturation</span>
                         <span className="font-mono font-bold text-cyan-700">{saturate}%</span>
                       </div>
                       <input
@@ -4511,7 +4511,6 @@ export default function App() {
             onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
             onUpdateVerificationStatus={handleUpdateVerificationStatus}
             onNavigateToStudio={() => navigateToAdminPath('home')}
-            onOpenPaymentCreditAdmin={() => navigateToAdminPath('credit-admin')}
             showToast={showToast}
           />
         </main>
@@ -4530,7 +4529,6 @@ export default function App() {
             currentUserProfile={userProfile}
             contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
             onClose={() => navigateToAdminPath('home')}
-            onSwitchToWebsiteAdmin={() => navigateToAdminPath('website-admin')}
             onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
             onUpdateUserCredits={handleUpdateUserCredits}
             showToast={showToast}
@@ -4966,11 +4964,6 @@ export default function App() {
         onClose={() => {
           setShowCreditExhaustedModal(false);
           setShowAdminRechargeModal(false);
-        }}
-        onSwitchToWebsiteAdmin={() => {
-          setShowCreditExhaustedModal(false);
-          setShowAdminRechargeModal(false);
-          navigateToAdminPath('website-admin');
         }}
         onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
         onUpdateUserCredits={handleUpdateUserCredits}

@@ -58,7 +58,6 @@ interface AdminPanelProps {
     remarks: string
   ) => Promise<void>;
   onNavigateToStudio: () => void;
-  onOpenPaymentCreditAdmin?: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -83,7 +82,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateAppointmentStatus,
   onUpdateVerificationStatus,
   onNavigateToStudio,
-  onOpenPaymentCreditAdmin,
   showToast,
 }) => {
   const [adminTab, setAdminTab] = useState<AdminTab>(initialAdminTab || 'users');
@@ -427,21 +425,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </button>
           </form>
 
-          <div className="pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
-            {onOpenPaymentCreditAdmin && (
-              <button
-                type="button"
-                onClick={onOpenPaymentCreditAdmin}
-                className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-xs font-extrabold flex items-center gap-1.5 transition"
-              >
-                <i className="fa-solid fa-money-check-dollar"></i>
-                <span>Go to /credit-admin</span>
-              </button>
-            )}
+          <div className="pt-3 border-t border-white/10 flex items-center justify-center">
             <button
               type="button"
               onClick={onNavigateToStudio}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition"
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition"
             >
               ← Back to Website
             </button>
@@ -479,17 +467,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {onOpenPaymentCreditAdmin && (
-            <button
-              type="button"
-              onClick={onOpenPaymentCreditAdmin}
-              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white text-xs font-extrabold shadow-sm transition flex items-center gap-2"
-            >
-              <i className="fa-solid fa-money-check-dollar"></i>
-              <span>Go to /credit-admin</span>
-            </button>
-          )}
-
           <button
             type="button"
             onClick={handleLockCreditVault}

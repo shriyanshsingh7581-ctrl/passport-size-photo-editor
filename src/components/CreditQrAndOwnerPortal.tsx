@@ -31,7 +31,6 @@ interface CreditQrAndOwnerPortalProps {
   currentUserProfile?: UserProfile | null;
   contactPhone?: string;
   onClose: () => void;
-  onSwitchToWebsiteAdmin?: () => void;
   onCreditsUpdated: (newBalance: number) => void;
   onUpdateUserCredits?: (uid: string, newCredits: number) => Promise<void>;
   showToast: (msg: string) => void;
@@ -54,7 +53,6 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
   currentUserProfile = null,
   contactPhone,
   onClose,
-  onSwitchToWebsiteAdmin,
   onCreditsUpdated,
   onUpdateUserCredits,
   showToast,
@@ -816,16 +814,6 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {onSwitchToWebsiteAdmin && (
-                <button
-                  type="button"
-                  onClick={onSwitchToWebsiteAdmin}
-                  className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-300 text-xs font-extrabold flex items-center gap-1.5 transition"
-                >
-                  <i className="fa-solid fa-sliders"></i>
-                  <span>Go to /website-admin</span>
-                </button>
-              )}
               <button
                 type="button"
                 onClick={onClose}
