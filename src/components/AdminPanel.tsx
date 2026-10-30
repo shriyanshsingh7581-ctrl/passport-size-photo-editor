@@ -7,6 +7,9 @@ import {
   AppointmentRecord,
   DocumentVerificationRecord,
   DEFAULT_SITE_SETTINGS,
+  DEFAULT_TOOL_CATALOG,
+  ToolCatalogItem,
+  ToolCategoryId,
 } from '../constants';
 
 interface AdminPanelProps {
@@ -43,7 +46,7 @@ interface AdminPanelProps {
   showToast: (msg: string) => void;
 }
 
-type AdminTab = 'users' | 'branding' | 'links' | 'operations';
+type AdminTab = 'users' | 'tools' | 'branding' | 'links' | 'operations';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentUserProfile,
@@ -80,12 +83,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('pending');
 
   // Branding & Footer Credit Form State
-  const [formSettings, setFormSettings] = useState<SiteSettings>(siteSettings);
+  const [formSettings, setFormSettings] = useState<SiteSettings>(() => ({
+    ...siteSettings,
+    toolCatalog: siteSettings.toolCatalog?.length
+      ? siteSettings.toolCatalog
+      : DEFAULT_TOOL_CATALOG,
+  }));
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [toolCategoryFilter, setToolCategoryFilter] = useState<'all' | ToolCategoryId>('all');
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setFormSettings(siteSettings);
+    setFormSettings({
+      ...siteSettings,
+      toolCatalog: siteSettings.toolCatalog?.length
+        ? siteSettings.toolCatalog
+        : DEFAULT_TOOL_CATALOG,
+    });
   }, [siteSettings]);
 
   const totalUsersCount = users.length;
@@ -320,6 +334,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar bg-[#070a14] p-2 rounded-2xl border border-cyan-500/30">
         {[
           { id: 'users', label: 'User Management & Approval', icon: 'fa-users-gear' },
+          { id: 'tools', label: 'Tools & Categories Manager', icon: 'fa-layer-group' },
           { id: 'branding', label: 'Brand, Theme & Footer Credit', icon: 'fa-palette' },
           { id: 'links', label: `Short Links (${shortLinks.length})`, icon: 'fa-link' },
           { id: 'operations', label: 'Appointments & IDs', icon: 'fa-calendar-check' },
@@ -570,6 +585,231 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {/* =====================================================================
+          TAB 1.5: TOOLS & CATEGORIES MANAGER (STUDIO, AKSHAYA, MEDIA & LIVE)
+         ===================================================================== */}
+      {adminTab === 'tools' && (
+        <form
+          onSubmit={handleSettingsSubmit}
+          className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-xs"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+                Platform Tools & Category Visibility Manager
+              </h2>
+              <p className="text-xs text-slate-500">
+                Enable or disable tool categories, control individual tool visibility, and edit tool names & descriptions across Studio Tools, Akshaya Tools, and Media & Live Tools.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFormSettings((prev) => ({
+                    ...prev,
+                    enableStudioToolsCategory: true,
+                    enableAkshayaToolsCategory: true,
+                    enableMediaLiveToolsCategory: true,
+                    toolCatalog: DEFAULT_TOOL_CATALOG,
+                  }));
+                  showToast('Restored default tool catalog');
+                }}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+              >
+                Reset Catalog
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingSettings}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-floppy-disk"></i>
+                <span>{isSavingSettings ? 'Saving...' : 'Save Tool Settings'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Main Category Toggles */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[
+              {
+                key: 'enableStudioToolsCategory',
+                title: '1. Studio Tools Category',
+                sub: 'Passport Photo, Resize, Print Sheet, AI BG & Clarity',
+                icon: 'fa-camera-retro',
+                accent: 'border-cyan-200 bg-cyan-50/50',
+              },
+              {
+                key: 'enableAkshayaToolsCategory',
+                title: '2. Akshaya Tools Category',
+                sub: 'PDF Merge, Split, Compress, Batch Image & Signature Resize',
+                icon: 'fa-file-shield',
+                accent: 'border-blue-200 bg-blue-50/50',
+              },
+              {
+                key: 'enableMediaLiveToolsCategory',
+                title: '3. Media & Live Tools Category',
+                sub: '15 Broadcast, YouTube, Wedding/Church/Funeral, OBS & Video Tools',
+                icon: 'fa-tower-broadcast',
+                accent: 'border-purple-200 bg-purple-50/50',
+              },
+            ].map((cat) => (
+              <label
+                key={cat.key}
+                className={`p-4 rounded-2xl border ${cat.accent} flex items-center justify-between gap-3 cursor-pointer`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-[#070a14] text-cyan-300 flex items-center justify-center shrink-0">
+                    <i className={`fa-solid ${cat.icon}`}></i>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-extrabold text-slate-900 truncate">
+                      {cat.title}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">{cat.sub}</div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={(formSettings as any)[cat.key] !== false}
+                  onChange={(e) =>
+                    setFormSettings({
+                      ...formSettings,
+                      [cat.key]: e.target.checked,
+                    })
+                  }
+                  className="w-5 h-5 accent-cyan-600 rounded shrink-0"
+                />
+              </label>
+            ))}
+          </div>
+
+          {/* Filter by Category Bar */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              {[
+                { id: 'all', label: `All Tools (${(formSettings.toolCatalog || DEFAULT_TOOL_CATALOG).length})` },
+                { id: 'studio', label: 'Studio Tools (7)' },
+                { id: 'akshaya', label: 'Akshaya Tools (5)' },
+                { id: 'media-live', label: 'Media & Live Tools (15)' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setToolCategoryFilter(f.id as any)}
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition ${
+                    toolCategoryFilter === f.id
+                      ? 'bg-[#070a14] text-cyan-300'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Editable Tool List */}
+          <div className="space-y-2.5 max-h-[540px] overflow-y-auto pr-1">
+            {(formSettings.toolCatalog || DEFAULT_TOOL_CATALOG)
+              .filter(
+                (t) => toolCategoryFilter === 'all' || t.category === toolCategoryFilter
+              )
+              .map((tool: ToolCatalogItem) => (
+                <div
+                  key={tool.id}
+                  className={`p-3.5 rounded-2xl border transition grid grid-cols-1 lg:grid-cols-12 gap-3 items-center ${
+                    tool.enabled
+                      ? 'bg-slate-50/70 border-slate-200'
+                      : 'bg-rose-50/30 border-rose-200 opacity-75'
+                  }`}
+                >
+                  <div className="lg:col-span-3 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#070a14] text-cyan-300 flex items-center justify-center shrink-0">
+                      <i className={`fa-solid ${tool.icon}`}></i>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-extrabold text-slate-900 truncate">
+                        {tool.name}
+                      </div>
+                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 text-slate-700">
+                        {tool.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">
+                      Tool Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={tool.name}
+                      onChange={(e) => {
+                        const updated = (
+                          formSettings.toolCatalog || DEFAULT_TOOL_CATALOG
+                        ).map((item) =>
+                          item.id === tool.id ? { ...item, name: e.target.value } : item
+                        );
+                        setFormSettings({ ...formSettings, toolCatalog: updated });
+                      }}
+                      className="w-full min-h-[38px] px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="lg:col-span-4">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">
+                      Tool Description
+                    </label>
+                    <input
+                      type="text"
+                      value={tool.description}
+                      onChange={(e) => {
+                        const updated = (
+                          formSettings.toolCatalog || DEFAULT_TOOL_CATALOG
+                        ).map((item) =>
+                          item.id === tool.id
+                            ? { ...item, description: e.target.value }
+                            : item
+                        );
+                        setFormSettings({ ...formSettings, toolCatalog: updated });
+                      }}
+                      className="w-full min-h-[38px] px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="lg:col-span-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = (
+                          formSettings.toolCatalog || DEFAULT_TOOL_CATALOG
+                        ).map((item) =>
+                          item.id === tool.id ? { ...item, enabled: !item.enabled } : item
+                        );
+                        setFormSettings({ ...formSettings, toolCatalog: updated });
+                      }}
+                      className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+                        tool.enabled
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-rose-100 text-rose-800 border border-rose-200'
+                      }`}
+                    >
+                      <i
+                        className={`fa-solid ${
+                          tool.enabled ? 'fa-eye' : 'fa-eye-slash'
+                        }`}
+                      ></i>
+                      <span>{tool.enabled ? 'Enabled' : 'Hidden'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </form>
       )}
 
       {/* =====================================================================

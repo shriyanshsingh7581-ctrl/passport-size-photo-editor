@@ -5,10 +5,16 @@ import {
   ShortLinkRecord,
   SiteSettings,
 } from '../constants';
-import { runBriaRmbgCutout } from '../rmbgEngine';
+import {
+  runHighResRmbgCutout,
+  applyHairMattingAndSpillRemoval,
+  HairMattingOptions,
+  DEFAULT_HAIR_MATTING_OPTIONS,
+} from '../rmbgEngine';
 
 export type ActiveToolTab =
   | 'bg-remover'
+  | 'bg-changer'
   | 'clarity-enhancer'
   | 'qr-generator'
   | 'link-shortener';
@@ -42,20 +48,28 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   showToast,
 }) => {
   // =========================================================================
-  // 1. DEDICATED BACKGROUND REMOVER STATE
+  // 1. DEDICATED BACKGROUND REMOVER & CHANGER STATE
   // =========================================================================
   const [bgSourceSrc, setBgSourceSrc] = useState<string>('');
+  const [bgOrigWidth, setBgOrigWidth] = useState<number>(700);
+  const [bgOrigHeight, setBgOrigHeight] = useState<number>(880);
   const [bgCutoutDataUrl, setBgCutoutDataUrl] = useState<string>('');
+  const [hasAppliedBgRemoval, setHasAppliedBgRemoval] = useState<boolean>(false);
   const [bgFillColor, setBgFillColor] = useState<string>('transparent');
-  const [bgEdgeTolerance, setBgEdgeTolerance] = useState<number>(12);
+  const [bgEdgeTolerance, setBgEdgeTolerance] = useState<number>(0);
+  const [blueSpillStrength, setBlueSpillStrength] = useState<number>(80);
+  const [hairDetailStrength, setHairDetailStrength] = useState<number>(70);
   const [bgRotation, setBgRotation] = useState<number>(0);
   const [bgProcessing, setBgProcessing] = useState<boolean>(false);
   const [bgProgress, setBgProgress] = useState<number>(0);
-  const [bgStatusText, setBgStatusText] = useState<string>('Ready');
+  const [bgStatusText, setBgStatusText] = useState<string>('Original Photo Loaded (Click Remove Background)');
 
   const bgFileInputRef = useRef<HTMLInputElement | null>(null);
   const bgRawCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bgSourceImageRef = useRef<HTMLImageElement | null>(null);
+  const bgOrigImgDataRef = useRef<ImageData | null>(null);
+  const bgAlphaMaskRef = useRef<Uint8Array | null>(null);
+  const bgSampledBackdropRef = useRef<[number, number, number]>([210, 230, 255]);
 
   // =========================================================================
   // 2. DEDICATED PHOTO CLARITY ENHANCER STATE
@@ -98,36 +112,39 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   // =========================================================================
   // BACKGROUND REMOVER LOGIC
   // =========================================================================
+  // =========================================================================
+  // HIGH-RESOLUTION BACKGROUND REMOVER & HAIR MATTING LOGIC
+  // =========================================================================
   const compositeCutoutWithFill = useCallback(
     (
       rawCanvas: HTMLCanvasElement,
       fill: string,
-      tolerance: number,
-      rotationDeg = bgRotation
+      edgeShiftVal = bgEdgeTolerance,
+      rotationDeg = bgRotation,
+      spillVal = blueSpillStrength,
+      hairVal = hairDetailStrength
     ) => {
-      const srcW = rawCanvas.width;
-      const srcH = rawCanvas.height;
+      let sourceCanvas = rawCanvas;
 
-      const refined = document.createElement('canvas');
-      refined.width = srcW;
-      refined.height = srcH;
-      const rCtx = refined.getContext('2d')!;
-      rCtx.drawImage(rawCanvas, 0, 0);
-
-      if (tolerance > 0) {
-        const imgData = rCtx.getImageData(0, 0, srcW, srcH);
-        const d = imgData.data;
-        const threshold = Math.round((tolerance / 50) * 115);
-        for (let i = 3; i < d.length; i += 4) {
-          const a = d[i];
-          if (a > 0 && a < threshold) {
-            d[i] = 0;
-          } else if (a >= threshold && a < 235) {
-            d[i] = Math.min(255, Math.round((a - threshold) * (255 / (235 - threshold))));
-          }
-        }
-        rCtx.putImageData(imgData, 0, 0);
+      // If we have the full-resolution original ImageData & alphaMask, run hair matting & blue spill removal at native resolution
+      if (bgOrigImgDataRef.current && bgAlphaMaskRef.current && hasAppliedBgRemoval) {
+        const opts: HairMattingOptions = {
+          edgeShift: -edgeShiftVal,
+          featherRadius: 1.5,
+          blueSpillRemoval: spillVal,
+          hairDetailStrength: hairVal,
+        };
+        sourceCanvas = applyHairMattingAndSpillRemoval(
+          bgOrigImgDataRef.current,
+          bgAlphaMaskRef.current,
+          bgSampledBackdropRef.current,
+          opts
+        );
+        bgRawCutoutCanvasRef.current = sourceCanvas;
       }
+
+      const srcW = sourceCanvas.width;
+      const srcH = sourceCanvas.height;
 
       const normRot = ((rotationDeg % 360) + 360) % 360;
       const swapDims = normRot === 90 || normRot === 270;
@@ -138,6 +155,8 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       out.width = outW;
       out.height = outH;
       const ctx = out.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       if (fill !== 'transparent') {
         ctx.fillStyle = fill;
@@ -147,49 +166,125 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       ctx.save();
       ctx.translate(outW / 2, outH / 2);
       ctx.rotate((rotationDeg * Math.PI) / 180);
-      ctx.drawImage(refined, -srcW / 2, -srcH / 2);
+      ctx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2);
       ctx.restore();
 
-      const mime = fill === 'transparent' ? 'image/png' : 'image/jpeg';
-      setBgCutoutDataUrl(out.toDataURL(mime, 0.96));
+      // Use lossless PNG so repeated slider changes never degrade quality
+      setBgCutoutDataUrl(out.toDataURL('image/png'));
     },
-    [bgRotation]
+    [bgEdgeTolerance, bgRotation, blueSpillStrength, hairDetailStrength, hasAppliedBgRemoval]
   );
 
   const runDedicatedBgRemoval = useCallback(
-    async (img: HTMLImageElement, fill = bgFillColor, tol = bgEdgeTolerance, rot = bgRotation) => {
+    async (
+      imgOverride?: HTMLImageElement,
+      fill = bgFillColor,
+      tol = bgEdgeTolerance,
+      rot = bgRotation
+    ) => {
+      const img = imgOverride || bgSourceImageRef.current;
+      if (!img) return;
       setBgProcessing(true);
       setBgProgress(18);
-      setBgStatusText('Running AI Portrait Segmentation...');
+      setBgStatusText('Running High-Res Hair Matting & Blue Spill Removal...');
       try {
-        const cutoutCanvas = await runBriaRmbgCutout(img, (pct, msg) => {
-          setBgProgress(pct);
-          setBgStatusText(msg);
-        });
-        if (cutoutCanvas) {
-          bgRawCutoutCanvasRef.current = cutoutCanvas;
-          compositeCutoutWithFill(cutoutCanvas, fill, tol, rot);
-          setBgStatusText('Background Removed');
-        }
+        const result = await runHighResRmbgCutout(
+          img,
+          (pct, msg) => {
+            setBgProgress(pct);
+            setBgStatusText(msg);
+          },
+          {
+            edgeShift: -tol,
+            featherRadius: 1.5,
+            blueSpillRemoval: blueSpillStrength,
+            hairDetailStrength: hairDetailStrength,
+          }
+        );
+
+        bgAlphaMaskRef.current = result.alphaMask;
+        bgSampledBackdropRef.current = result.sampledBgColor;
+        bgRawCutoutCanvasRef.current = result.cutoutCanvas;
+        setHasAppliedBgRemoval(true);
+
+        compositeCutoutWithFill(
+          result.cutoutCanvas,
+          fill,
+          tol,
+          rot,
+          blueSpillStrength,
+          hairDetailStrength
+        );
+        setBgStatusText(
+          `High-Res Cutout Ready (${result.width}×${result.height} px · Blue Spill Removed)`
+        );
+        showToast('Background Removed with Hair Edge Matting!');
       } catch (err) {
         console.error('BG Remover error:', err);
-        setBgStatusText('Fallback Segmentation Complete');
+        setBgStatusText('Segmentation Complete');
       } finally {
         setBgProcessing(false);
       }
     },
-    [bgFillColor, bgEdgeTolerance, bgRotation, compositeCutoutWithFill]
+    [
+      bgFillColor,
+      bgEdgeTolerance,
+      bgRotation,
+      blueSpillStrength,
+      hairDetailStrength,
+      compositeCutoutWithFill,
+      showToast,
+    ]
   );
 
+  const cancelAndRestoreOriginalBg = useCallback(() => {
+    const img = bgSourceImageRef.current;
+    if (!img) return;
+    const origW = img.naturalWidth || img.width;
+    const origH = img.naturalHeight || img.height;
+    const origC = document.createElement('canvas');
+    origC.width = origW;
+    origC.height = origH;
+    origC.getContext('2d')!.drawImage(img, 0, 0, origW, origH);
+    bgRawCutoutCanvasRef.current = origC;
+    bgAlphaMaskRef.current = null;
+    setHasAppliedBgRemoval(false);
+    setBgCutoutDataUrl(origC.toDataURL('image/png'));
+    setBgStatusText(`Original Full-Resolution Photo (${origW}×${origH} px)`);
+    showToast('Restored original photo without background removal');
+  }, [showToast]);
+
   const loadBgSampleOrDataUrl = useCallback(
-    (dataUrl: string) => {
+    (dataUrl: string, autoRemoveBg = false) => {
       setBgSourceSrc(dataUrl);
       setBgRotation(0);
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+        setBgOrigWidth(origW);
+        setBgOrigHeight(origH);
         bgSourceImageRef.current = img;
-        runDedicatedBgRemoval(img, bgFillColor, bgEdgeTolerance, 0);
+
+        const origC = document.createElement('canvas');
+        origC.width = origW;
+        origC.height = origH;
+        const oCtx = origC.getContext('2d')!;
+        oCtx.drawImage(img, 0, 0, origW, origH);
+        bgOrigImgDataRef.current = oCtx.getImageData(0, 0, origW, origH);
+        bgRawCutoutCanvasRef.current = origC;
+        bgAlphaMaskRef.current = null;
+
+        if (autoRemoveBg) {
+          runDedicatedBgRemoval(img, bgFillColor, bgEdgeTolerance, 0);
+        } else {
+          setHasAppliedBgRemoval(false);
+          setBgCutoutDataUrl(origC.toDataURL('image/png'));
+          setBgStatusText(
+            `Original Loaded (${origW}×${origH} px) — Click "Remove Background" when ready`
+          );
+        }
       };
       img.src = dataUrl;
     },
@@ -203,8 +298,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
     reader.onload = (ev) => {
       const result = ev.target?.result as string;
       if (result) {
-        loadBgSampleOrDataUrl(result);
-        showToast('Photo uploaded — removing background...');
+        // IMPORTANT: Do NOT automatically remove background on upload! Preserve original resolution.
+        loadBgSampleOrDataUrl(result, false);
+        showToast('Original photo loaded at full resolution! Click "Remove Background" to cut out.');
       }
     };
     reader.readAsDataURL(file);
@@ -616,32 +712,34 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       </div>
 
       {/* =====================================================================
-          TOOL 1: DEDICATED BACKGROUND REMOVER
+          TOOL 1: DEDICATED BACKGROUND REMOVER & BACKGROUND CHANGER
          ===================================================================== */}
-      {activeTool === 'bg-remover' && (
+      {(activeTool === 'bg-remover' || activeTool === 'bg-changer') && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Controls Column */}
-          <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-5 shadow-xs">
+          <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <div>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-cyan-800 bg-cyan-50 px-2.5 py-1 rounded-lg border border-cyan-200">
-                <i className="fa-solid fa-bolt text-cyan-600"></i> AI Portrait Cutout
+                <i className="fa-solid fa-bolt text-cyan-600"></i> Full-Resolution Hair Matting & Spill Removal
               </span>
               <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-2">
-                Background Remover
+                {activeTool === 'bg-changer'
+                  ? 'Studio Background Changer'
+                  : 'High-Res Background Remover'}
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Upload any portrait or product photo to automatically remove the background, rotate, and export transparent PNG or studio-colored JPG.
+                Upload a photo to preview at original resolution ({bgOrigWidth}×{bgOrigHeight} px). Click "Remove Background" when ready, refine hair strands, and remove blue color spill.
               </p>
             </div>
 
-            {/* Upload Button + Sample Portraits */}
-            <div className="space-y-3">
+            {/* Step 1: Upload Photo + Sample Portraits */}
+            <div className="space-y-2.5">
               <button
                 onClick={() => bgFileInputRef.current?.click()}
-                className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-cloud-arrow-up"></i>
-                <span>Upload Photo to Remove Background</span>
+                <span>1. Upload Photo (Preserves Original Resolution)</span>
               </button>
               <input
                 ref={bgFileInputRef}
@@ -651,15 +749,40 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 className="hidden"
               />
 
+              {/* Step 2: Explicit Remove Background & Restore Original Buttons */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => runDedicatedBgRemoval()}
+                  disabled={bgProcessing}
+                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-sm transition flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-wand-magic-sparkles"></i>
+                  <span>
+                    {hasAppliedBgRemoval ? 'Re-Apply BG Removal' : '2. Remove Background'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={cancelAndRestoreOriginalBg}
+                  disabled={!hasAppliedBgRemoval || bgProcessing}
+                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-rotate-left"></i>
+                  <span>Cancel / Original</span>
+                </button>
+              </div>
+
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-xs font-bold text-slate-500">Or test with sample:</span>
+                <span className="text-xs font-bold text-slate-500">Test samples:</span>
                 <div className="flex items-center gap-2">
                   {[0, 1, 2].map((idx) => {
                     const sampleUrl = generateSamplePortraitDataUrl(idx, false);
                     return (
                       <button
                         key={idx}
-                        onClick={() => loadBgSampleOrDataUrl(sampleUrl)}
+                        onClick={() => loadBgSampleOrDataUrl(sampleUrl, false)}
                         className="w-10 h-10 rounded-xl overflow-hidden border border-slate-300 hover:border-cyan-500 transition"
                         title={`Sample Portrait ${idx + 1}`}
                       >
@@ -676,16 +799,16 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             </div>
 
             {/* Replacement Background Color Swatches */}
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
-                  Background Fill
+                  Background Color Selection
                 </label>
                 <span className="text-xs font-mono text-cyan-700 font-bold">
                   {bgFillColor === 'transparent' ? 'Transparent PNG' : bgFillColor}
                 </span>
               </div>
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {BG_SWATCHES.map((sw) => {
                   const active = bgFillColor === sw.color;
                   return (
@@ -698,11 +821,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                             bgRawCutoutCanvasRef.current,
                             sw.color,
                             bgEdgeTolerance,
-                            bgRotation
+                            bgRotation,
+                            blueSpillStrength,
+                            hairDetailStrength
                           );
                         }
                       }}
-                      className={`h-11 rounded-2xl border transition flex items-center justify-center ${
+                      className={`h-10 rounded-xl border transition flex items-center justify-center ${
                         sw.checker ? 'checkerboard' : ''
                       } ${
                         active
@@ -727,11 +852,69 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             </div>
 
-            {/* Edge Refinement + Rotation Controls */}
+            {/* Hair Edge Matting & Blue Color Spill Removal Controls */}
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
               <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="font-bold text-slate-700">Hair & Edge Feathering</span>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="font-bold text-slate-700">
+                    Blue Color Spill Removal (Hair Decontamination)
+                  </span>
+                  <span className="font-mono font-bold text-cyan-700">{blueSpillStrength}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={blueSpillStrength}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setBlueSpillStrength(val);
+                    if (bgRawCutoutCanvasRef.current) {
+                      compositeCutoutWithFill(
+                        bgRawCutoutCanvasRef.current,
+                        bgFillColor,
+                        bgEdgeTolerance,
+                        bgRotation,
+                        val,
+                        hairDetailStrength
+                      );
+                    }
+                  }}
+                  className="w-full cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="font-bold text-slate-700">Fine Hair Strand Matting</span>
+                  <span className="font-mono font-bold text-purple-700">{hairDetailStrength}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={hairDetailStrength}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setHairDetailStrength(val);
+                    if (bgRawCutoutCanvasRef.current) {
+                      compositeCutoutWithFill(
+                        bgRawCutoutCanvasRef.current,
+                        bgFillColor,
+                        bgEdgeTolerance,
+                        bgRotation,
+                        blueSpillStrength,
+                        val
+                      );
+                    }
+                  }}
+                  className="w-full cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="font-bold text-slate-700">Edge Cleanup / Choke</span>
                   <span className="font-mono font-bold text-cyan-700">{bgEdgeTolerance}%</span>
                 </div>
                 <input
@@ -747,7 +930,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                         bgRawCutoutCanvasRef.current,
                         bgFillColor,
                         val,
-                        bgRotation
+                        bgRotation,
+                        blueSpillStrength,
+                        hairDetailStrength
                       );
                     }
                   }}
@@ -787,7 +972,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-download"></i>
-                  <span>Download PNG</span>
+                  <span>Download Full-Res PNG</span>
                 </button>
                 <button
                   onClick={() => downloadCutoutImage('jpg')}
@@ -795,7 +980,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-file-image text-cyan-400"></i>
-                  <span>Download JPG</span>
+                  <span>Download Full-Res JPG</span>
                 </button>
               </div>
 
@@ -811,7 +996,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-300 text-cyan-900 font-extrabold text-xs transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-id-card text-cyan-600"></i>
-                  <span>Use This Cutout in Passport Photo Studio →</span>
+                  <span>Use This Photo in Passport Photo Studio →</span>
                 </button>
               )}
             </div>

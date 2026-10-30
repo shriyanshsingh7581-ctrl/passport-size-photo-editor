@@ -14,8 +14,272 @@ export interface BgSwatch {
   name: string;
   mal: string;
   hex: string;
+  color: string;
+  checker?: boolean;
   border: string;
 }
+
+export type ToolCategoryId = 'studio' | 'akshaya' | 'media-live';
+
+export interface ToolCatalogItem {
+  id: string;
+  category: ToolCategoryId;
+  name: string;
+  description: string;
+  icon: string;
+  badge?: string;
+  enabled: boolean;
+}
+
+export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
+  // CATEGORY 1 (A): STUDIO TOOLS
+  {
+    id: 'passport-editor',
+    category: 'studio',
+    name: 'Passport Photo Maker',
+    description:
+      'High-resolution biometric passport photo studio with non-destructive retouching, hair matting, blue spill removal, and interactive print sheets.',
+    icon: 'fa-id-card',
+    badge: 'Flagship HD',
+    enabled: true,
+  },
+  {
+    id: 'bg-remover',
+    category: 'studio',
+    name: 'Background Remover',
+    description:
+      'High-resolution AI background cutout with fine hair strand matting, blue color spill decontamination, and manual edge brush.',
+    icon: 'fa-wand-magic-sparkles',
+    badge: 'Hair Matting',
+    enabled: true,
+  },
+  {
+    id: 'bg-changer',
+    category: 'studio',
+    name: 'Background Changer',
+    description:
+      'Replace photo backgrounds with official passport colors, studio gradients, or custom colours while preserving original resolution.',
+    icon: 'fa-palette',
+    badge: 'Studio Colors',
+    enabled: true,
+  },
+  {
+    id: 'photo-resize',
+    category: 'studio',
+    name: 'Photo Resize',
+    description:
+      'Resize portraits and studio photos in px, mm, cm, or inches with custom DPI, aspect ratio lock, and format conversion.',
+    icon: 'fa-maximize',
+    badge: '300/600 DPI',
+    enabled: true,
+  },
+  {
+    id: 'photo-print-sheet',
+    category: 'studio',
+    name: 'Photo Print Sheet',
+    description:
+      'Interactive object-based print sheet editor with individual photo drag-and-drop, free positioning, resize, rotate, and 6×4, 4×6, 5×7, A4, A5 PDF/PNG/JPG export.',
+    icon: 'fa-table-cells',
+    badge: 'Free Drag & Drop',
+    enabled: true,
+  },
+  {
+    id: 'clarity-enhancer',
+    category: 'studio',
+    name: 'Photo Clarity Enhancer',
+    description: 'Unsharp mask facial sharpening, micro-contrast, and studio luminance balancing.',
+    icon: 'fa-sparkles',
+    enabled: true,
+  },
+  {
+    id: 'qr-generator',
+    category: 'studio',
+    name: 'Studio QR Code Generator',
+    description: 'Create high-resolution scannable QR codes with custom foreground/background colors.',
+    icon: 'fa-qrcode',
+    enabled: true,
+  },
+  {
+    id: 'link-shortener',
+    category: 'studio',
+    name: 'Custom Link Shortener',
+    description: 'Create branded short redirect links for digital photo delivery and event pages.',
+    icon: 'fa-link',
+    enabled: true,
+  },
+
+  // CATEGORY 2: AKSHAYA TOOLS
+  {
+    id: 'pdf-merge',
+    category: 'akshaya',
+    name: 'PDF Merge',
+    description: 'Combine multiple PDF documents in custom order with page count inspection and instant download.',
+    icon: 'fa-file-pdf',
+    badge: 'Akshaya Pro',
+    enabled: true,
+  },
+  {
+    id: 'pdf-split',
+    category: 'akshaya',
+    name: 'PDF Split & Extract',
+    description: 'Split PDFs by page ranges, extract selected pages, or burst every page into a ZIP archive.',
+    icon: 'fa-scissors',
+    enabled: true,
+  },
+  {
+    id: 'pdf-compressor',
+    category: 'akshaya',
+    name: 'PDF Compressor',
+    description: 'Reduce PDF file size for government portals while preserving text and document readability.',
+    icon: 'fa-file-zipper',
+    enabled: true,
+  },
+  {
+    id: 'image-compressor',
+    category: 'akshaya',
+    name: 'Batch Image Compressor',
+    description: 'Compress single or multiple images to exact quality targets in JPG, WebP, or PNG with ZIP export.',
+    icon: 'fa-compress',
+    enabled: true,
+  },
+  {
+    id: 'signature-resize',
+    category: 'akshaya',
+    name: 'Signature Resize & Clean',
+    description: 'Resize signatures for SSC, PSC, PAN, IBPS & Passport portals with white-background removal.',
+    icon: 'fa-signature',
+    badge: 'Portal Ready',
+    enabled: true,
+  },
+
+  // CATEGORY 3: MEDIA & LIVE TOOLS
+  {
+    id: 'live-streaming-poster',
+    category: 'media-live',
+    name: 'Live Streaming Poster Maker',
+    description: 'Design announcement posters for Wedding, Church, Funeral, and YouTube Live streams.',
+    icon: 'fa-tower-broadcast',
+    badge: 'Live Studio',
+    enabled: true,
+  },
+  {
+    id: 'youtube-thumbnail',
+    category: 'media-live',
+    name: 'YouTube Thumbnail Maker',
+    description: 'Create high-CTR 1280×720 (16:9) YouTube thumbnails with cutouts, outlines, and bold typography.',
+    icon: 'fa-brands fa-youtube',
+    badge: '1280×720 HD',
+    enabled: true,
+  },
+  {
+    id: 'live-countdown',
+    category: 'media-live',
+    name: 'Live Countdown Maker',
+    description: 'Real-time ticking event countdown with animated WebM video recording and frame export.',
+    icon: 'fa-stopwatch',
+    badge: 'Video Export',
+    enabled: true,
+  },
+  {
+    id: 'lower-third',
+    category: 'media-live',
+    name: 'Lower Third Generator',
+    description: '16:9 transparent broadcast lower thirds for OBS & vMix with PNG and animated WebM export.',
+    icon: 'fa-clapperboard',
+    badge: 'OBS / vMix',
+    enabled: true,
+  },
+  {
+    id: 'live-title',
+    category: 'media-live',
+    name: 'Live Title Generator',
+    description: 'Full-screen broadcast title cards for weddings, church services, funerals, and special programs.',
+    icon: 'fa-heading',
+    enabled: true,
+  },
+  {
+    id: 'wedding-live-poster',
+    category: 'media-live',
+    name: 'Wedding Live Poster',
+    description: 'Luxury wedding live stream posters featuring Bride & Groom names, couple photo, venue, and link.',
+    icon: 'fa-heart',
+    enabled: true,
+  },
+  {
+    id: 'funeral-live-poster',
+    category: 'media-live',
+    name: 'Funeral Live Poster',
+    description: 'Respectful, dignified memorial & funeral live service announcement posters.',
+    icon: 'fa-dove',
+    enabled: true,
+  },
+  {
+    id: 'church-live-poster',
+    category: 'media-live',
+    name: 'Church Live Poster',
+    description: 'Elegant posters for Sunday Worship, Church Festivals, Prayer Meetings, and Live Services.',
+    icon: 'fa-church',
+    enabled: true,
+  },
+  {
+    id: 'logo-overlay',
+    category: 'media-live',
+    name: 'Logo Overlay Maker',
+    description: 'Generate 1920×1080 transparent broadcast bug/watermark logo overlays for OBS & vMix.',
+    icon: 'fa-layer-group',
+    enabled: true,
+  },
+  {
+    id: 'qr-code-overlay',
+    category: 'media-live',
+    name: 'QR Code Broadcast Overlay',
+    description: 'Scannable transparent 16:9 QR code overlays with call-to-action banners for live streams.',
+    icon: 'fa-qrcode',
+    enabled: true,
+  },
+  {
+    id: 'youtube-description',
+    category: 'media-live',
+    name: 'YouTube Description Generator',
+    description: 'Generate SEO-optimized YouTube descriptions, timestamps, CTAs & hashtags in English, Hindi & Hinglish.',
+    icon: 'fa-pen-nib',
+    badge: 'Multi-Lang',
+    enabled: true,
+  },
+  {
+    id: 'streaming-schedule',
+    category: 'media-live',
+    name: 'Streaming Schedule Maker',
+    description: 'Multi-slot live broadcast schedule posters for studios, churches, and content creators.',
+    icon: 'fa-calendar-days',
+    enabled: true,
+  },
+  {
+    id: 'obs-vmix-export',
+    category: 'media-live',
+    name: 'OBS / vMix Graphics Export',
+    description: 'Export 1920×1080 & 1280×720 transparent broadcast overlay packs ready for OBS Studio and vMix.',
+    icon: 'fa-sliders',
+    badge: 'Broadcast Pack',
+    enabled: true,
+  },
+  {
+    id: 'led-screen-layout',
+    category: 'media-live',
+    name: 'LED Screen Layout Maker',
+    description: 'Design stage LED wall backdrops in 16:9, 4:3, 1:1, or custom pixel dimensions for events.',
+    icon: 'fa-tv',
+    enabled: true,
+  },
+  {
+    id: 'video-converter',
+    category: 'media-live',
+    name: 'Video Converter',
+    description: 'Convert videos to WebM/MP4 with resolution scaling (1080p/720p/480p) and bitrate control.',
+    icon: 'fa-film',
+    enabled: true,
+  },
+];
 
 export interface SiteSettings {
   brandName: string;
@@ -34,6 +298,11 @@ export interface SiteSettings {
   enableClarityEnhancer: boolean;
   enableQrGenerator: boolean;
   enableLinkShortener: boolean;
+  enableStudioToolsCategory: boolean;
+  enableAkshayaToolsCategory: boolean;
+  enableMediaLiveToolsCategory: boolean;
+  contactPhone?: string;
+  toolCatalog?: ToolCatalogItem[];
   updatedAt?: any;
 }
 
@@ -47,14 +316,19 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   primaryColor: '#06b6d4',
   secondaryColor: '#070a14',
   footerCredit: '© 2026 MALNADU MEDIA SOLUTIONS. All rights reserved.',
-  seoTitle: 'MALNADU MEDIA — Passport Photo Editor & AI Photo Tools',
+  seoTitle: 'MALNADU MEDIA — Studio Tools, Akshaya Tools & Live Media Graphics Platform',
   seoDescription:
-    'MALNADU MEDIA Solutions — Capturing | Creating | Connecting. Professional passport size photo editor, custom 2-9+ photo sheet printing, AI background remover, photo clarity enhancer, QR code generator, and link shortener.',
+    'MALNADU MEDIA Solutions — Capturing | Creating | Connecting. Complete Studio Tools, Akshaya Document & PDF Tools, and Live Streaming & Broadcast Graphics Platform.',
   enablePassportStudio: true,
   enableBgRemover: true,
   enableClarityEnhancer: true,
   enableQrGenerator: true,
   enableLinkShortener: true,
+  enableStudioToolsCategory: true,
+  enableAkshayaToolsCategory: true,
+  enableMediaLiveToolsCategory: true,
+  contactPhone: '+91 98450 11223',
+  toolCatalog: DEFAULT_TOOL_CATALOG,
 };
 
 export interface ShortLinkRecord {
@@ -161,14 +435,14 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
 ];
 
 export const BG_SWATCHES: BgSwatch[] = [
-  { name: 'Pure White', mal: 'വെള്ള', hex: '#FFFFFF', border: '#cbd5e1' },
-  { name: 'UK Cream/Grey', mal: 'ഓഫ് വൈറ്റ്', hex: '#F2F2F2', border: '#cbd5e1' },
-  { name: 'Light Blue', mal: 'ഇളം നീല', hex: '#D0E7FF', border: '#93c5fd' },
-  { name: 'Sky Blue', mal: 'സ്കൈ ബ്ലൂ', hex: '#7CC0FF', border: '#60a5fa' },
-  { name: 'Royal Blue', mal: 'കടും നീല', hex: '#1E40AF', border: '#1e3a8a' },
-  { name: 'Light Grey', mal: 'ചാരനിറം', hex: '#E2E8F0', border: '#94a3b8' },
-  { name: 'ID Red', mal: 'ചുവപ്പ്', hex: '#DC2626', border: '#b91c1c' },
-  { name: 'Transparent', mal: 'ട്രാൻസ്പരന്റ്', hex: 'transparent', border: '#94a3b8' },
+  { name: 'Pure White', mal: 'വെള്ള', hex: '#FFFFFF', color: '#FFFFFF', border: '#cbd5e1' },
+  { name: 'UK Cream/Grey', mal: 'ഓഫ് വൈറ്റ്', hex: '#F2F2F2', color: '#F2F2F2', border: '#cbd5e1' },
+  { name: 'Light Blue', mal: 'ഇളം നീല', hex: '#D0E7FF', color: '#D0E7FF', border: '#93c5fd' },
+  { name: 'Sky Blue', mal: 'സ്കൈ ബ്ലൂ', hex: '#7CC0FF', color: '#7CC0FF', border: '#60a5fa' },
+  { name: 'Royal Blue', mal: 'കടും നീല', hex: '#1E40AF', color: '#1E40AF', border: '#1e3a8a' },
+  { name: 'Light Grey', mal: 'ചാരനിറം', hex: '#E2E8F0', color: '#E2E8F0', border: '#94a3b8' },
+  { name: 'ID Red', mal: 'ചുവപ്പ്', hex: '#DC2626', color: '#DC2626', border: '#b91c1c' },
+  { name: 'Transparent', mal: 'ട്രാൻസ്പരന്റ്', hex: 'transparent', color: 'transparent', checker: true, border: '#94a3b8' },
 ];
 
 export const SERVICE_TYPES = [
@@ -259,12 +533,6 @@ export interface SavedPhotoRecord {
   createdAt?: any;
 }
 
-/**
- * Generates a realistic, high-resolution biometric portrait on an HTMLCanvasElement
- * with distinct background and subject layers so that:
- * 1) Never fails to load (100% hermetic / zero external network dependencies)
- * 2) Supports instant AI cutout simulation and real BriaAI RMBG-1.4 background removal
- */
 export function generateSamplePortraitDataUrl(index: number, transparentBg = false): string {
   const canvas = document.createElement('canvas');
   canvas.width = 700;
@@ -319,7 +587,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Subtle studio backdrop texture lines so original vs cutout is visibly distinct
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
     ctx.lineWidth = 2;
     for (let y = 40; y < canvas.height; y += 45) {
@@ -332,7 +599,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
 
   const cx = canvas.width / 2;
 
-  // Long hair back layer for female portrait
   if (cfg.gender === 'female') {
     ctx.fillStyle = cfg.hair;
     ctx.beginPath();
@@ -340,7 +606,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
     ctx.fill();
   }
 
-  // Shoulders & Suit Jacket
   ctx.fillStyle = cfg.suit;
   ctx.beginPath();
   ctx.moveTo(cx - 290, 880);
@@ -350,7 +615,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.closePath();
   ctx.fill();
 
-  // Shirt V-neck
   ctx.fillStyle = cfg.shirt;
   ctx.beginPath();
   ctx.moveTo(cx - 82, 560);
@@ -359,7 +623,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.closePath();
   ctx.fill();
 
-  // Tie or Necklace / Lapel detail
   if (cfg.gender !== 'female') {
     ctx.fillStyle = cfg.tie;
     ctx.beginPath();
@@ -371,7 +634,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
     ctx.closePath();
     ctx.fill();
   } else {
-    // Formal collar lapels
     ctx.strokeStyle = '#c7d2fe';
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -381,13 +643,11 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
     ctx.stroke();
   }
 
-  // Neck
   ctx.fillStyle = cfg.skinShadow;
   ctx.beginPath();
   ctx.roundRect(cx - 58, 465, 116, 135, 35);
   ctx.fill();
 
-  // Collar flaps
   ctx.fillStyle = cfg.shirt;
   ctx.beginPath();
   ctx.moveTo(cx - 65, 535);
@@ -403,20 +663,17 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.closePath();
   ctx.fill();
 
-  // Ears
   ctx.fillStyle = cfg.skinShadow;
   ctx.beginPath();
   ctx.ellipse(cx - 132, 345, 22, 42, -0.1, 0, Math.PI * 2);
   ctx.ellipse(cx + 132, 345, 22, 42, 0.1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Head / Face Oval
   ctx.fillStyle = cfg.skin;
   ctx.beginPath();
   ctx.ellipse(cx, 335, 130, 168, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Subtle facial beard for sample 3
   if (cfg.gender === 'male_beard') {
     ctx.fillStyle = 'rgba(30, 27, 24, 0.82)';
     ctx.beginPath();
@@ -424,13 +681,11 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
     ctx.quadraticCurveTo(cx, 480, cx - 108, 425);
     ctx.fill();
 
-    // Mustache
     ctx.beginPath();
     ctx.ellipse(cx, 405, 46, 12, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Hair Top
   ctx.fillStyle = cfg.hair;
   ctx.beginPath();
   ctx.ellipse(cx, 215, 136, 78, 0, Math.PI, Math.PI * 2);
@@ -446,7 +701,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.closePath();
   ctx.fill();
 
-  // Eyebrows
   ctx.strokeStyle = cfg.hair;
   ctx.lineWidth = 8;
   ctx.lineCap = 'round';
@@ -457,7 +711,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.quadraticCurveTo(cx + 48, 282, cx + 78, 292);
   ctx.stroke();
 
-  // Eyes
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.ellipse(cx - 50, 322, 22, 12, 0, 0, Math.PI * 2);
@@ -476,7 +729,6 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.arc(cx + 53, 319, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Nose
   ctx.strokeStyle = cfg.skinShadow;
   ctx.lineWidth = 4.5;
   ctx.beginPath();
@@ -485,12 +737,41 @@ export function generateSamplePortraitDataUrl(index: number, transparentBg = fal
   ctx.quadraticCurveTo(cx, 384, cx + 10, 376);
   ctx.stroke();
 
-  // Mouth / Neutral Smile
   ctx.strokeStyle = cfg.gender === 'female' ? '#be123c' : '#9f5843';
   ctx.lineWidth = cfg.gender === 'female' ? 7 : 6;
   ctx.beginPath();
   ctx.moveTo(cx - 34, 424);
   ctx.quadraticCurveTo(cx, 436, cx + 34, 424);
+  ctx.stroke();
+
+  return canvas.toDataURL('image/png');
+}
+
+export function generateSampleSignatureDataUrl(): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 560;
+  canvas.height = 200;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = '#1e3a8a';
+  ctx.lineWidth = 4.2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(65, 130);
+  ctx.bezierCurveTo(95, 45, 145, 45, 130, 130);
+  ctx.bezierCurveTo(120, 155, 165, 80, 195, 115);
+  ctx.bezierCurveTo(220, 140, 245, 75, 280, 118);
+  ctx.bezierCurveTo(310, 140, 350, 65, 395, 112);
+  ctx.bezierCurveTo(425, 135, 465, 95, 495, 105);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(85, 152);
+  ctx.quadraticCurveTo(260, 135, 475, 146);
   ctx.stroke();
 
   return canvas.toDataURL('image/png');

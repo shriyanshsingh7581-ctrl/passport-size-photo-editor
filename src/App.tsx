@@ -48,10 +48,27 @@ import {
   BRANCH_LOCATIONS,
   TIME_SLOTS,
   DOCUMENT_TYPES,
+  DEFAULT_TOOL_CATALOG,
 } from './constants';
-import { runBriaRmbgCutout } from './rmbgEngine';
+import {
+  runBriaRmbgCutout,
+  runHighResRmbgCutout,
+  applyHairMattingAndSpillRemoval,
+  applyManualMaskBrushStroke,
+  applySpotHealingBrushOnCanvas,
+} from './rmbgEngine';
+import { InteractivePrintSheetEditor } from './components/InteractivePrintSheetEditor';
+import {
+  loadWalletCredits,
+  deductWalletCredit,
+  rechargeWalletWithPin,
+  DEFAULT_ADMIN_WHATSAPP,
+} from './creditWallet';
 import { UserDashboard } from './components/UserDashboard';
 import { ToolsHub, ActiveToolTab } from './components/ToolsHub';
+import { StudioToolsHub, StudioSubToolId } from './components/StudioToolsHub';
+import { AkshayaToolsHub, AkshayaSubToolId } from './components/AkshayaToolsHub';
+import { MediaLiveToolsHub, MediaLiveSubToolId } from './components/MediaLiveToolsHub';
 import { AdminPanel } from './components/AdminPanel';
 
 const LOCAL_SETTINGS_KEY = 'malnadu_media_site_settings_v2';
@@ -131,9 +148,23 @@ const DEFAULT_DEMO_SHORT_LINKS: ShortLinkRecord[] = [
 
 export default function App() {
   // Primary Route State
-  const [activeRoute, setActiveRoute] = useState<'studio' | 'tools' | 'dashboard' | 'admin'>('studio');
+  const [activeRoute, setActiveRoute] = useState<
+    | 'studio'
+    | 'studio-tools'
+    | 'akshaya-tools'
+    | 'media-live-tools'
+    | 'tools'
+    | 'dashboard'
+    | 'admin'
+  >('studio');
   const [activeToolTab, setActiveToolTab] = useState<ActiveToolTab>('bg-remover');
-  const [dashboardSubTab, setDashboardSubTab] = useState<'overview' | 'appointments' | 'verifications' | 'photos' | 'profile'>('overview');
+  const [activeStudioSubTool, setActiveStudioSubTool] = useState<StudioSubToolId>('landing');
+  const [activeAkshayaSubTool, setActiveAkshayaSubTool] = useState<AkshayaSubToolId>('landing');
+  const [activeMediaLiveSubTool, setActiveMediaLiveSubTool] =
+    useState<MediaLiveSubToolId>('landing');
+  const [dashboardSubTab, setDashboardSubTab] = useState<
+    'overview' | 'appointments' | 'verifications' | 'photos' | 'profile'
+  >('overview');
 
   // Short-Link Redirection State (for /:slug URLs)
   const [redirectState, setRedirectState] = useState<{
@@ -158,6 +189,9 @@ export default function App() {
           ...parsed,
           logoType: parsed.logoUrl ? parsed.logoType : DEFAULT_SITE_SETTINGS.logoType,
           logoUrl: parsed.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+          toolCatalog: parsed.toolCatalog?.length
+            ? parsed.toolCatalog
+            : DEFAULT_TOOL_CATALOG,
         };
       }
     } catch {
@@ -239,7 +273,7 @@ export default function App() {
   });
 
   // Studio Control Tab State
-  const [controlTab, setControlTab] = useState<'size' | 'bg' | 'adjust'>('size');
+  const [controlTab, setControlTab] = useState<'size' | 'bg' | 'adjust' | 'retouch'>('size');
   const [countrySearch, setCountrySearch] = useState('');
   const [selectedPresetId, setSelectedPresetId] = useState('in-stamp');
   const [widthMm, setWidthMm] = useState(35);
@@ -251,16 +285,50 @@ export default function App() {
   // Custom Photo Count on Sheet ('auto' or exact number: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12)
   const [customPhotoCount, setCustomPhotoCount] = useState<'auto' | number>('auto');
 
-  // Studio Background & Cutout State
+  // Studio Background & High-Res Hair Matting State
   const [bgColor, setBgColor] = useState('#FFFFFF');
   const [bgName, setBgName] = useState('Pure White');
   const [cutoutEngine, setCutoutEngine] = useState<'rmbg' | 'removebg_api' | 'original'>('rmbg');
   const [bgTolerance, setBgTolerance] = useState(10);
+  const [spillRemovalStrength, setSpillRemovalStrength] = useState(75);
+  const [hairMattingStrength, setHairMattingStrength] = useState(70);
+  const [originalFullResDims, setOriginalFullResDims] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
   const [removeBgApiKey, setRemoveBgApiKey] = useState('');
   const [aiStatusText, setAiStatusText] = useState('Ready');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiLoadingMsg, setAiLoadingMsg] = useState('Removing Background...');
+  const [aiLoadingMsg, setAiLoadingMsg] = useState('Processing AI Cutout...');
   const [aiProgress, setAiProgress] = useState(20);
+
+  // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Admin PIN)
+  const [availableCredits, setAvailableCredits] = useState<number>(() => loadWalletCredits());
+  const [showCreditExhaustedModal, setShowCreditExhaustedModal] = useState(false);
+  const [showAdminRechargeModal, setShowAdminRechargeModal] = useState(false);
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [adminCustomRechargeInput, setAdminCustomRechargeInput] = useState('500');
+  const [adminRechargeError, setAdminRechargeError] = useState<string | null>(null);
+  const [adminRechargeSuccess, setAdminRechargeSuccess] = useState<string | null>(null);
+  const walletClickCountRef = useRef<{ count: number; lastClickMs: number }>({
+    count: 0,
+    lastClickMs: 0,
+  });
+
+  // Non-Destructive Spot Healing & Hair Edge Brush State
+  const [retouchBrushMode, setRetouchBrushMode] = useState<
+    'spot-heal' | 'decontaminate-edge' | 'restore-hair' | 'erase-spill'
+  >('spot-heal');
+  const [brushSize, setBrushSize] = useState(22);
+  const [brushHardness, setBrushHardness] = useState(55);
+  const [brushOpacity, setBrushOpacity] = useState(90);
+  const [brushCursorPos, setBrushCursorPos] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+  }>({ x: 0, y: 0, visible: false });
+  const [retouchUndoCount, setRetouchUndoCount] = useState(0);
+  const [retouchRedoCount, setRetouchRedoCount] = useState(0);
 
   // Studio Adjustments & Transforms
   const [zoom, setZoom] = useState(100);
@@ -275,12 +343,14 @@ export default function App() {
 
   // Studio Preview Mode & Overlays
   const [previewMode, setPreviewMode] = useState<'single' | 'compare' | 'sheet'>('single');
+  const [sheetEditorMode, setSheetEditorMode] = useState<'interactive' | 'quick-grid'>('interactive');
   const [showBiometricGrid, setShowBiometricGrid] = useState(true);
   const [showCutMarks, setShowCutMarks] = useState(true);
   const [activeSampleIdx, setActiveSampleIdx] = useState<number>(0);
   const [sampleThumbUrls, setSampleThumbUrls] = useState<string[]>([]);
   const [compareOriginalSrc, setCompareOriginalSrc] = useState<string>('');
   const [currentStudioPreviewUrl, setCurrentStudioPreviewUrl] = useState<string>('');
+  const [highResSinglePassportUrl, setHighResSinglePassportUrl] = useState<string>('');
 
   // Modals & Toast
   const [showExportModal, setShowExportModal] = useState(false);
@@ -294,9 +364,22 @@ export default function App() {
   const sheetCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const activeImageRef = useRef<HTMLImageElement | null>(null);
+  const rawOriginalCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rawAlphaMaskRef = useRef<Uint8Array | null>(null);
+  const workingAlphaMaskRef = useRef<Uint8Array | null>(null);
+  const sampledBackdropRgbRef = useRef<[number, number, number]>([35, 110, 210]);
   const rawCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const baseSubjectCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const retouchLayerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const processedCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const retouchUndoStackRef = useRef<
+    Array<{ imageData: ImageData; alphaMask: Uint8Array | null }>
+  >([]);
+  const retouchRedoStackRef = useRef<
+    Array<{ imageData: ImageData; alphaMask: Uint8Array | null }>
+  >([]);
+  const isRetouchPaintingRef = useRef(false);
 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -309,6 +392,53 @@ export default function App() {
       setToastMsg(null);
     }, 3200);
   }, []);
+
+  // Secret Admin Shortcut: Alt + A or clicking Wallet Balance badge 5 times rapidly
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        setAdminPinInput('');
+        setAdminRechargeError(null);
+        setAdminRechargeSuccess(null);
+        setShowAdminRechargeModal(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleWalletBadgeSecretClick = () => {
+    const now = Date.now();
+    if (now - walletClickCountRef.current.lastClickMs > 2200) {
+      walletClickCountRef.current.count = 1;
+    } else {
+      walletClickCountRef.current.count += 1;
+    }
+    walletClickCountRef.current.lastClickMs = now;
+
+    if (walletClickCountRef.current.count >= 5) {
+      walletClickCountRef.current.count = 0;
+      setAdminPinInput('');
+      setAdminRechargeError(null);
+      setAdminRechargeSuccess(null);
+      setShowAdminRechargeModal(true);
+    }
+  };
+
+  const handleAdminQuickRecharge = (amount: number) => {
+    setAdminRechargeError(null);
+    setAdminRechargeSuccess(null);
+    const result = rechargeWalletWithPin(adminPinInput, amount);
+    if (!result.ok) {
+      setAdminRechargeError(result.error || 'Invalid Secret Admin PIN');
+      return;
+    }
+    setAvailableCredits(result.newBalance);
+    setShowCreditExhaustedModal(false);
+    setAdminRechargeSuccess(`Added +${amount} Credits! Available Balance: ${result.newBalance} Photos`);
+    showToast(`Wallet Recharged: +${amount} Credits (Total: ${result.newBalance} Photos)`);
+  };
 
   // =========================================================================
   // 0. DYNAMIC BRAND COLORS, TITLE & FAVICON SYNC
@@ -331,7 +461,17 @@ export default function App() {
   useEffect(() => {
     const checkShortLinkRedirect = async () => {
       const rawPath = window.location.pathname.replace(/^\/+|\/+$/g, '');
-      const systemPaths = ['', 'index.html', 'studio', 'tools', 'dashboard', 'admin'];
+      const systemPaths = [
+        '',
+        'index.html',
+        'studio',
+        'studio-tools',
+        'akshaya-tools',
+        'media-live-tools',
+        'tools',
+        'dashboard',
+        'admin',
+      ];
       if (systemPaths.includes(rawPath.toLowerCase())) {
         setRedirectState({ checking: false, slug: null, status: 'none' });
         return;
@@ -715,7 +855,33 @@ export default function App() {
   );
 
   const applyEdgeRefinement = useCallback(
-    (toleranceVal = bgTolerance) => {
+    (
+      toleranceVal = bgTolerance,
+      spillStrengthVal = spillRemovalStrength,
+      hairMattingVal = hairMattingStrength
+    ) => {
+      if (rawOriginalCanvasRef.current && workingAlphaMaskRef.current) {
+        const origC = rawOriginalCanvasRef.current;
+        const origCtx = origC.getContext('2d')!;
+        const origImgData = origCtx.getImageData(0, 0, origC.width, origC.height);
+        const refined = applyHairMattingAndSpillRemoval(
+          origImgData,
+          workingAlphaMaskRef.current,
+          sampledBackdropRgbRef.current,
+          {
+            edgeShift: -Math.round((toleranceVal / 50) * 30),
+            featherRadius: 1.5,
+            blueSpillRemoval: spillStrengthVal,
+            hairDetailStrength: hairMattingVal,
+          }
+        );
+        rawCutoutCanvasRef.current = refined;
+        retouchLayerCanvasRef.current = refined;
+        baseSubjectCanvasRef.current = refined;
+        applyPixelColorGrading();
+        return;
+      }
+
       if (!rawCutoutCanvasRef.current) return;
       const src = rawCutoutCanvasRef.current;
       const w = src.width;
@@ -743,7 +909,7 @@ export default function App() {
       baseSubjectCanvasRef.current = out;
       applyPixelColorGrading();
     },
-    [bgTolerance, applyPixelColorGrading]
+    [bgTolerance, spillRemovalStrength, hairMattingStrength, applyPixelColorGrading]
   );
 
   // =========================================================================
@@ -954,6 +1120,8 @@ export default function App() {
 
     const thumbCanvas = document.createElement('canvas');
     renderPassportToCanvas(thumbCanvas, false);
+    setHighResSinglePassportUrl(thumbCanvas.toDataURL('image/png'));
+
     const smallCanvas = document.createElement('canvas');
     smallCanvas.width = 210;
     smallCanvas.height = Math.round(210 * (heightMm / widthMm));
@@ -1010,8 +1178,17 @@ export default function App() {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      const natW = img.naturalWidth || img.width;
+      const natH = img.naturalHeight || img.height;
       activeImageRef.current = img;
       rawCutoutCanvasRef.current = null;
+      rawAlphaMaskRef.current = null;
+      workingAlphaMaskRef.current = null;
+      retouchUndoStackRef.current = [];
+      retouchRedoStackRef.current = [];
+      setRetouchUndoCount(0);
+      setRetouchRedoCount(0);
+      setOriginalFullResDims({ width: natW, height: natH });
       setZoom(100);
       setPanX(0);
       setPanY(0);
@@ -1024,9 +1201,11 @@ export default function App() {
       setAiStatusText('Ready');
 
       const origCanvas = document.createElement('canvas');
-      origCanvas.width = img.width;
-      origCanvas.height = img.height;
-      origCanvas.getContext('2d')!.drawImage(img, 0, 0);
+      origCanvas.width = natW;
+      origCanvas.height = natH;
+      origCanvas.getContext('2d')!.drawImage(img, 0, 0, natW, natH);
+      rawOriginalCanvasRef.current = origCanvas;
+      retouchLayerCanvasRef.current = origCanvas;
       baseSubjectCanvasRef.current = origCanvas;
       setCompareOriginalSrc(img.src);
 
@@ -1048,8 +1227,17 @@ export default function App() {
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
+        const natW = img.naturalWidth || img.width;
+        const natH = img.naturalHeight || img.height;
         activeImageRef.current = img;
         rawCutoutCanvasRef.current = null;
+        rawAlphaMaskRef.current = null;
+        workingAlphaMaskRef.current = null;
+        retouchUndoStackRef.current = [];
+        retouchRedoStackRef.current = [];
+        setRetouchUndoCount(0);
+        setRetouchRedoCount(0);
+        setOriginalFullResDims({ width: natW, height: natH });
         setZoom(100);
         setPanX(0);
         setPanY(0);
@@ -1059,15 +1247,18 @@ export default function App() {
         setBrightness(100);
         setContrast(100);
         setSaturate(100);
+        setAiStatusText('Original HD Loaded');
 
         const origCanvas = document.createElement('canvas');
-        origCanvas.width = img.width;
-        origCanvas.height = img.height;
-        origCanvas.getContext('2d')!.drawImage(img, 0, 0);
+        origCanvas.width = natW;
+        origCanvas.height = natH;
+        origCanvas.getContext('2d')!.drawImage(img, 0, 0, natW, natH);
+        rawOriginalCanvasRef.current = origCanvas;
+        retouchLayerCanvasRef.current = origCanvas;
         baseSubjectCanvasRef.current = origCanvas;
         setCompareOriginalSrc(img.src);
 
-        if (img.height > img.width * 1.28) {
+        if (natH > natW * 1.28) {
           const pxH = Math.round((heightMm / 25.4) * dpi);
           setZoom(175);
           setPanX(0);
@@ -1076,7 +1267,7 @@ export default function App() {
 
         applyPixelColorGrading(100, 100, 100);
         renderAll();
-        triggerManualAiCutout(img);
+        showToast(`Loaded HD Portrait (${natW}×${natH}px). Click "AI Remove Background" to cut out!`);
       };
       img.src = ev.target?.result as string;
     };
@@ -1087,22 +1278,59 @@ export default function App() {
     const targetImg = imgOverride || activeImageRef.current;
     if (!targetImg) return;
 
+    // 1. Check Available Wallet Credits before running AI Background Removal
+    const currentBalance = loadWalletCredits();
+    setAvailableCredits(currentBalance);
+    if (currentBalance <= 0) {
+      setShowCreditExhaustedModal(true);
+      showToast('Credit Quota Exhausted! Please recharge your wallet.');
+      return;
+    }
+
     setAiLoading(true);
-    setAiLoadingMsg('Starting AI Background Remover...');
+    setAiLoadingMsg('Processing AI Cutout...');
     setAiProgress(20);
 
     try {
-      const cutoutCanvas = await runBriaRmbgCutout(targetImg, (pct, msg) => {
-        setAiProgress(pct);
-        setAiLoadingMsg(msg);
-      });
-      if (cutoutCanvas) {
-        rawCutoutCanvasRef.current = cutoutCanvas;
-        applyEdgeRefinement(bgTolerance);
+      const highResResult = await runHighResRmbgCutout(
+        targetImg,
+        (pct, msg) => {
+          setAiProgress(pct);
+          setAiLoadingMsg(msg || 'Processing AI Cutout...');
+        },
+        {
+          edgeShift: -Math.round((bgTolerance / 50) * 30),
+          featherRadius: 1.5,
+          blueSpillRemoval: spillRemovalStrength,
+          hairDetailStrength: hairMattingStrength,
+        }
+      );
+
+      if (highResResult) {
+        const origC = document.createElement('canvas');
+        origC.width = highResResult.width;
+        origC.height = highResResult.height;
+        origC.getContext('2d')!.drawImage(targetImg, 0, 0, highResResult.width, highResResult.height);
+        rawOriginalCanvasRef.current = origC;
+        rawAlphaMaskRef.current = highResResult.alphaMask;
+        workingAlphaMaskRef.current = new Uint8Array(highResResult.alphaMask);
+        sampledBackdropRgbRef.current = highResResult.sampledBgColor;
+        rawCutoutCanvasRef.current = highResResult.cutoutCanvas;
+        retouchLayerCanvasRef.current = highResResult.cutoutCanvas;
+        baseSubjectCanvasRef.current = highResResult.cutoutCanvas;
+
+        // Deduct 1 Credit from Wallet on successful AI Cutout
+        const deduction = deductWalletCredit();
+        setAvailableCredits(deduction.remaining);
+
+        setCutoutEngine('rmbg');
+        applyPixelColorGrading(brightness, contrast, saturate);
         setAiLoading(false);
-        setAiStatusText('Cutout Active');
+        setAiStatusText('AI Cutout Active');
         renderAll();
-        showToast('Background Removed Successfully!');
+        showToast(
+          `AI Background Removed! (-1 Credit · ${deduction.remaining} Photos Remaining)`
+        );
         return;
       }
     } catch (err) {
@@ -1110,7 +1338,24 @@ export default function App() {
     }
 
     setAiLoading(false);
-    showToast('Background Removed!');
+    showToast('Could not complete AI background removal.');
+  };
+
+  const restoreOriginalBackground = () => {
+    if (!activeImageRef.current) return;
+    const natW = activeImageRef.current.naturalWidth || activeImageRef.current.width;
+    const natH = activeImageRef.current.naturalHeight || activeImageRef.current.height;
+    const c = document.createElement('canvas');
+    c.width = natW;
+    c.height = natH;
+    c.getContext('2d')!.drawImage(activeImageRef.current, 0, 0, natW, natH);
+    baseSubjectCanvasRef.current = c;
+    retouchLayerCanvasRef.current = c;
+    setCutoutEngine('original');
+    setAiStatusText('Original BG');
+    applyPixelColorGrading(brightness, contrast, saturate);
+    renderAll();
+    showToast('Restored Original Background at Full Resolution');
   };
 
   const runRemoveBgCloudApi = async () => {
@@ -1146,16 +1391,26 @@ export default function App() {
       const outUrl = URL.createObjectURL(outBlob);
       const cutImg = new Image();
       cutImg.onload = () => {
-        const outC = document.createElement('canvas');
-        outC.width = cutImg.width;
-        outC.height = cutImg.height;
-        outC.getContext('2d')!.drawImage(cutImg, 0, 0);
-        rawCutoutCanvasRef.current = outC;
-        applyEdgeRefinement(bgTolerance);
+        try {
+          const outC = document.createElement('canvas');
+          outC.width = cutImg.width;
+          outC.height = cutImg.height;
+          outC.getContext('2d')!.drawImage(cutImg, 0, 0);
+          rawCutoutCanvasRef.current = outC;
+          retouchLayerCanvasRef.current = outC;
+          baseSubjectCanvasRef.current = outC;
+          applyPixelColorGrading(brightness, contrast, saturate);
+          setAiLoading(false);
+          setAiStatusText('Cloud Cutout');
+          renderAll();
+          showToast('Remove.bg Cloud Cutout Complete!');
+        } finally {
+          URL.revokeObjectURL(outUrl);
+        }
+      };
+      cutImg.onerror = () => {
+        URL.revokeObjectURL(outUrl);
         setAiLoading(false);
-        setAiStatusText('Cloud Cutout');
-        renderAll();
-        showToast('Remove.bg Cloud Cutout Complete!');
       };
       cutImg.src = outUrl;
     } catch {
@@ -1166,17 +1421,11 @@ export default function App() {
 
   const handleSetCutoutEngine = (mode: 'rmbg' | 'removebg_api' | 'original') => {
     setCutoutEngine(mode);
-    if (mode === 'original' && activeImageRef.current) {
-      const c = document.createElement('canvas');
-      c.width = activeImageRef.current.width;
-      c.height = activeImageRef.current.height;
-      c.getContext('2d')!.drawImage(activeImageRef.current, 0, 0);
-      baseSubjectCanvasRef.current = c;
-      applyPixelColorGrading();
-      renderAll();
+    if (mode === 'original') {
+      restoreOriginalBackground();
     } else if (mode === 'rmbg') {
       if (rawCutoutCanvasRef.current) {
-        applyEdgeRefinement();
+        applyEdgeRefinement(bgTolerance, spillRemovalStrength, hairMattingStrength);
         renderAll();
       } else {
         triggerManualAiCutout();
@@ -1344,15 +1593,226 @@ export default function App() {
   };
 
   // =========================================================================
-  // 8. CANVAS MOUSE + MOBILE TOUCH DRAG & WHEEL INTERACTIONS
+  // 8. CANVAS MOUSE + MOBILE TOUCH DRAG, SPOT HEALING & HAIR BRUSH INTERACTIONS
   // =========================================================================
+  const pushRetouchSnapshot = () => {
+    const srcCanvas = baseSubjectCanvasRef.current;
+    if (!srcCanvas) return;
+    const ctx = srcCanvas.getContext('2d')!;
+    const imgData = ctx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const maskCopy = workingAlphaMaskRef.current
+      ? new Uint8Array(workingAlphaMaskRef.current)
+      : null;
+    retouchUndoStackRef.current.push({ imageData: imgData, alphaMask: maskCopy });
+    if (retouchUndoStackRef.current.length > 25) {
+      retouchUndoStackRef.current.shift();
+    }
+    retouchRedoStackRef.current = [];
+    setRetouchUndoCount(retouchUndoStackRef.current.length);
+    setRetouchRedoCount(0);
+  };
+
+  const applyBrushStrokeAtClientPoint = (
+    clientX: number,
+    clientY: number,
+    canvasEl: HTMLCanvasElement
+  ) => {
+    const srcCanvas = baseSubjectCanvasRef.current;
+    if (!srcCanvas) return;
+
+    const rect = canvasEl.getBoundingClientRect();
+    const relX = (clientX - rect.left) / Math.max(1, rect.width);
+    const relY = (clientY - rect.top) / Math.max(1, rect.height);
+
+    const pxW = canvasEl.width;
+    const pxH = canvasEl.height;
+    const canvasX = relX * pxW;
+    const canvasY = relY * pxH;
+
+    // Map from passport canvas space back to subject image pixel space
+    const imgW = srcCanvas.width;
+    const imgH = srcCanvas.height;
+    const baseScale = Math.max(pxW / imgW, pxH / imgH);
+    const finalScale = baseScale * (zoom / 100);
+    const drawW = imgW * finalScale;
+    const drawH = imgH * finalScale;
+
+    const dx = canvasX - (pxW / 2 + panX);
+    const dy = canvasY - (pxH / 2 + panY);
+    const rad = (-rotate * Math.PI) / 180;
+    let rotX = dx * Math.cos(rad) - dy * Math.sin(rad);
+    let rotY = dx * Math.sin(rad) + dy * Math.cos(rad);
+    if (flipX) rotX = -rotX;
+    if (flipY) rotY = -rotY;
+
+    const subjectX = ((rotX + drawW / 2) / drawW) * imgW;
+    const subjectY = ((rotY + drawH / 2) / drawH) * imgH;
+    const scaledRadius = Math.max(
+      3,
+      (brushSize / Math.max(1, rect.width)) * (pxW / Math.max(0.1, finalScale)) * 0.5
+    );
+
+    if (
+      (retouchBrushMode === 'restore-hair' ||
+        retouchBrushMode === 'erase-spill' ||
+        retouchBrushMode === 'decontaminate-edge') &&
+      rawOriginalCanvasRef.current &&
+      workingAlphaMaskRef.current
+    ) {
+      const origC = rawOriginalCanvasRef.current;
+      const origCtx = origC.getContext('2d')!;
+      const origImgData = origCtx.getImageData(0, 0, origC.width, origC.height);
+      applyManualMaskBrushStroke(
+        workingAlphaMaskRef.current,
+        origC.width,
+        origC.height,
+        subjectX,
+        subjectY,
+        scaledRadius,
+        brushHardness,
+        retouchBrushMode === 'restore-hair'
+          ? 'restore'
+          : retouchBrushMode === 'erase-spill'
+          ? 'erase'
+          : 'decontaminate',
+        origImgData
+      );
+      const refined = applyHairMattingAndSpillRemoval(
+        origImgData,
+        workingAlphaMaskRef.current,
+        sampledBackdropRgbRef.current,
+        {
+          edgeShift: -Math.round((bgTolerance / 50) * 30),
+          featherRadius: 1.5,
+          blueSpillRemoval: spillRemovalStrength,
+          hairDetailStrength: hairMattingStrength,
+        }
+      );
+      rawCutoutCanvasRef.current = refined;
+      retouchLayerCanvasRef.current = refined;
+      baseSubjectCanvasRef.current = refined;
+    } else {
+      applySpotHealingBrushOnCanvas(
+        srcCanvas,
+        subjectX,
+        subjectY,
+        scaledRadius,
+        brushHardness / 100,
+        brushOpacity / 100
+      );
+      retouchLayerCanvasRef.current = srcCanvas;
+    }
+
+    applyPixelColorGrading(brightness, contrast, saturate);
+    renderAll();
+  };
+
+  const handleRetouchUndo = () => {
+    const srcCanvas = baseSubjectCanvasRef.current;
+    if (!srcCanvas || retouchUndoStackRef.current.length === 0) return;
+    const ctx = srcCanvas.getContext('2d')!;
+    const currentData = ctx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const currentMask = workingAlphaMaskRef.current
+      ? new Uint8Array(workingAlphaMaskRef.current)
+      : null;
+    retouchRedoStackRef.current.push({ imageData: currentData, alphaMask: currentMask });
+
+    const prev = retouchUndoStackRef.current.pop()!;
+    ctx.putImageData(prev.imageData, 0, 0);
+    if (prev.alphaMask) {
+      workingAlphaMaskRef.current = new Uint8Array(prev.alphaMask);
+    }
+    setRetouchUndoCount(retouchUndoStackRef.current.length);
+    setRetouchRedoCount(retouchRedoStackRef.current.length);
+    applyPixelColorGrading(brightness, contrast, saturate);
+    renderAll();
+  };
+
+  const handleRetouchRedo = () => {
+    const srcCanvas = baseSubjectCanvasRef.current;
+    if (!srcCanvas || retouchRedoStackRef.current.length === 0) return;
+    const ctx = srcCanvas.getContext('2d')!;
+    const currentData = ctx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    const currentMask = workingAlphaMaskRef.current
+      ? new Uint8Array(workingAlphaMaskRef.current)
+      : null;
+    retouchUndoStackRef.current.push({ imageData: currentData, alphaMask: currentMask });
+
+    const next = retouchRedoStackRef.current.pop()!;
+    ctx.putImageData(next.imageData, 0, 0);
+    if (next.alphaMask) {
+      workingAlphaMaskRef.current = new Uint8Array(next.alphaMask);
+    }
+    setRetouchUndoCount(retouchUndoStackRef.current.length);
+    setRetouchRedoCount(retouchRedoStackRef.current.length);
+    applyPixelColorGrading(brightness, contrast, saturate);
+    renderAll();
+  };
+
+  const handleRetouchResetAll = () => {
+    retouchUndoStackRef.current = [];
+    retouchRedoStackRef.current = [];
+    setRetouchUndoCount(0);
+    setRetouchRedoCount(0);
+    if (rawAlphaMaskRef.current) {
+      workingAlphaMaskRef.current = new Uint8Array(rawAlphaMaskRef.current);
+      applyEdgeRefinement(bgTolerance, spillRemovalStrength, hairMattingStrength);
+    } else if (rawOriginalCanvasRef.current) {
+      const orig = rawOriginalCanvasRef.current;
+      const copy = document.createElement('canvas');
+      copy.width = orig.width;
+      copy.height = orig.height;
+      copy.getContext('2d')!.drawImage(orig, 0, 0);
+      baseSubjectCanvasRef.current = copy;
+      retouchLayerCanvasRef.current = copy;
+      applyPixelColorGrading(brightness, contrast, saturate);
+    }
+    renderAll();
+    showToast('Reset all retouching strokes');
+  };
+
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlTab === 'retouch' && passportCanvasRef.current) {
+      pushRetouchSnapshot();
+      isRetouchPaintingRef.current = true;
+      applyBrushStrokeAtClientPoint(e.clientX, e.clientY, passportCanvasRef.current);
+      return;
+    }
     isDraggingRef.current = true;
     dragStartRef.current = { x: e.clientX - panX, y: e.clientY - panY };
   };
 
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlTab === 'retouch' && passportCanvasRef.current) {
+      const rect = passportCanvasRef.current.getBoundingClientRect();
+      setBrushCursorPos({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        visible: true,
+      });
+      if (isRetouchPaintingRef.current) {
+        applyBrushStrokeAtClientPoint(e.clientX, e.clientY, passportCanvasRef.current);
+      }
+    }
+  };
+
+  const handleCanvasMouseLeave = () => {
+    isRetouchPaintingRef.current = false;
+    setBrushCursorPos((prev) => ({ ...prev, visible: false }));
+  };
+
   const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     if (e.touches.length === 1) {
+      if (controlTab === 'retouch' && passportCanvasRef.current) {
+        pushRetouchSnapshot();
+        isRetouchPaintingRef.current = true;
+        applyBrushStrokeAtClientPoint(
+          e.touches[0].clientX,
+          e.touches[0].clientY,
+          passportCanvasRef.current
+        );
+        return;
+      }
       isDraggingRef.current = true;
       dragStartRef.current = {
         x: e.touches[0].clientX - panX,
@@ -1362,13 +1822,23 @@ export default function App() {
   };
 
   const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDraggingRef.current || e.touches.length !== 1) return;
+    if (e.touches.length !== 1) return;
+    if (controlTab === 'retouch' && isRetouchPaintingRef.current && passportCanvasRef.current) {
+      applyBrushStrokeAtClientPoint(
+        e.touches[0].clientX,
+        e.touches[0].clientY,
+        passportCanvasRef.current
+      );
+      return;
+    }
+    if (!isDraggingRef.current) return;
     setPanX(e.touches[0].clientX - dragStartRef.current.x);
     setPanY(e.touches[0].clientY - dragStartRef.current.y);
   };
 
   const handleCanvasTouchEnd = () => {
     isDraggingRef.current = false;
+    isRetouchPaintingRef.current = false;
   };
 
   useEffect(() => {
@@ -2101,80 +2571,81 @@ export default function App() {
             {renderBrandLogo(false)}
           </button>
 
-          {/* Zone 2: Desktop Navigation Links */}
+          {/* Zone 2: Desktop Navigation Links (Home, Studio Tools, Akshaya Tools, Media & Live Tools, My Account, Admin) */}
           <nav className="hidden lg:flex items-center gap-1.5 text-xs font-bold text-slate-300">
             <button
               onClick={() => setActiveRoute('studio')}
-              className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
+              className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeRoute === 'studio'
                   ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                   : 'hover:bg-white/10 hover:text-white'
               }`}
             >
-              Passport Studio
+              <i className="fa-solid fa-house text-cyan-400"></i>
+              <span>Home</span>
             </button>
 
-            {siteSettings.enableBgRemover && (
+            {siteSettings.enableStudioToolsCategory !== false && (
               <button
-                onClick={() => openToolSection('bg-remover')}
-                className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
-                  activeRoute === 'tools' && activeToolTab === 'bg-remover'
+                onClick={() => {
+                  setActiveStudioSubTool('landing');
+                  setActiveRoute('studio-tools');
+                }}
+                className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                  activeRoute === 'studio-tools' || activeRoute === 'tools'
                     ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                     : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
-                BG Remover
+                <i className="fa-solid fa-camera-retro text-cyan-400"></i>
+                <span>Studio Tools</span>
               </button>
             )}
 
-            {siteSettings.enableClarityEnhancer && (
+            {siteSettings.enableAkshayaToolsCategory !== false && (
               <button
-                onClick={() => openToolSection('clarity-enhancer')}
-                className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
-                  activeRoute === 'tools' && activeToolTab === 'clarity-enhancer'
+                onClick={() => {
+                  setActiveAkshayaSubTool('landing');
+                  setActiveRoute('akshaya-tools');
+                }}
+                className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                  activeRoute === 'akshaya-tools'
                     ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                     : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
-                Clarity Enhancer
+                <i className="fa-solid fa-file-shield text-blue-400"></i>
+                <span>Akshaya Tools</span>
               </button>
             )}
 
-            {siteSettings.enableQrGenerator && (
+            {siteSettings.enableMediaLiveToolsCategory !== false && (
               <button
-                onClick={() => openToolSection('qr-generator')}
-                className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
-                  activeRoute === 'tools' && activeToolTab === 'qr-generator'
+                onClick={() => {
+                  setActiveMediaLiveSubTool('landing');
+                  setActiveRoute('media-live-tools');
+                }}
+                className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                  activeRoute === 'media-live-tools'
                     ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                     : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
-                QR Generator
-              </button>
-            )}
-
-            {siteSettings.enableLinkShortener && (
-              <button
-                onClick={() => openToolSection('link-shortener')}
-                className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
-                  activeRoute === 'tools' && activeToolTab === 'link-shortener'
-                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
-                    : 'hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                Link Shortener
+                <i className="fa-solid fa-tower-broadcast text-purple-400"></i>
+                <span>Media & Live Tools</span>
               </button>
             )}
 
             <button
               onClick={() => openDashboardSection('overview')}
-              className={`px-3 py-2 rounded-xl transition whitespace-nowrap ${
+              className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
                 activeRoute === 'dashboard'
                   ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                   : 'hover:bg-white/10 hover:text-white'
               }`}
             >
-              Dashboard
+              <i className="fa-solid fa-user-check text-emerald-400"></i>
+              <span>My Account</span>
             </button>
 
             <button
@@ -2190,8 +2661,30 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: Contextual Actions */}
+          {/* Zone 3: Wallet Credit Badge & Contextual Actions */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Built-in Credit & Wallet Badge (Click 5x rapidly or press Alt+A for Secret Admin Recharge) */}
+            <button
+              type="button"
+              onClick={handleWalletBadgeSecretClick}
+              title="Available AI Cutout Credits (Admin: Click 5x rapidly or press Alt+A to Recharge)"
+              className={`min-h-[40px] px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
+                availableCredits > 0
+                  ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/40 text-emerald-300'
+                  : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-400/50 text-rose-300 animate-pulse'
+              }`}
+            >
+              <i
+                className={`fa-solid ${
+                  availableCredits > 0 ? 'fa-wallet text-emerald-400' : 'fa-triangle-exclamation text-rose-400'
+                }`}
+              ></i>
+              <span className="hidden sm:inline">Available Credits:</span>
+              <span className="font-mono font-extrabold tabular-nums text-white">
+                {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
+              </span>
+            </button>
+
             {!userProfile ? (
               <button
                 onClick={() => {
@@ -2202,7 +2695,7 @@ export default function App() {
                 className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-white/10 hover:bg-white/20 border border-cyan-400/30 text-white font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap"
               >
                 <i className="fa-solid fa-user text-cyan-400"></i>
-                <span>Login / Sign Up</span>
+                <span className="hidden md:inline">Login / Sign Up</span>
               </button>
             ) : (
               <button
@@ -2232,71 +2725,156 @@ export default function App() {
       {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE */}
       {activeRoute === 'studio' && (
         <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-3.5 sm:py-6 space-y-4">
-          {/* Quick Feature Suite Strip (Styled with the Butterfly-Aperture Logo Colors) */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            {siteSettings.enableBgRemover && (
-              <button
-                onClick={() => openToolSection('bg-remover')}
-                className="bg-white hover:bg-cyan-50/40 border border-slate-200/90 hover:border-cyan-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
-              >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/15 to-blue-600/15 text-cyan-600 border border-cyan-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                  <i className="fa-solid fa-wand-magic-sparkles"></i>
+          {/* 3 Main Platform Categories Launcher Strip (Studio Tools, Akshaya Tools, Media & Live Tools) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {siteSettings.enableStudioToolsCategory !== false && (
+              <div className="bg-[#070a14] text-white rounded-3xl p-4 border border-cyan-500/30 shadow-sm flex flex-col justify-between gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white flex items-center justify-center text-base shadow-sm shrink-0">
+                      <i className="fa-solid fa-camera-retro"></i>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-400">
+                        Category 1 · 8 Tools
+                      </span>
+                      <h2 className="text-sm font-extrabold text-white">1. Studio Tools</h2>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveStudioSubTool('landing');
+                      setActiveRoute('studio-tools');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-300 text-[11px] font-extrabold transition shrink-0"
+                  >
+                    Open All →
+                  </button>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-slate-900 truncate">BG Remover</div>
-                  <div className="text-[11px] text-slate-500 truncate">1-Click AI Cutout</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'passport-maker', label: 'Passport Photo Maker' },
+                    { id: 'bg-remover', label: 'Background Remover' },
+                    { id: 'bg-changer', label: 'Background Changer' },
+                    { id: 'photo-resize', label: 'Photo Resize' },
+                    { id: 'print-sheet', label: 'Photo Print Sheet' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        if (item.id === 'passport-maker') {
+                          setActiveRoute('studio');
+                        } else {
+                          setActiveStudioSubTool(item.id as StudioSubToolId);
+                          setActiveRoute('studio-tools');
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold text-slate-200 transition"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
-              </button>
+              </div>
             )}
 
-            {siteSettings.enableClarityEnhancer && (
-              <button
-                onClick={() => openToolSection('clarity-enhancer')}
-                className="bg-white hover:bg-purple-50/40 border border-slate-200/90 hover:border-purple-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
-              >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/15 to-pink-500/15 text-purple-600 border border-purple-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                  <i className="fa-solid fa-sparkles"></i>
+            {siteSettings.enableAkshayaToolsCategory !== false && (
+              <div className="bg-[#070a14] text-white rounded-3xl p-4 border border-blue-500/30 shadow-sm flex flex-col justify-between gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-white flex items-center justify-center text-base shadow-sm shrink-0">
+                      <i className="fa-solid fa-file-shield"></i>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400">
+                        Category 2 · 5 Tools
+                      </span>
+                      <h2 className="text-sm font-extrabold text-white">2. Akshaya Tools</h2>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveAkshayaSubTool('landing');
+                      setActiveRoute('akshaya-tools');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/40 text-blue-300 text-[11px] font-extrabold transition shrink-0"
+                  >
+                    Open All →
+                  </button>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-slate-900 truncate">Clarity Enhancer</div>
-                  <div className="text-[11px] text-slate-500 truncate">HD Face Sharpening</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'pdf-merge', label: 'PDF Merge' },
+                    { id: 'pdf-split', label: 'PDF Split' },
+                    { id: 'pdf-compressor', label: 'PDF Compressor' },
+                    { id: 'batch-image-compressor', label: 'Image Compressor' },
+                    { id: 'signature-resize', label: 'Signature Resize' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveAkshayaSubTool(item.id as AkshayaSubToolId);
+                        setActiveRoute('akshaya-tools');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold text-slate-200 transition"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
-              </button>
+              </div>
             )}
 
-            {siteSettings.enableQrGenerator && (
-              <button
-                onClick={() => openToolSection('qr-generator')}
-                className="bg-white hover:bg-blue-50/40 border border-slate-200/90 hover:border-blue-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
-              >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/15 text-blue-600 border border-blue-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                  <i className="fa-solid fa-qrcode"></i>
+            {siteSettings.enableMediaLiveToolsCategory !== false && (
+              <div className="bg-[#070a14] text-white rounded-3xl p-4 border border-purple-500/30 shadow-sm flex flex-col justify-between gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-purple-500 via-pink-500 to-amber-500 text-white flex items-center justify-center text-base shadow-sm shrink-0">
+                      <i className="fa-solid fa-tower-broadcast"></i>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">
+                        Category 3 · 15 Tools
+                      </span>
+                      <h2 className="text-sm font-extrabold text-white">3. Media & Live Tools</h2>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveMediaLiveSubTool('landing');
+                      setActiveRoute('media-live-tools');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 text-purple-300 text-[11px] font-extrabold transition shrink-0"
+                  >
+                    Open All →
+                  </button>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-slate-900 truncate">QR Generator</div>
-                  <div className="text-[11px] text-slate-500 truncate">Instant PNG QR Code</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'youtube-thumbnail', label: 'YouTube Thumbnail' },
+                    { id: 'lower-third', label: 'Lower Third' },
+                    { id: 'wedding-live-poster', label: 'Wedding Live' },
+                    { id: 'obs-vmix-export', label: 'OBS / vMix' },
+                    { id: 'video-converter', label: 'Video Converter' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveMediaLiveSubTool(item.id as MediaLiveSubToolId);
+                        setActiveRoute('media-live-tools');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold text-slate-200 transition"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
-              </button>
-            )}
-
-            {siteSettings.enableLinkShortener && (
-              <button
-                onClick={() => openToolSection('link-shortener')}
-                className="bg-white hover:bg-amber-50/40 border border-slate-200/90 hover:border-amber-400 rounded-2xl p-3 text-left transition flex items-center gap-3 shadow-2xs group"
-              >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/15 to-pink-500/15 text-amber-600 border border-amber-500/20 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-                  <i className="fa-solid fa-link"></i>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-extrabold text-slate-900 truncate">Link Shortener</div>
-                  <div className="text-[11px] text-slate-500 truncate">Custom Slug Redirects</div>
-                </div>
-              </button>
+              </div>
             )}
           </div>
 
-          {/* Quick Mobile Upload & Sample Strip */}
-          <div className="bg-white rounded-3xl border border-slate-200/90 p-3.5 sm:p-4 flex items-center justify-between gap-3 shadow-xs">
+          {/* Quick Mobile Upload & Sample Strip (Preserves 100% Original Resolution on Upload) */}
+          <div className="bg-white rounded-3xl border border-slate-200/90 p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -2340,16 +2918,129 @@ export default function App() {
                   )}
                 </button>
               ))}
+
+              {originalFullResDims.width > 0 && (
+                <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-mono font-bold text-emerald-800 whitespace-nowrap">
+                  <i className="fa-solid fa-expand text-emerald-600"></i>
+                  <span>
+                    Original HD: {originalFullResDims.width}×{originalFullResDims.height} px
+                  </span>
+                </span>
+              )}
             </div>
 
-            <button
-              onClick={() => triggerManualAiCutout()}
-              className="min-h-[46px] px-3.5 py-2.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <i className="fa-solid fa-wand-magic-sparkles text-purple-600"></i>
-              <span className="hidden sm:inline">AI Cutout</span>
-              <span className="sm:hidden">Remove BG</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {/* 1-Click Solid Background Replacement Buttons (#FFFFFF, #4A90E2, #E5E7EB, Custom Picker) */}
+              <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200 px-2.5 py-1.5 rounded-2xl">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mr-0.5 hidden sm:inline">
+                  1-Click BG:
+                </span>
+                {[
+                  { name: 'Pure White', hex: '#FFFFFF', border: '#CBD5E1' },
+                  { name: 'Studio Light Blue', hex: '#4A90E2', border: '#2563EB' },
+                  { name: 'Light Gray', hex: '#E5E7EB', border: '#9CA3AF' },
+                ].map((preset) => {
+                  const isSelected = bgColor.toLowerCase() === preset.hex.toLowerCase();
+                  return (
+                    <button
+                      key={preset.hex}
+                      type="button"
+                      onClick={() => {
+                        setBgColor(preset.hex);
+                        setBgName(preset.name);
+                        showToast(`Applied ${preset.name} (${preset.hex}) Background`);
+                      }}
+                      title={`${preset.name} (${preset.hex})`}
+                      className={`h-7 px-2 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition active:scale-95 ${
+                        isSelected
+                          ? 'bg-[#070a14] text-white border-cyan-500 shadow-xs'
+                          : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span
+                        className="w-3.5 h-3.5 rounded-full shrink-0 border"
+                        style={{ backgroundColor: preset.hex, borderColor: preset.border }}
+                      />
+                      <span className="hidden xl:inline">{preset.name}</span>
+                    </button>
+                  );
+                })}
+                <label
+                  title="Custom Solid Background Color Picker"
+                  className="h-7 px-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-[11px] font-bold text-slate-700 flex items-center gap-1 cursor-pointer transition"
+                >
+                  <input
+                    type="color"
+                    value={bgColor === 'transparent' ? '#FFFFFF' : bgColor}
+                    onChange={(e) => {
+                      setBgColor(e.target.value);
+                      setBgName('Custom Color');
+                    }}
+                    className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
+                  />
+                  <span className="hidden sm:inline">Custom</span>
+                </label>
+              </div>
+
+              {/* Client-Side AI Background Removal Button (Consumes 1 Wallet Credit) */}
+              <button
+                onClick={() => {
+                  if (availableCredits <= 0) {
+                    setShowCreditExhaustedModal(true);
+                    return;
+                  }
+                  triggerManualAiCutout();
+                }}
+                disabled={aiLoading}
+                className={`min-h-[44px] px-3.5 py-2 rounded-2xl border font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap ${
+                  availableCredits <= 0
+                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300'
+                    : 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white border-transparent shadow-sm'
+                }`}
+              >
+                <i
+                  className={`fa-solid ${
+                    availableCredits <= 0
+                      ? 'fa-lock text-rose-600'
+                      : 'fa-wand-magic-sparkles text-cyan-200'
+                  }`}
+                ></i>
+                <span>
+                  {aiLoading
+                    ? 'Processing AI Cutout...'
+                    : availableCredits <= 0
+                    ? 'AI Remove Background (0 Credits)'
+                    : 'AI Remove Background (-1 Credit)'}
+                </span>
+              </button>
+
+              {cutoutEngine !== 'original' && (
+                <button
+                  onClick={restoreOriginalBackground}
+                  className="min-h-[44px] px-3 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap"
+                  title="Restore Original Background at Full Resolution"
+                >
+                  <i className="fa-solid fa-rotate-left text-slate-500"></i>
+                  <span className="hidden sm:inline">Original BG</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  setPreviewMode('single');
+                  setControlTab('retouch');
+                  showToast('Spot Healing Brush active! Click any pimple or blemish on the photo.');
+                }}
+                className={`min-h-[44px] px-3.5 py-2 rounded-2xl border font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap ${
+                  controlTab === 'retouch'
+                    ? 'bg-[#070a14] text-emerald-300 border-emerald-400'
+                    : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                }`}
+              >
+                <i className="fa-solid fa-paintbrush"></i>
+                <span>Spot Heal</span>
+              </button>
+            </div>
           </div>
 
           {/* Mobile-First Split Layout: Canvas Preview FIRST on mobile (order-1), Controls SECOND on mobile (order-2) */}
@@ -2379,7 +3070,7 @@ export default function App() {
                     }`}
                   >
                     <i className="fa-solid fa-columns text-purple-400"></i>
-                    <span>Compare</span>
+                    <span>Before / After</span>
                   </button>
                   <button
                     onClick={() => setPreviewMode('sheet')}
@@ -2389,8 +3080,8 @@ export default function App() {
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <i className="fa-solid fa-table-cells text-amber-400"></i>
-                    <span>6×4" Sheet ({gridInfo.total})</span>
+                    <i className="fa-solid fa-up-down-left-right text-amber-400"></i>
+                    <span>Print Sheet ({gridInfo.total})</span>
                   </button>
                 </div>
 
@@ -2432,7 +3123,7 @@ export default function App() {
                           setPreviewMode('sheet');
                           showToast(
                             countOpt === 'auto'
-                              ? 'Auto Photo Grid selected on 6×4" Sheet'
+                              ? 'Auto Photo Grid selected on Print Sheet'
                               : `Set ${countOpt} Passport ${countOpt === 1 ? 'Photo' : 'Photos'} on Print Sheet!`
                           );
                         }}
@@ -2454,32 +3145,59 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 1. SINGLE PASSPORT PHOTO CANVAS */}
+              {/* 1. SINGLE PASSPORT PHOTO CANVAS (WITH INTERACTIVE SPOT HEALING / HAIR BRUSH OVERLAY) */}
               <div
                 className={`${
                   previewMode === 'single' ? 'flex' : 'hidden'
                 } flex-col items-center justify-center py-2`}
               >
-                <div className="text-[11px] font-mono font-semibold text-slate-500 mb-2 flex items-center gap-2">
+                <div className="text-[11px] font-mono font-semibold text-slate-500 mb-2 flex flex-wrap items-center justify-center gap-2">
                   <span>{wMmRounded} × {hMmRounded} mm</span>
                   <span>·</span>
                   <span>{wIn} × {hIn} in</span>
                   <span>·</span>
                   <span>{dpi} DPI</span>
+                  {controlTab === 'retouch' && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-sans font-bold">
+                      <i className="fa-solid fa-paintbrush mr-1"></i>
+                      {retouchBrushMode === 'spot-heal'
+                        ? 'Spot Healing Active (Click/Drag Blemishes)'
+                        : 'Hair Edge Brush Active'}
+                    </span>
+                  )}
                 </div>
 
-                <div className="relative rounded-2xl overflow-hidden shadow-lg border-2 border-slate-300 checkerboard cursor-move select-none touch-none">
+                <div
+                  className={`relative rounded-2xl overflow-hidden shadow-lg border-2 border-slate-300 checkerboard select-none touch-none ${
+                    controlTab === 'retouch' ? 'cursor-crosshair' : 'cursor-move'
+                  }`}
+                >
                   <canvas
                     ref={passportCanvasRef}
                     width={600}
                     height={600}
                     onMouseDown={handleCanvasMouseDown}
+                    onMouseMove={handleCanvasMouseMove}
+                    onMouseLeave={handleCanvasMouseLeave}
                     onTouchStart={handleCanvasTouchStart}
                     onTouchMove={handleCanvasTouchMove}
                     onTouchEnd={handleCanvasTouchEnd}
                     onWheel={handleCanvasWheel}
                     className="block max-h-[300px] sm:max-h-[360px] w-auto"
                   />
+
+                  {/* Live Retouch Brush Circle Cursor */}
+                  {controlTab === 'retouch' && brushCursorPos.visible && (
+                    <div
+                      className="pointer-events-none absolute rounded-full border-2 border-emerald-400 bg-emerald-400/15 shadow-sm z-10"
+                      style={{
+                        width: `${brushSize}px`,
+                        height: `${brushSize}px`,
+                        left: `${brushCursorPos.x - brushSize / 2}px`,
+                        top: `${brushCursorPos.y - brushSize / 2}px`,
+                      }}
+                    />
+                  )}
 
                   {/* AI Progress Overlay */}
                   {aiLoading && (
@@ -2580,14 +3298,16 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 2. COMPARE ORIGINAL VS CUTOUT */}
+              {/* 2. COMPARE ORIGINAL VS PROCESSED / CUTOUT */}
               <div
                 className={`${
                   previewMode === 'compare' ? 'grid' : 'hidden'
                 } grid-cols-2 gap-3 py-2`}
               >
                 <div className="flex flex-col items-center">
-                  <span className="text-[11px] font-bold text-slate-500 mb-1.5">Original</span>
+                  <span className="text-[11px] font-bold text-slate-500 mb-1.5">
+                    Before (Original {originalFullResDims.width}×{originalFullResDims.height} px)
+                  </span>
                   <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 max-h-[280px] sm:max-h-[340px] flex items-center justify-center p-1">
                     {compareOriginalSrc && (
                       <img
@@ -2600,7 +3320,9 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex flex-col items-center">
-                  <span className="text-[11px] font-bold text-cyan-700 mb-1.5">AI Cutout</span>
+                  <span className="text-[11px] font-bold text-cyan-700 mb-1.5">
+                    After (Processed HD)
+                  </span>
                   <div className="rounded-2xl overflow-hidden border border-slate-200 checkerboard max-h-[280px] sm:max-h-[340px] flex items-center justify-center p-1">
                     <canvas
                       ref={compareCutoutCanvasRef}
@@ -2610,32 +3332,77 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 3. 6x4 PRINTABLE SHEET */}
+              {/* 3. PRINT SHEET VIEW (INTERACTIVE FREE DRAG & DROP EDITOR + QUICK 6x4 GRID) */}
               <div
                 className={`${
                   previewMode === 'sheet' ? 'flex' : 'hidden'
-                } flex-col items-center justify-center py-2`}
+                } flex-col items-center justify-center py-2 space-y-3`}
               >
-                <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200 max-w-full overflow-auto flex justify-center">
-                  <canvas
-                    ref={sheetCanvasRef}
-                    className="bg-white shadow-md rounded border border-slate-300 max-h-[280px] sm:max-h-[350px] w-auto"
-                  />
+                <div className="w-full flex flex-wrap items-center justify-between gap-2 bg-slate-900 text-white p-2.5 rounded-2xl">
+                  <div className="text-xs font-extrabold flex items-center gap-2">
+                    <i className="fa-solid fa-up-down-left-right text-cyan-400"></i>
+                    <span>
+                      Individual Photo Drag & Drop Sheet (Move any photo to corners, resize & rotate)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white/10 p-1 rounded-xl text-[11px] font-bold">
+                    <button
+                      onClick={() => setSheetEditorMode('interactive')}
+                      className={`px-2.5 py-1 rounded-lg transition ${
+                        sheetEditorMode === 'interactive'
+                          ? 'bg-cyan-500 text-slate-950 font-extrabold'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      Interactive Free Move
+                    </button>
+                    <button
+                      onClick={() => setSheetEditorMode('quick-grid')}
+                      className={`px-2.5 py-1 rounded-lg transition ${
+                        sheetEditorMode === 'quick-grid'
+                          ? 'bg-cyan-500 text-slate-950 font-extrabold'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      Quick 6×4" Grid
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 w-full text-xs text-slate-600 px-1">
-                  <span className="font-bold text-slate-900 font-mono">
-                    Printing Exact {gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'} (Max Grid {gridInfo.cols}×{gridInfo.rows}) on 6×4" Sheet
-                  </span>
-                  <label className="min-h-[40px] inline-flex items-center gap-2 cursor-pointer font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={showCutMarks}
-                      onChange={(e) => setShowCutMarks(e.target.checked)}
-                      className="w-4 h-4 rounded accent-cyan-600"
+
+                {sheetEditorMode === 'interactive' ? (
+                  <div className="w-full">
+                    <InteractivePrintSheetEditor
+                      initialPassportPhotoUrl={highResSinglePassportUrl || currentStudioPreviewUrl}
+                      initialPhotoWidthMm={widthMm}
+                      initialPhotoHeightMm={heightMm}
+                      initialPhotoCount={gridInfo.total}
+                      showToast={showToast}
                     />
-                    <span>Cut Lines</span>
-                  </label>
-                </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200 max-w-full overflow-auto flex justify-center">
+                      <canvas
+                        ref={sheetCanvasRef}
+                        className="bg-white shadow-md rounded border border-slate-300 max-h-[280px] sm:max-h-[350px] w-auto"
+                      />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 w-full text-xs text-slate-600 px-1">
+                      <span className="font-bold text-slate-900 font-mono">
+                        Printing Exact {gridInfo.total} {gridInfo.total === 1 ? 'Photo' : 'Photos'} (Max Grid {gridInfo.cols}×{gridInfo.rows}) on 6×4" Sheet
+                      </span>
+                      <label className="min-h-[40px] inline-flex items-center gap-2 cursor-pointer font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={showCutMarks}
+                          onChange={(e) => setShowCutMarks(e.target.checked)}
+                          className="w-4 h-4 rounded accent-cyan-600"
+                        />
+                        <span>Cut Lines</span>
+                      </label>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Primary Export & Cloud Save Bar inside Canvas Card */}
@@ -2667,33 +3434,33 @@ export default function App() {
 
             {/* STUDIO CONTROLS DRAWER / PANEL (Bottom on Mobile, Left on Desktop) */}
             <div className="order-2 lg:order-1 lg:col-span-5 bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
-              {/* 3 Ergonomic Touch Tool Tabs */}
-              <div className="grid grid-cols-3 border-b border-slate-200 bg-slate-100/80 p-1.5 gap-1 text-xs font-bold">
+              {/* 4 Ergonomic Touch Tool Tabs */}
+              <div className="grid grid-cols-4 border-b border-slate-200 bg-slate-100/80 p-1.5 gap-1 text-[11px] font-bold">
                 <button
                   onClick={() => setControlTab('size')}
-                  className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
+                  className={`min-h-[44px] py-2 px-1.5 rounded-2xl flex items-center justify-center gap-1 transition whitespace-nowrap ${
                     controlTab === 'size'
                       ? 'bg-[#070a14] text-cyan-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <i className="fa-solid fa-earth-americas"></i>
-                  <span>1. Size & Count</span>
+                  <span>1. Size</span>
                 </button>
                 <button
                   onClick={() => setControlTab('bg')}
-                  className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
+                  className={`min-h-[44px] py-2 px-1.5 rounded-2xl flex items-center justify-center gap-1 transition whitespace-nowrap ${
                     controlTab === 'bg'
                       ? 'bg-[#070a14] text-purple-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <i className="fa-solid fa-palette"></i>
-                  <span>2. Background</span>
+                  <span>2. BG & Hair</span>
                 </button>
                 <button
                   onClick={() => setControlTab('adjust')}
-                  className={`min-h-[44px] py-2.5 px-2 rounded-2xl flex items-center justify-center gap-1.5 transition whitespace-nowrap ${
+                  className={`min-h-[44px] py-2 px-1.5 rounded-2xl flex items-center justify-center gap-1 transition whitespace-nowrap ${
                     controlTab === 'adjust'
                       ? 'bg-[#070a14] text-amber-300 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -2701,6 +3468,20 @@ export default function App() {
                 >
                   <i className="fa-solid fa-sliders"></i>
                   <span>3. Adjust</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setPreviewMode('single');
+                    setControlTab('retouch');
+                  }}
+                  className={`min-h-[44px] py-2 px-1.5 rounded-2xl flex items-center justify-center gap-1 transition whitespace-nowrap ${
+                    controlTab === 'retouch'
+                      ? 'bg-[#070a14] text-emerald-300 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <i className="fa-solid fa-paintbrush"></i>
+                  <span>4. Retouch</span>
                 </button>
               </div>
 
@@ -2855,6 +3636,8 @@ export default function App() {
                           }}
                           className="w-full min-h-[42px] px-2 py-1.5 text-sm font-mono font-semibold bg-white border border-slate-300 rounded-xl"
                         >
+                          <option value={150}>150</option>
+                          <option value={200}>200</option>
                           <option value={300}>300</option>
                           <option value={600}>600</option>
                         </select>
@@ -2864,7 +3647,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* TAB 2: BACKGROUND COLOR & AI CUTOUT */}
+              {/* TAB 2: BACKGROUND COLOR, HIGH-RES AI CUTOUT & HAIR EDGE SPILL REMOVAL */}
               {controlTab === 'bg' && (
                 <div className="p-4 sm:p-5 space-y-4">
                   <div className="grid grid-cols-4 gap-2.5">
@@ -2877,14 +3660,14 @@ export default function App() {
                             setBgColor(s.hex);
                             setBgName(s.name);
                           }}
-                          className={`min-h-[76px] p-2 rounded-2xl border transition flex flex-col items-center justify-center gap-1.5 active:scale-95 ${
+                          className={`min-h-[72px] p-2 rounded-2xl border transition flex flex-col items-center justify-center gap-1.5 active:scale-95 ${
                             isSelected
                               ? 'border-cyan-600 bg-cyan-50 ring-2 ring-cyan-500/20'
                               : 'border-slate-200 bg-white'
                           }`}
                         >
                           <span
-                            className={`w-8 h-8 rounded-full shadow-inner border ${
+                            className={`w-7 h-7 rounded-full shadow-inner border ${
                               s.hex === 'transparent' ? 'checkerboard' : ''
                             }`}
                             style={{
@@ -2921,27 +3704,37 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* AI Background Remover Card */}
+                  {/* High-Resolution AI Background Cutout & Hair Edge Spill Decontamination Card */}
                   <div className="p-4 rounded-2xl bg-cyan-50/70 border border-cyan-200 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-extrabold text-slate-900">
-                        AI Background Cutout (RMBG-1.4)
+                        High-Res Cutout & Hair Matting
                       </div>
                       <span className="text-[11px] font-bold text-cyan-700">{aiStatusText}</span>
                     </div>
 
-                    <button
-                      onClick={() => triggerManualAiCutout()}
-                      className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs sm:text-sm shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
-                    >
-                      <i className="fa-solid fa-wand-magic-sparkles"></i>
-                      <span>Remove Background Now</span>
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => triggerManualAiCutout()}
+                        className="min-h-[46px] py-2 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+                      >
+                        <i className="fa-solid fa-wand-magic-sparkles"></i>
+                        <span>Remove Background</span>
+                      </button>
+
+                      <button
+                        onClick={restoreOriginalBackground}
+                        className="min-h-[46px] py-2 px-3 rounded-2xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+                      >
+                        <i className="fa-solid fa-rotate-left text-slate-500"></i>
+                        <span>Cancel / Original</span>
+                      </button>
+                    </div>
 
                     <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-2xl border border-cyan-200 text-[11px] font-bold">
                       <button
                         onClick={() => handleSetCutoutEngine('rmbg')}
-                        className={`min-h-[38px] rounded-xl transition ${
+                        className={`min-h-[36px] rounded-xl transition ${
                           cutoutEngine === 'rmbg'
                             ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
@@ -2951,7 +3744,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => handleSetCutoutEngine('removebg_api')}
-                        className={`min-h-[38px] rounded-xl transition ${
+                        className={`min-h-[36px] rounded-xl transition ${
                           cutoutEngine === 'removebg_api'
                             ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
@@ -2961,7 +3754,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => handleSetCutoutEngine('original')}
-                        className={`min-h-[38px] rounded-xl transition ${
+                        className={`min-h-[36px] rounded-xl transition ${
                           cutoutEngine === 'original'
                             ? 'bg-[#070a14] text-cyan-300'
                             : 'text-slate-600'
@@ -2971,9 +3764,60 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="space-y-1.5 pt-1">
+                    {/* Blue / Backdrop Color Spill Removal Slider */}
+                    <div className="space-y-1 pt-1">
                       <div className="flex justify-between text-xs">
-                        <span className="font-semibold text-slate-900">Edge Refinement</span>
+                        <span className="font-semibold text-slate-900">
+                          Blue Color Spill Removal (Hair Edges)
+                        </span>
+                        <span className="font-mono font-bold text-cyan-700">
+                          {spillRemovalStrength}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={spillRemovalStrength}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setSpillRemovalStrength(val);
+                          applyEdgeRefinement(bgTolerance, val, hairMattingStrength);
+                          renderAll();
+                        }}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Fine Hair Strand Matting Slider */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-900">
+                          Fine Hair Strand Matting
+                        </span>
+                        <span className="font-mono font-bold text-purple-700">
+                          {hairMattingStrength}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={hairMattingStrength}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setHairMattingStrength(val);
+                          applyEdgeRefinement(bgTolerance, spillRemovalStrength, val);
+                          renderAll();
+                        }}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Edge Feather / Choke Slider */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-semibold text-slate-900">Edge Feather / Choke</span>
                         <span className="font-mono font-bold text-cyan-700">{bgTolerance}%</span>
                       </div>
                       <input
@@ -2984,7 +3828,7 @@ export default function App() {
                         onChange={(e) => {
                           const val = parseInt(e.target.value, 10);
                           setBgTolerance(val);
-                          applyEdgeRefinement(val);
+                          applyEdgeRefinement(val, spillRemovalStrength, hairMattingStrength);
                           renderAll();
                         }}
                         className="w-full cursor-pointer"
@@ -3210,8 +4054,274 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* TAB 4: NON-DESTRUCTIVE SPOT HEALING / BLEMISH REMOVAL & HAIR EDGE BRUSH */}
+              {controlTab === 'retouch' && (
+                <div className="p-4 sm:p-5 space-y-4">
+                  <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-1.5 border border-emerald-500/30">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-emerald-300 flex items-center gap-1.5">
+                        <i className="fa-solid fa-wand-magic-sparkles"></i>
+                        <span>Spot Healing & Hair Edge Brush</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        Non-Destructive · {retouchUndoCount} Strokes
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Click or paint directly on the photo above to remove black spots, pimples, or skin blemishes while preserving natural skin pores, or refine hair strand edges.
+                    </p>
+                  </div>
+
+                  {/* Brush Mode Selector */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      Brush Tool Mode
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setRetouchBrushMode('spot-heal')}
+                        className={`min-h-[42px] p-2 rounded-xl border text-left flex items-center gap-2 transition ${
+                          retouchBrushMode === 'spot-heal'
+                            ? 'bg-emerald-50 border-emerald-600 text-emerald-900 ring-1 ring-emerald-500'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <i className="fa-solid fa-droplet-slash text-emerald-600"></i>
+                        <div>
+                          <div className="text-xs font-extrabold">Spot Heal / Blemish</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Remove spots & pimples
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRetouchBrushMode('decontaminate-edge')}
+                        className={`min-h-[42px] p-2 rounded-xl border text-left flex items-center gap-2 transition ${
+                          retouchBrushMode === 'decontaminate-edge'
+                            ? 'bg-cyan-50 border-cyan-600 text-cyan-900 ring-1 ring-cyan-500'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <i className="fa-solid fa-broom text-cyan-600"></i>
+                        <div>
+                          <div className="text-xs font-extrabold">Clean Blue Fringe</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Remove hair edge spill
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRetouchBrushMode('restore-hair')}
+                        className={`min-h-[42px] p-2 rounded-xl border text-left flex items-center gap-2 transition ${
+                          retouchBrushMode === 'restore-hair'
+                            ? 'bg-purple-50 border-purple-600 text-purple-900 ring-1 ring-purple-500'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <i className="fa-solid fa-paintbrush text-purple-600"></i>
+                        <div>
+                          <div className="text-xs font-extrabold">Restore Hair</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Bring back fine strands
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRetouchBrushMode('erase-spill')}
+                        className={`min-h-[42px] p-2 rounded-xl border text-left flex items-center gap-2 transition ${
+                          retouchBrushMode === 'erase-spill'
+                            ? 'bg-rose-50 border-rose-600 text-rose-900 ring-1 ring-rose-500'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <i className="fa-solid fa-eraser text-rose-600"></i>
+                        <div>
+                          <div className="text-xs font-extrabold">Erase Edge Spill</div>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Trim remaining halo
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Brush Size, Hardness & Opacity Sliders */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-semibold text-slate-700">Brush Size</span>
+                        <span className="font-mono font-bold text-emerald-700">{brushSize} px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={4}
+                        max={64}
+                        value={brushSize}
+                        onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-semibold text-slate-700">Brush Hardness</span>
+                        <span className="font-mono font-bold text-emerald-700">
+                          {brushHardness}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={10}
+                        max={100}
+                        value={brushHardness}
+                        onChange={(e) => setBrushHardness(parseInt(e.target.value, 10))}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-semibold text-slate-700">Brush Opacity / Strength</span>
+                        <span className="font-mono font-bold text-emerald-700">
+                          {brushOpacity}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={20}
+                        max={100}
+                        value={brushOpacity}
+                        onChange={(e) => setBrushOpacity(parseInt(e.target.value, 10))}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-semibold text-slate-700">
+                          Canvas Zoom (For Detailed Healing)
+                        </span>
+                        <span className="font-mono font-bold text-cyan-700">{zoom}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={50}
+                        max={280}
+                        value={zoom}
+                        onChange={(e) => setZoom(parseFloat(e.target.value))}
+                        className="w-full cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Undo / Redo / Reset / Apply / Cancel Controls */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRetouchUndo}
+                      disabled={retouchUndoCount === 0}
+                      className="min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                    >
+                      <i className="fa-solid fa-rotate-left"></i>
+                      <span>Undo ({retouchUndoCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRetouchRedo}
+                      disabled={retouchRedoCount === 0}
+                      className="min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                    >
+                      <i className="fa-solid fa-rotate-right"></i>
+                      <span>Redo ({retouchRedoCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRetouchResetAll}
+                      className="min-h-[40px] rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                    >
+                      <i className="fa-solid fa-arrow-rotate-left"></i>
+                      <span>Reset</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setControlTab('adjust');
+                        showToast('Applied Retouching Changes!');
+                      }}
+                      className="min-h-[44px] rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold shadow-sm flex items-center justify-center gap-1.5 active:scale-95 transition"
+                    >
+                      <i className="fa-solid fa-check"></i>
+                      <span>Apply Retouching</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleRetouchResetAll();
+                        setControlTab('size');
+                      }}
+                      className="min-h-[44px] rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
+                    >
+                      <i className="fa-solid fa-xmark"></i>
+                      <span>Cancel Retouching</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+        </main>
+      )}
+
+      {/* ROUTE 1B: CATEGORY 1 — STUDIO TOOLS HUB */}
+      {activeRoute === 'studio-tools' && (
+        <main className="flex-1">
+          <StudioToolsHub
+            activeSubTool={activeStudioSubTool}
+            onSelectSubTool={(t) => setActiveStudioSubTool(t)}
+            siteSettings={siteSettings}
+            shortLinks={shortLinks}
+            onCreateShortLink={handleCreateShortLink}
+            onToggleShortLinkStatus={handleToggleShortLinkStatus}
+            onDeleteShortLink={handleDeleteShortLink}
+            onOpenPassportStudio={() => setActiveRoute('studio')}
+            onSendImageToStudio={handleSendImageToStudio}
+            showToast={showToast}
+          />
+        </main>
+      )}
+
+      {/* ROUTE 1C: CATEGORY 2 — AKSHAYA TOOLS HUB */}
+      {activeRoute === 'akshaya-tools' && (
+        <main className="flex-1">
+          <AkshayaToolsHub
+            activeSubTool={activeAkshayaSubTool}
+            onSelectSubTool={(t) => setActiveAkshayaSubTool(t)}
+            siteSettings={siteSettings}
+            showToast={showToast}
+          />
+        </main>
+      )}
+
+      {/* ROUTE 1D: CATEGORY 3 — MEDIA & LIVE TOOLS HUB */}
+      {activeRoute === 'media-live-tools' && (
+        <main className="flex-1">
+          <MediaLiveToolsHub
+            activeSubTool={activeMediaLiveSubTool}
+            onSelectSubTool={(t) => setActiveMediaLiveSubTool(t)}
+            siteSettings={siteSettings}
+            showToast={showToast}
+          />
         </main>
       )}
 
@@ -3312,53 +4422,68 @@ export default function App() {
         </div>
       </footer>
 
-      {/* FIXED MOBILE BOTTOM TAB BAR */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070a14]/95 backdrop-blur-md border-t border-cyan-500/30 grid grid-cols-5 items-center h-16 px-1 select-none text-slate-400">
+      {/* FIXED MOBILE BOTTOM TAB BAR (Home, Studio Tools, Akshaya Tools, Media & Live, My Account, Admin) */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070a14]/95 backdrop-blur-md border-t border-cyan-500/30 grid grid-cols-6 items-center h-16 px-1 select-none text-slate-400">
         <button
           onClick={() => setActiveRoute('studio')}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
             activeRoute === 'studio' ? 'text-cyan-400 font-bold' : 'text-slate-400'
           }`}
         >
-          <i className="fa-solid fa-camera text-base"></i>
-          <span className="text-[10px] tracking-tight mt-1">Passport</span>
+          <i className="fa-solid fa-house text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Home</span>
         </button>
 
         <button
-          onClick={() => openToolSection('bg-remover')}
+          onClick={() => {
+            setActiveStudioSubTool('landing');
+            setActiveRoute('studio-tools');
+          }}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'tools' &&
-            (activeToolTab === 'bg-remover' || activeToolTab === 'clarity-enhancer')
-              ? 'text-purple-400 font-bold'
-              : 'text-slate-400'
-          }`}
-        >
-          <i className="fa-solid fa-wand-magic-sparkles text-base"></i>
-          <span className="text-[10px] tracking-tight mt-1">AI Tools</span>
-        </button>
-
-        <button
-          onClick={() => openToolSection('qr-generator')}
-          className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'tools' &&
-            (activeToolTab === 'qr-generator' || activeToolTab === 'link-shortener')
+            activeRoute === 'studio-tools' || activeRoute === 'tools'
               ? 'text-cyan-400 font-bold'
               : 'text-slate-400'
           }`}
         >
-          <i className="fa-solid fa-qrcode text-base"></i>
-          <span className="text-[10px] tracking-tight mt-1">QR & Links</span>
+          <i className="fa-solid fa-camera-retro text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Studio</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveAkshayaSubTool('landing');
+            setActiveRoute('akshaya-tools');
+          }}
+          className={`min-h-[48px] flex flex-col items-center justify-center transition ${
+            activeRoute === 'akshaya-tools' ? 'text-blue-400 font-bold' : 'text-slate-400'
+          }`}
+        >
+          <i className="fa-solid fa-file-shield text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Akshaya</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveMediaLiveSubTool('landing');
+            setActiveRoute('media-live-tools');
+          }}
+          className={`min-h-[48px] flex flex-col items-center justify-center transition ${
+            activeRoute === 'media-live-tools' ? 'text-purple-400 font-bold' : 'text-slate-400'
+          }`}
+        >
+          <i className="fa-solid fa-tower-broadcast text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Media Live</span>
         </button>
 
         <button
           onClick={() => openDashboardSection('overview')}
           className={`min-h-[48px] flex flex-col items-center justify-center transition ${
-            activeRoute === 'dashboard' ? 'text-cyan-400 font-bold' : 'text-slate-400'
+            activeRoute === 'dashboard' ? 'text-emerald-400 font-bold' : 'text-slate-400'
           }`}
         >
-          <i className="fa-solid fa-user-circle text-base"></i>
-          <span className="text-[10px] tracking-tight mt-1">
-            {userProfile ? 'Dashboard' : 'Login'}
+          <i className="fa-solid fa-user-circle text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">
+            {userProfile ? 'Account' : 'Login'}
           </span>
         </button>
 
@@ -3368,8 +4493,8 @@ export default function App() {
             activeRoute === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'
           }`}
         >
-          <i className="fa-solid fa-shield-halved text-base"></i>
-          <span className="text-[10px] tracking-tight mt-1">Admin</span>
+          <i className="fa-solid fa-shield-halved text-sm"></i>
+          <span className="text-[9px] tracking-tight mt-1">Admin</span>
         </button>
       </nav>
 
@@ -3689,6 +4814,182 @@ export default function App() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Credit Quota Exhausted Popup Modal (Triggered when Available Credits = 0) */}
+      {showCreditExhaustedModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-rose-200 space-y-4 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-2xl mx-auto shadow-xs">
+              <i className="fa-solid fa-wallet"></i>
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-extrabold text-slate-900">
+                Credit Quota Exhausted!
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Credit Quota Exhausted! Please contact your administrator or WhatsApp at{' '}
+                <span className="font-mono font-extrabold text-slate-900">
+                  {siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
+                </span>{' '}
+                to recharge your account.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-600">Current Wallet Balance:</span>
+              <span className="font-mono font-extrabold text-rose-600 tabular-nums">
+                {availableCredits} Photos
+              </span>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <a
+                href={`https://wa.me/${(siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP).replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                  'Hello MALNADU MEDIA Admin, my studio AI Background Removal credits are exhausted (0 Photos). Please recharge my wallet.'
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition"
+              >
+                <i className="fa-brands fa-whatsapp text-base"></i>
+                <span>
+                  WhatsApp Admin ({siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP})
+                </span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreditExhaustedModal(false);
+                  setAdminPinInput('');
+                  setAdminRechargeError(null);
+                  setAdminRechargeSuccess(null);
+                  setShowAdminRechargeModal(true);
+                }}
+                className="w-full min-h-[44px] py-2 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs flex items-center justify-center gap-2 transition"
+              >
+                <i className="fa-solid fa-key text-amber-400"></i>
+                <span>Have Admin Secret PIN? Recharge Now</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowCreditExhaustedModal(false)}
+                className="w-full min-h-[40px] py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden Admin Panel / Secret PIN Wallet Recharge Modal (Triggered by Alt+A or clicking Wallet Badge 5x) */}
+      {showAdminRechargeModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#070a14] text-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-cyan-500/40 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-purple-600 flex items-center justify-center text-white shadow-sm">
+                  <i className="fa-solid fa-shield-halved"></i>
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-white">
+                    Admin Credit Wallet Recharge
+                  </h3>
+                  <p className="text-[11px] text-cyan-300/80">
+                    Shortcut: Alt+A or 5x Click on Header Wallet Badge
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdminRechargeModal(false)}
+                className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 flex items-center justify-center"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-white/5 border border-cyan-500/25 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-300">Available Credits:</span>
+              <span className="font-mono text-sm font-extrabold text-emerald-400 tabular-nums">
+                {availableCredits} Photos
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                Enter Secret Admin PIN
+              </label>
+              <input
+                type="password"
+                value={adminPinInput}
+                onChange={(e) => {
+                  setAdminPinInput(e.target.value);
+                  setAdminRechargeError(null);
+                }}
+                placeholder="Enter Secret PIN (e.g. 1234)"
+                className="w-full min-h-[44px] px-3.5 py-2 rounded-2xl bg-slate-900 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            {adminRechargeError && (
+              <div className="p-3 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold">
+                <i className="fa-solid fa-circle-exclamation mr-1.5"></i>
+                {adminRechargeError}
+              </div>
+            )}
+
+            {adminRechargeSuccess && (
+              <div className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
+                <i className="fa-solid fa-circle-check mr-1.5"></i>
+                {adminRechargeSuccess}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                1-Click Studio Credit Top-Up Packages
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[500, 800, 1000].map((pkg) => (
+                  <button
+                    key={pkg}
+                    type="button"
+                    onClick={() => handleAdminQuickRecharge(pkg)}
+                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-mono font-extrabold text-xs shadow-sm active:scale-95 transition flex items-center justify-center gap-1"
+                  >
+                    <i className="fa-solid fa-plus text-[10px]"></i>
+                    <span>{pkg}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-white/10 flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={50000}
+                value={adminCustomRechargeInput}
+                onChange={(e) => setAdminCustomRechargeInput(e.target.value)}
+                placeholder="Custom credits"
+                className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  handleAdminQuickRecharge(Math.max(1, parseInt(adminCustomRechargeInput, 10) || 100))
+                }
+                className="min-h-[42px] px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold transition"
+              >
+                Add Custom
+              </button>
+            </div>
           </div>
         </div>
       )}
