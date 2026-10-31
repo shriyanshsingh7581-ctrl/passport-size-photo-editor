@@ -246,7 +246,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return;
     }
     setPoolActionNotice(null);
-    const currentUserCredits = typeof user.credits === 'number' ? user.credits : 25;
+    const currentUserCredits = typeof user.credits === 'number' ? user.credits : 5;
     let nextUserCredits = currentUserCredits;
     if (mode === 'add') {
       nextUserCredits = currentUserCredits + Math.max(1, Math.floor(amount));
@@ -376,7 +376,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
   const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('approved');
-  const [newUserInitialCredits, setNewUserInitialCredits] = useState('25');
+  const [newUserInitialCredits, setNewUserInitialCredits] = useState('5');
 
   // Branding & Footer Credit Form State
   const [formSettings, setFormSettings] = useState<SiteSettings>(() => ({
@@ -452,7 +452,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNewUserPhone('');
     setNewUserRole('user');
     setNewUserStatus('approved');
-    setNewUserInitialCredits('25');
+    setNewUserInitialCredits('5');
     setShowAddUserForm(false);
   };
 
@@ -1130,7 +1130,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             <div className="space-y-2.5">
               {filteredUsers.map((u) => {
-                const userCredits = typeof u.credits === 'number' ? u.credits : 25;
+                const userCredits = typeof u.credits === 'number' ? u.credits : 5;
                 const customVal = userCustomCreditInputs[u.uid] ?? '50';
                 return (
                   <div
@@ -1576,7 +1576,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </span>
                         <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[10px] font-extrabold">
                           <i className="fa-solid fa-coins mr-1 text-amber-600"></i>
-                          {typeof u.credits === 'number' ? u.credits : 25} Credits
+                          {typeof u.credits === 'number' ? u.credits : 5} Credits
                         </span>
                       </div>
                       <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">

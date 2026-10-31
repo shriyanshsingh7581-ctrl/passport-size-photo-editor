@@ -11,6 +11,7 @@ import {
   HairMattingOptions,
   DEFAULT_HAIR_MATTING_OPTIONS,
 } from '../rmbgEngine';
+import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
 
 export type ActiveToolTab =
   | 'bg-remover'
@@ -184,6 +185,12 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
     ) => {
       const img = imgOverride || bgSourceImageRef.current;
       if (!img) return;
+      const currentCredits = loadWalletCredits();
+      if (currentCredits <= 0) {
+        showToast('Credit Quota Exhausted (0 Credits)! Please add credits via UPI QR.');
+        setBgStatusText('Credit Quota Exhausted — Please Add Credits');
+        return;
+      }
       setBgProcessing(true);
       setBgProgress(18);
       setBgStatusText('Running High-Res Hair Matting & Blue Spill Removal...');
@@ -202,6 +209,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           }
         );
 
+        const deduction = deductWalletCredit();
         bgAlphaMaskRef.current = result.alphaMask;
         bgSampledBackdropRef.current = result.sampledBgColor;
         bgRawCutoutCanvasRef.current = result.cutoutCanvas;
@@ -216,9 +224,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
           hairDetailStrength
         );
         setBgStatusText(
-          `High-Res Cutout Ready (${result.width}×${result.height} px · Blue Spill Removed)`
+          `High-Res Cutout Ready (${result.width}×${result.height} px · ${deduction.remaining} Credits Left)`
         );
-        showToast('Background Removed with Hair Edge Matting!');
+        showToast(
+          `Background Removed! (-1 Credit · ${deduction.remaining} Photos Remaining)`
+        );
       } catch (err) {
         console.error('BG Remover error:', err);
         setBgStatusText('Segmentation Complete');

@@ -6,10 +6,12 @@ import {
   DEFAULT_TOOL_CATALOG,
   generateSamplePortraitDataUrl,
 } from '../constants';
+import { PosterTemplateMaker } from './PosterTemplateMaker';
 
 export type MediaLiveSubToolId =
   | 'overview'
   | 'landing'
+  | 'poster-template-maker'
   | 'live-streaming-poster'
   | 'youtube-thumbnail'
   | 'live-countdown'
@@ -1643,6 +1645,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
 
   const isCanvasGraphicTool =
     activeSubTool !== 'overview' &&
+    activeSubTool !== 'poster-template-maker' &&
     activeSubTool !== 'youtube-description' &&
     activeSubTool !== 'video-converter';
 
@@ -1656,10 +1659,10 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
               CATEGORY 3 · BROADCAST, STREAMING & EVENT GRAPHICS SUITE
             </div>
             <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight mt-1">
-              Media & Live Tools — OBS/vMix Overlays, Posters, LED Walls & Video
+              Media & Live Tools — 36+ Event Poster Templates, OBS/vMix Overlays & Video
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              15 professional broadcast tools for wedding studios, churches, YouTube creators, and live event production.
+              16 professional tools including 36+ editable Wedding, Anniversary, Birthday & Memorial Poster Templates.
             </p>
           </div>
           {activeSubTool !== 'overview' && (
@@ -1667,7 +1670,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
               onClick={() => setActiveSubTool('overview')}
               className="min-h-[40px] px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-cyan-300 text-xs font-bold self-start md:self-auto shrink-0"
             >
-              ← All 15 Media & Live Tools
+              ← All 16 Media & Live Tools
             </button>
           )}
         </div>
@@ -1681,21 +1684,34 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
                 : 'bg-white/10 hover:bg-white/15 text-slate-300'
             }`}
           >
-            All 15 Tools
+            All 16 Tools
           </button>
-          {mediaToolsList.map((tool) => (
-            <button
-              key={tool.id}
-              onClick={() => setActiveSubTool(tool.id as MediaLiveSubToolId)}
-              className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                activeSubTool === tool.id
-                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white'
-                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
-              }`}
-            >
-              {tool.name}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveSubTool('poster-template-maker')}
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition whitespace-nowrap flex items-center gap-1.5 ${
+              activeSubTool === 'poster-template-maker'
+                ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 text-white shadow-sm'
+                : 'bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300'
+            }`}
+          >
+            <i className="fa-solid fa-wand-magic-sparkles"></i>
+            <span>36+ Poster Template Maker</span>
+          </button>
+          {mediaToolsList
+            .filter((t) => t.id !== 'poster-template-maker')
+            .map((tool) => (
+              <button
+                key={tool.id}
+                onClick={() => setActiveSubTool(tool.id as MediaLiveSubToolId)}
+                className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                  activeSubTool === tool.id
+                    ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white'
+                    : 'bg-white/10 hover:bg-white/15 text-slate-300'
+                }`}
+              >
+                {tool.name}
+              </button>
+            ))}
         </div>
       </div>
 
@@ -1730,41 +1746,73 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       />
 
       {/* =====================================================================
+          DEDICATED 36+ WEDDING, ANNIVERSARY & MEMORIAL POSTER TEMPLATE MAKER
+         ===================================================================== */}
+      {activeSubTool === 'poster-template-maker' && (
+        <PosterTemplateMaker showToast={showToast} />
+      )}
+
+      {/* =====================================================================
           VIEW 0: MEDIA & LIVE TOOLS CATEGORY LANDING GRID
          ===================================================================== */}
       {activeSubTool === 'overview' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {mediaToolsList.map((tool) => (
-            <div
-              key={tool.id}
-              className="bg-white rounded-3xl border border-slate-200 hover:border-purple-400 p-5 flex flex-col justify-between gap-4 shadow-xs transition group"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="w-12 h-12 rounded-2xl bg-[#070a14] text-purple-400 border border-purple-500/30 flex items-center justify-center text-lg shadow-sm group-hover:scale-105 transition">
-                    <i className={`fa-solid ${tool.icon.replace('fa-brands ', '')}`}></i>
-                  </div>
-                  {tool.badge && (
-                    <span className="text-[11px] font-bold text-purple-700">{tool.badge}</span>
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-900">{tool.name}</h2>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    {tool.description}
-                  </p>
-                </div>
+        <div className="space-y-4">
+          {/* Featured 36+ Poster Template Maker Banner */}
+          <div className="bg-gradient-to-r from-[#070a14] via-purple-950 to-slate-900 text-white rounded-3xl border border-amber-400/40 p-5 sm:p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[11px] font-extrabold uppercase tracking-wider">
+                <i className="fa-solid fa-crown"></i>
+                <span>Featured · 36 Ready-Made Editable Templates</span>
               </div>
-
-              <button
-                onClick={() => setActiveSubTool(tool.id as MediaLiveSubToolId)}
-                className="w-full min-h-[44px] py-2.5 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs transition flex items-center justify-center gap-2"
-              >
-                <span>Open {tool.name}</span>
-                <i className="fa-solid fa-arrow-right text-[11px]"></i>
-              </button>
+              <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                Wedding, Anniversary, Birthday, Memorial & Festival Poster Template Maker
+              </h2>
+              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                Upload single or multiple photos into predefined arch, circle, oval & royal frames. Drag, zoom, and crop each photo independently and edit all names, dates, venues, and messages directly in your browser.
+              </p>
             </div>
-          ))}
+            <button
+              onClick={() => setActiveSubTool('poster-template-maker')}
+              className="min-h-[46px] px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm shadow-md transition flex items-center gap-2 whitespace-nowrap shrink-0"
+            >
+              <i className="fa-solid fa-wand-magic-sparkles"></i>
+              <span>Open 36+ Poster Template Maker →</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {mediaToolsList.map((tool) => (
+              <div
+                key={tool.id}
+                className="bg-white rounded-3xl border border-slate-200 hover:border-purple-400 p-5 flex flex-col justify-between gap-4 shadow-xs transition group"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-[#070a14] text-purple-400 border border-purple-500/30 flex items-center justify-center text-lg shadow-sm group-hover:scale-105 transition">
+                      <i className={`fa-solid ${tool.icon.replace('fa-brands ', '')}`}></i>
+                    </div>
+                    {tool.badge && (
+                      <span className="text-[11px] font-bold text-purple-700">{tool.badge}</span>
+                    )}
+                  </div>
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-900">{tool.name}</h2>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      {tool.description}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setActiveSubTool(tool.id as MediaLiveSubToolId)}
+                  className="w-full min-h-[44px] py-2.5 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs transition flex items-center justify-center gap-2"
+                >
+                  <span>Open {tool.name}</span>
+                  <i className="fa-solid fa-arrow-right text-[11px]"></i>
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

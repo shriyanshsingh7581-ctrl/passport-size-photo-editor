@@ -155,6 +155,16 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
 
   // CATEGORY 3: MEDIA & LIVE TOOLS
   {
+    id: 'poster-template-maker',
+    category: 'media-live',
+    name: 'Wedding, Anniversary & Memorial Poster Maker',
+    description:
+      '36+ ready-made editable poster templates for Wedding, Anniversary, Engagement, Birthday, Memorial & Festival greetings with multi-photo frames, drag/zoom & custom text.',
+    icon: 'fa-wand-magic-sparkles',
+    badge: '36+ Templates',
+    enabled: true,
+  },
+  {
     id: 'live-streaming-poster',
     category: 'media-live',
     name: 'Live Streaming Poster Maker',

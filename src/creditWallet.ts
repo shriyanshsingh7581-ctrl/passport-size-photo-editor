@@ -10,7 +10,7 @@
  *   with support for changing the master password inside the Credit Admin Vault.
  */
 
-const WALLET_STORAGE_KEY = 'malnadu_studio_wallet_vault_v1';
+const WALLET_STORAGE_KEY = 'malnadu_studio_wallet_vault_v2';
 const ADMIN_POOL_STORAGE_KEY = 'malnadu_studio_admin_pool_vault_v1';
 const ADMIN_PASS_VAULT_KEY = 'malnadu_studio_admin_pass_vault_v1';
 const CREDIT_LOG_STORAGE_KEY = 'malnadu_studio_credit_logs_v1';
@@ -18,7 +18,7 @@ const USED_COUPONS_STORAGE_KEY = 'malnadu_studio_used_coupons_v1';
 const PAYMENT_REQUESTS_STORAGE_KEY = 'malnadu_studio_payment_requests_v1';
 const WALLET_SECRET_SALT = 'MALNADU_MEDIA_STUDIO_PRO_2026_VAULT_KEY_#9981';
 
-export const DEFAULT_INITIAL_CREDITS = 25;
+export const DEFAULT_INITIAL_CREDITS = 5;
 export const DEFAULT_INITIAL_ADMIN_POOL = 500;
 export const DEFAULT_ADMIN_PASSWORD = 'Malnadu@Admin#7581!$';
 // Backward-compatible alias

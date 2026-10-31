@@ -73,13 +73,14 @@ import { ToolsHub, ActiveToolTab } from './components/ToolsHub';
 import { StudioToolsHub, StudioSubToolId } from './components/StudioToolsHub';
 import { AkshayaToolsHub, AkshayaSubToolId } from './components/AkshayaToolsHub';
 import { MediaLiveToolsHub, MediaLiveSubToolId } from './components/MediaLiveToolsHub';
+import { PosterTemplateMaker } from './components/PosterTemplateMaker';
 import { AdminPanel, AdminTab } from './components/AdminPanel';
 import { CreditQrAndOwnerPortal } from './components/CreditQrAndOwnerPortal';
 
 const LOCAL_SETTINGS_KEY = 'malnadu_media_site_settings_v2';
 const LOCAL_SHORTLINKS_KEY = 'malnadu_media_short_links_v1';
-const LOCAL_USERS_KEY = 'malnadu_media_users_v1';
-const LOCAL_ACTIVE_USER_KEY = 'malnadu_media_active_user_v1';
+const LOCAL_USERS_KEY = 'malnadu_media_users_v2';
+const LOCAL_ACTIVE_USER_KEY = 'malnadu_media_active_user_v2';
 const LOCAL_APPOINTMENTS_KEY = 'malnadu_media_appointments_v1';
 const LOCAL_VERIFICATIONS_KEY = 'malnadu_media_verifications_v1';
 const LOCAL_SAVED_PHOTOS_KEY = 'malnadu_media_saved_photos_v1';
@@ -107,6 +108,7 @@ const DEFAULT_DEMO_USERS: UserProfile[] = [
     phone: '+91 98450 11223',
     role: 'admin',
     status: 'approved',
+    credits: 5,
     createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
   },
   {
@@ -116,6 +118,7 @@ const DEFAULT_DEMO_USERS: UserProfile[] = [
     phone: '+91 98951 44321',
     role: 'user',
     status: 'approved',
+    credits: 5,
     createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
   },
   {
@@ -125,6 +128,7 @@ const DEFAULT_DEMO_USERS: UserProfile[] = [
     phone: '+91 94470 88210',
     role: 'user',
     status: 'pending',
+    credits: 5,
     createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
   },
   {
@@ -134,6 +138,7 @@ const DEFAULT_DEMO_USERS: UserProfile[] = [
     phone: '+91 99001 55678',
     role: 'user',
     status: 'pending',
+    credits: 5,
     createdAt: new Date(Date.now() - 3600000 * 6).toISOString(),
   },
 ];
@@ -155,6 +160,7 @@ export default function App() {
   // Primary Route State
   const [activeRoute, setActiveRoute] = useState<
     | 'studio'
+    | 'poster-maker'
     | 'studio-tools'
     | 'akshaya-tools'
     | 'media-live-tools'
@@ -733,20 +739,73 @@ export default function App() {
   }, []);
 
   // =========================================================================
-  // 3. FIREBASE AUTHENTICATION & USER PROFILE BOOTSTRAP
+  // 3. FIREBASE AUTHENTICATION & USER PROFILE BOOTSTRAP (5 FREE CREDITS PER NEW ACCOUNT)
   // =========================================================================
   const persistActiveUserSession = (profile: UserProfile | null) => {
-    setUserProfile(profile);
-    try {
-      if (profile) {
-        localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(profile));
-      } else {
-        localStorage.removeItem(LOCAL_ACTIVE_USER_KEY);
+    if (profile) {
+      const accountCredits = typeof profile.credits === 'number' ? profile.credits : 5;
+      const resolvedProfile: UserProfile = {
+        ...profile,
+        credits: accountCredits,
+      };
+      setUserProfile(resolvedProfile);
+      setAvailableCredits(saveWalletCredits(accountCredits));
+      try {
+        localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(resolvedProfile));
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
+    } else {
+      setUserProfile(null);
+      try {
+        localStorage.removeItem(LOCAL_ACTIVE_USER_KEY);
+      } catch {
+        // ignore
+      }
     }
   };
+
+  // Sync wallet credit deductions/updates directly back into the active user's account profile
+  useEffect(() => {
+    const handleWalletSyncToUser = () => {
+      const latestCredits = loadWalletCredits();
+      setAvailableCredits(latestCredits);
+      setUserProfile((prev) => {
+        if (!prev || prev.credits === latestCredits) return prev;
+        const updatedProfile: UserProfile = { ...prev, credits: latestCredits };
+        try {
+          localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(updatedProfile));
+        } catch {
+          // ignore
+        }
+        setAllUsers((usersList) => {
+          const next = usersList.map((u) =>
+            u.uid === updatedProfile.uid ? { ...u, credits: latestCredits } : u
+          );
+          try {
+            localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(next));
+          } catch {
+            // ignore
+          }
+          return next;
+        });
+        try {
+          updateDoc(doc(db, 'users', updatedProfile.uid), {
+            credits: latestCredits,
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
+        return updatedProfile;
+      });
+    };
+
+    window.addEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
+    return () => {
+      window.removeEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
+    };
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -762,7 +821,8 @@ export default function App() {
           email: (user.email || 'user@malnadumedia.com').slice(0, 150),
           phone: (user.phoneNumber || '').slice(0, 30),
           role: isBootstrapAdmin ? 'admin' : 'user',
-          status: isBootstrapAdmin ? 'approved' : 'pending',
+          status: 'approved',
+          credits: 5,
           createdAt: new Date().toISOString(),
         };
 
@@ -779,12 +839,18 @@ export default function App() {
             upsertUserInLocalState(defaultProfile);
           } else {
             const existingData = snap.data() as UserProfile;
-            persistActiveUserSession(existingData);
-            upsertUserInLocalState(existingData);
+            const withCredits: UserProfile = {
+              ...existingData,
+              credits: typeof existingData.credits === 'number' ? existingData.credits : 5,
+            };
+            persistActiveUserSession(withCredits);
+            upsertUserInLocalState(withCredits);
           }
         } catch {
           const localMatch = allUsers.find((u) => u.uid === user.uid || u.email === user.email);
-          const resolved = localMatch || defaultProfile;
+          const resolved: UserProfile = localMatch
+            ? { ...localMatch, credits: typeof localMatch.credits === 'number' ? localMatch.credits : 5 }
+            : defaultProfile;
           persistActiveUserSession(resolved);
           upsertUserInLocalState(resolved);
         }
@@ -2030,7 +2096,8 @@ export default function App() {
           email: emailClean.slice(0, 150),
           phone: authPhone.trim().slice(0, 30),
           role: isBootstrapAdmin ? 'admin' : 'user',
-          status: isBootstrapAdmin ? 'approved' : 'pending',
+          status: 'approved',
+          credits: 5,
           createdAt: new Date().toISOString(),
         };
 
@@ -2048,11 +2115,9 @@ export default function App() {
         upsertUserInLocalState(newProfile);
         setShowAuthModal(false);
         setAuthPassword('');
-        setActiveRoute('dashboard');
+        setActiveRoute('studio');
         showToast(
-          isBootstrapAdmin
-            ? 'Admin Account Created & Approved!'
-            : 'Account registered! Status: Pending Admin Approval.'
+          `Account Created! 5 Free Photo Credits Added to Your Account.`
         );
       } else {
         try {
@@ -2062,22 +2127,28 @@ export default function App() {
           const existingLocal = allUsers.find(
             (u) => u.email.toLowerCase() === emailClean.toLowerCase()
           );
-          const sessionProfile: UserProfile = existingLocal || {
-            uid: `user-${Date.now()}`,
-            displayName: emailClean.split('@')[0] || 'Studio User',
-            email: emailClean,
-            phone: '+91 98450 11223',
-            role: isBootstrapAdmin ? 'admin' : 'user',
-            status: 'approved',
-            createdAt: new Date().toISOString(),
-          };
+          const sessionProfile: UserProfile = existingLocal
+            ? {
+                ...existingLocal,
+                credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 5,
+              }
+            : {
+                uid: `user-${Date.now()}`,
+                displayName: emailClean.split('@')[0] || 'Studio User',
+                email: emailClean,
+                phone: '+91 98450 11223',
+                role: isBootstrapAdmin ? 'admin' : 'user',
+                status: 'approved',
+                credits: 5,
+                createdAt: new Date().toISOString(),
+              };
           persistActiveUserSession(sessionProfile);
           upsertUserInLocalState(sessionProfile);
         }
         setShowAuthModal(false);
         setAuthPassword('');
-        setActiveRoute('dashboard');
-        showToast('Signed in successfully!');
+        setActiveRoute('studio');
+        showToast('Signed in successfully! Welcome to Studio.');
       }
     } catch (error: any) {
       setAuthError(formatFirebaseAuthError(error));
@@ -2091,27 +2162,41 @@ export default function App() {
     try {
       await signInWithPopup(auth, googleProvider);
       setShowAuthModal(false);
-      setActiveRoute('dashboard');
+      setActiveRoute('studio');
       showToast('Signed in with Google!');
     } catch {
       // Seamless Hybrid Google Studio Session Fallback if popup/domain is restricted in iframe
-      const googleDemoProfile: UserProfile =
+      const existingGoogleUser =
         allUsers.find((u) => u.status === 'approved' && u.role === 'user') || DEFAULT_DEMO_USERS[1];
+      const googleDemoProfile: UserProfile = {
+        ...existingGoogleUser,
+        credits: typeof existingGoogleUser.credits === 'number' ? existingGoogleUser.credits : 5,
+      };
       persistActiveUserSession(googleDemoProfile);
       upsertUserInLocalState(googleDemoProfile);
       setShowAuthModal(false);
-      setActiveRoute('dashboard');
-      showToast(`Signed in as ${googleDemoProfile.displayName}!`);
+      setActiveRoute('studio');
+      showToast(`Signed in as ${googleDemoProfile.displayName} (${googleDemoProfile.credits} Credits)!`);
     }
   };
 
   const handleQuickDemoLogin = (asAdmin: boolean) => {
-    const profile = asAdmin ? DEFAULT_DEMO_USERS[0] : DEFAULT_DEMO_USERS[1];
+    const baseProfile = asAdmin ? DEFAULT_DEMO_USERS[0] : DEFAULT_DEMO_USERS[1];
+    const existing = allUsers.find((u) => u.uid === baseProfile.uid);
+    const profile: UserProfile = {
+      ...(existing || baseProfile),
+      credits:
+        typeof existing?.credits === 'number'
+          ? existing.credits
+          : typeof baseProfile.credits === 'number'
+          ? baseProfile.credits
+          : 5,
+    };
     persistActiveUserSession(profile);
     upsertUserInLocalState(profile);
     setShowAuthModal(false);
-    setActiveRoute(asAdmin ? 'admin' : 'dashboard');
-    showToast(`Logged in as ${profile.displayName}`);
+    setActiveRoute(asAdmin ? 'admin' : 'studio');
+    showToast(`Logged in as ${profile.displayName} (${profile.credits} Credits)`);
   };
 
   const handleSignOut = async () => {
@@ -2253,7 +2338,7 @@ export default function App() {
     phone: string,
     role: 'user' | 'admin',
     status: AccountStatus,
-    initialCredits = 25
+    initialCredits = 5
   ) => {
     const uid = `user-${Date.now()}`;
     const safeCredits = Math.max(0, Math.floor(Number(initialCredits) || 0));
@@ -2729,145 +2814,171 @@ export default function App() {
             {renderBrandLogo(false)}
           </button>
 
-          {/* Zone 2: Desktop Navigation Links (Home, Studio Tools, Akshaya Tools, Media & Live Tools, My Account, Admin) */}
-          <nav className="hidden lg:flex items-center gap-1.5 text-xs font-bold text-slate-300">
-            <button
-              onClick={() => setActiveRoute('studio')}
-              className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                activeRoute === 'studio'
-                  ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
-                  : 'hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <i className="fa-solid fa-house text-cyan-400"></i>
-              <span>Home</span>
-            </button>
-
-            {siteSettings.enableStudioToolsCategory !== false && (
+          {/* Zone 2: Desktop Navigation Links (Only active when logged in) */}
+          {userProfile ? (
+            <nav className="hidden lg:flex items-center gap-1.5 text-xs font-bold text-slate-300">
               <button
-                onClick={() => {
-                  setActiveStudioSubTool('landing');
-                  setActiveRoute('studio-tools');
-                }}
+                onClick={() => setActiveRoute('studio')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                  activeRoute === 'studio-tools' || activeRoute === 'tools'
+                  activeRoute === 'studio'
                     ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                     : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
-                <i className="fa-solid fa-camera-retro text-cyan-400"></i>
-                <span>Studio Tools</span>
+                <i className="fa-solid fa-house text-cyan-400"></i>
+                <span>Home</span>
               </button>
-            )}
 
-            {siteSettings.enableAkshayaToolsCategory !== false && (
+              {siteSettings.enableStudioToolsCategory !== false && (
+                <button
+                  onClick={() => {
+                    setActiveStudioSubTool('landing');
+                    setActiveRoute('studio-tools');
+                  }}
+                  className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                    activeRoute === 'studio-tools' || activeRoute === 'tools'
+                      ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                      : 'hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <i className="fa-solid fa-camera-retro text-cyan-400"></i>
+                  <span>Studio Tools</span>
+                </button>
+              )}
+
+              {siteSettings.enableAkshayaToolsCategory !== false && (
+                <button
+                  onClick={() => {
+                    setActiveAkshayaSubTool('landing');
+                    setActiveRoute('akshaya-tools');
+                  }}
+                  className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                    activeRoute === 'akshaya-tools'
+                      ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                      : 'hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <i className="fa-solid fa-file-shield text-blue-400"></i>
+                  <span>Akshaya Tools</span>
+                </button>
+              )}
+
               <button
-                onClick={() => {
-                  setActiveAkshayaSubTool('landing');
-                  setActiveRoute('akshaya-tools');
-                }}
+                onClick={() => setActiveRoute('poster-maker')}
                 className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                  activeRoute === 'akshaya-tools'
+                  activeRoute === 'poster-maker'
+                    ? 'bg-gradient-to-r from-amber-500/25 via-rose-500/25 to-purple-500/25 text-amber-300 border border-amber-400/40'
+                    : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 border border-amber-500/25'
+                }`}
+              >
+                <i className="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
+                <span>Poster Maker (36+)</span>
+              </button>
+
+              {siteSettings.enableMediaLiveToolsCategory !== false && (
+                <button
+                  onClick={() => {
+                    setActiveMediaLiveSubTool('landing');
+                    setActiveRoute('media-live-tools');
+                  }}
+                  className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                    activeRoute === 'media-live-tools'
+                      ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
+                      : 'hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <i className="fa-solid fa-tower-broadcast text-purple-400"></i>
+                  <span>Media & Live Tools</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => openDashboardSection('overview')}
+                className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                  activeRoute === 'dashboard'
                     ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
                     : 'hover:bg-white/10 hover:text-white'
                 }`}
               >
-                <i className="fa-solid fa-file-shield text-blue-400"></i>
-                <span>Akshaya Tools</span>
+                <i className="fa-solid fa-user-check text-emerald-400"></i>
+                <span>My Account</span>
               </button>
-            )}
-
-            {siteSettings.enableMediaLiveToolsCategory !== false && (
-              <button
-                onClick={() => {
-                  setActiveMediaLiveSubTool('landing');
-                  setActiveRoute('media-live-tools');
-                }}
-                className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                  activeRoute === 'media-live-tools'
-                    ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
-                    : 'hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                <i className="fa-solid fa-tower-broadcast text-purple-400"></i>
-                <span>Media & Live Tools</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => openDashboardSection('overview')}
-              className={`px-3 py-2 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
-                activeRoute === 'dashboard'
-                  ? 'bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 border border-cyan-400/30'
-                  : 'hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <i className="fa-solid fa-user-check text-emerald-400"></i>
-              <span>My Account</span>
-            </button>
-          </nav>
+            </nav>
+          ) : (
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-300 text-xs font-extrabold">
+              <i className="fa-solid fa-lock text-amber-400"></i>
+              <span>Login Required · Every New Account Gets 5 Free Credits</span>
+            </div>
+          )}
 
           {/* Zone 3: Wallet Credit Badge + Client QR Code Button */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Built-in Credit & Wallet Badge */}
-            <button
-              type="button"
-              onClick={handleWalletBadgeSecretClick}
-              title="Click to Scan UPI QR & Add Credits"
-              className={`min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
-                availableCredits > 0
-                  ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/40 text-emerald-300'
-                  : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-400/50 text-rose-300 animate-pulse'
-              }`}
-            >
-              <i
-                className={`fa-solid ${
-                  availableCredits > 0 ? 'fa-wallet text-emerald-400' : 'fa-triangle-exclamation text-rose-400'
-                }`}
-              ></i>
-              <span className="hidden xl:inline">Credits:</span>
-              <span className="font-mono font-extrabold tabular-nums text-white">
-                {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
-              </span>
-            </button>
+            {userProfile && (
+              <>
+                {/* Built-in Credit & Wallet Badge */}
+                <button
+                  type="button"
+                  onClick={handleWalletBadgeSecretClick}
+                  title="Click to Scan UPI QR & Add Credits"
+                  className={`min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-2xl border font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap select-none cursor-pointer ${
+                    availableCredits > 0
+                      ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/40 text-emerald-300'
+                      : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-400/50 text-rose-300 animate-pulse'
+                  }`}
+                >
+                  <i
+                    className={`fa-solid ${
+                      availableCredits > 0 ? 'fa-wallet text-emerald-400' : 'fa-triangle-exclamation text-rose-400'
+                    }`}
+                  ></i>
+                  <span className="hidden xl:inline">Credits:</span>
+                  <span className="font-mono font-extrabold tabular-nums text-white">
+                    {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
+                  </span>
+                </button>
 
-            {/* Client UPI QR Code & Submit Payment Request Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowAdminRechargeModal(false);
-                setShowCreditExhaustedModal(true);
-              }}
-              className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-extrabold text-xs shadow-sm transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-              title="Scan UPI QR Code & Submit Payment Request to Add Credits"
-            >
-              <i className="fa-solid fa-qrcode text-amber-300"></i>
-              <span>+ Add Credits (QR)</span>
-            </button>
-
-            {!userProfile ? (
-              <button
-                onClick={() => {
-                  setAuthMode('login');
-                  setAuthError(null);
-                  setShowAuthModal(true);
-                }}
-                className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-white/10 hover:bg-white/20 border border-cyan-400/30 text-white font-bold text-xs transition flex items-center gap-1.5 whitespace-nowrap"
-              >
-                <i className="fa-solid fa-user text-cyan-400"></i>
-                <span className="hidden md:inline">Login / Sign Up</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => openDashboardSection('overview')}
-                className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-white/10 hover:bg-white/15 border border-cyan-400/30 text-white font-bold text-xs transition hidden sm:flex items-center gap-1.5"
-              >
-                <i className="fa-solid fa-circle-user text-cyan-400"></i>
-                <span className="max-w-[110px] truncate">{userProfile.displayName || 'Account'}</span>
-              </button>
+                {/* Client UPI QR Code & Submit Payment Request Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdminRechargeModal(false);
+                    setShowCreditExhaustedModal(true);
+                  }}
+                  className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-extrabold text-xs shadow-sm transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                  title="Scan UPI QR Code & Submit Payment Request to Add Credits"
+                >
+                  <i className="fa-solid fa-qrcode text-amber-300"></i>
+                  <span>+ Add Credits (QR)</span>
+                </button>
+              </>
             )}
 
-            {activeRoute === 'studio' && (
+            {!userProfile ? (
+              <span className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-extrabold text-xs flex items-center gap-1.5 whitespace-nowrap">
+                <i className="fa-solid fa-user-lock text-cyan-400"></i>
+                <span>Sign In Below</span>
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => openDashboardSection('overview')}
+                  className="min-h-[40px] px-3 py-1.5 rounded-2xl bg-white/10 hover:bg-white/15 border border-cyan-400/30 text-white font-bold text-xs transition hidden sm:flex items-center gap-1.5"
+                >
+                  <i className="fa-solid fa-circle-user text-cyan-400"></i>
+                  <span className="max-w-[110px] truncate">{userProfile.displayName || 'Account'}</span>
+                </button>
+                <button
+                  onClick={handleSignOut}
+                  title="Sign Out"
+                  className="min-h-[40px] px-2.5 py-1.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 font-bold text-xs transition flex items-center gap-1"
+                >
+                  <i className="fa-solid fa-right-from-bracket"></i>
+                  <span className="hidden md:inline">Logout</span>
+                </button>
+              </>
+            )}
+
+            {userProfile && activeRoute === 'studio' && (
               <button
                 onClick={() => setShowExportModal(true)}
                 className="min-h-[40px] px-3.5 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-md active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
@@ -2882,8 +2993,201 @@ export default function App() {
         <div className="h-[2px] w-full bg-gradient-to-r from-cyan-400 via-blue-500 via-purple-500 to-amber-400"></div>
       </header>
 
-      {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE */}
-      {activeRoute === 'studio' && (
+      {/* MANDATORY LOGIN GATE: NOTHING ON THE WEBSITE CAN BE ACCESSED WITHOUT LOGGING IN */}
+      {!userProfile && activeRoute !== 'admin' && activeRoute !== 'credit-admin' && (
+        <main className="flex-1 flex items-center justify-center px-4 py-8 sm:py-12 bg-[#070a14]">
+          <div className="max-w-md w-full bg-slate-900/95 text-white rounded-3xl border border-cyan-500/40 p-6 sm:p-8 shadow-2xl space-y-5">
+            <div className="flex flex-col items-center text-center space-y-2.5">
+              {renderBrandLogo(false)}
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold">
+                <i className="fa-solid fa-gift text-amber-300"></i>
+                <span>New Login Bonus: 5 Free Photo Credits</span>
+              </div>
+              <h1 className="text-lg sm:text-xl font-extrabold text-white">
+                {authMode === 'login'
+                  ? `Login Required to Use ${siteSettings.brandName}`
+                  : authMode === 'signup'
+                  ? 'Create Your Account (Get 5 Free Credits)'
+                  : 'Reset Your Account Password'}
+              </h1>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Please sign in or create an account to access Passport Photo Studio, AI Background Removal, Akshaya Tools, and Media & Live Tools.
+              </p>
+            </div>
+
+            {authMode !== 'reset' && (
+              <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 text-xs font-extrabold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className={`min-h-[42px] py-2 rounded-xl transition ${
+                    authMode === 'login'
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Login Account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthError(null);
+                  }}
+                  className={`min-h-[42px] py-2 rounded-xl transition ${
+                    authMode === 'signup'
+                      ? 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  New Account (+5 Free)
+                </button>
+              </div>
+            )}
+
+            {authError && (
+              <div className="p-3 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-bold flex items-center gap-2">
+                <i className="fa-solid fa-circle-exclamation text-rose-400 shrink-0"></i>
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
+              {authMode === 'signup' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Full Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={authFullName}
+                      onChange={(e) => setAuthFullName(e.target.value)}
+                      placeholder="Enter your full name"
+                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-950 border border-slate-700 text-white rounded-2xl focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      Mobile Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      placeholder="+91 98765 43210"
+                      className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-950 border border-slate-700 text-white rounded-2xl focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-950 border border-slate-700 text-white rounded-2xl focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+
+              {authMode !== 'reset' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-300">
+                      Password *
+                    </label>
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('reset');
+                          setAuthError(null);
+                        }}
+                        className="text-xs font-bold text-cyan-400 hover:underline"
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Minimum 6 characters"
+                    className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-950 border border-slate-700 text-white rounded-2xl focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isAuthSubmitting}
+                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-extrabold text-sm shadow-lg active:scale-[0.98] transition flex items-center justify-center gap-2"
+              >
+                <i className="fa-solid fa-right-to-bracket"></i>
+                <span>
+                  {isAuthSubmitting
+                    ? 'Please wait...'
+                    : authMode === 'login'
+                    ? 'Sign In & Unlock Studio'
+                    : authMode === 'signup'
+                    ? 'Create Account & Claim 5 Free Credits'
+                    : 'Send Password Reset Link'}
+                </span>
+              </button>
+
+              {authMode === 'reset' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className="w-full min-h-[40px] text-xs font-bold text-slate-400 hover:text-white text-center"
+                >
+                  ← Back to Login
+                </button>
+              )}
+            </form>
+
+            {authMode !== 'reset' && (
+              <>
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-slate-800"></div>
+                  <span className="flex-shrink mx-3 text-[11px] font-semibold text-slate-500 uppercase">
+                    Or Continue With
+                  </span>
+                  <div className="flex-grow border-t border-slate-800"></div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-950 font-extrabold text-sm active:scale-[0.98] transition flex items-center justify-center gap-2.5 shadow-sm"
+                >
+                  <i className="fa-brands fa-google text-rose-500 text-base"></i>
+                  <span>Sign In with Google (5 Free Credits)</span>
+                </button>
+              </>
+            )}
+          </div>
+        </main>
+      )}
+
+      {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE (REQUIRES LOGIN) */}
+      {userProfile && activeRoute === 'studio' && (
         <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-3.5 sm:py-6 space-y-4">
           {/* 3 Main Platform Categories Launcher Strip (Studio Tools, Akshaya Tools, Media & Live Tools) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2994,7 +3298,7 @@ export default function App() {
                     </div>
                     <div>
                       <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">
-                        Category 3 · 15 Tools
+                        Category 3 · 16 Tools
                       </span>
                       <h2 className="text-sm font-extrabold text-white">3. Media & Live Tools</h2>
                     </div>
@@ -3010,12 +3314,18 @@ export default function App() {
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
+                  <button
+                    onClick={() => setActiveRoute('poster-maker')}
+                    className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500/30 to-rose-500/30 hover:from-amber-500/40 hover:to-rose-500/40 border border-amber-400/40 text-[11px] font-extrabold text-amber-200 transition flex items-center gap-1"
+                  >
+                    <i className="fa-solid fa-wand-magic-sparkles text-amber-300"></i>
+                    <span>36+ Poster Template Maker</span>
+                  </button>
                   {[
                     { id: 'youtube-thumbnail', label: 'Upload & Redesign Thumbnail' },
                     { id: 'lower-third', label: 'Lower Third' },
                     { id: 'wedding-live-poster', label: 'Wedding Live' },
                     { id: 'obs-vmix-export', label: 'OBS / vMix' },
-                    { id: 'video-converter', label: 'Video Converter' },
                   ].map((item) => (
                     <button
                       key={item.id}
@@ -3031,6 +3341,38 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Featured 36+ Wedding, Anniversary, Birthday & Memorial Poster Template Maker Banner */}
+          <div className="bg-gradient-to-r from-[#070a14] via-purple-950 to-slate-900 text-white rounded-3xl border border-amber-400/40 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-md shrink-0">
+                <i className="fa-solid fa-wand-magic-sparkles"></i>
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300">
+                    New · 36 Editable Templates
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Wedding · Anniversary · Engagement · Birthday · Memorial · Festival
+                  </span>
+                </div>
+                <h2 className="text-sm sm:text-base font-extrabold text-white mt-0.5">
+                  Premium Wedding, Anniversary & Memorial Poster Template Maker
+                </h2>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Upload single or multiple photos into predefined arch, circle, oval & royal frames. Drag, zoom, crop & customize all text fields with HD PNG/JPG download.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveRoute('poster-maker')}
+              className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-md active:scale-95 transition flex items-center gap-2 whitespace-nowrap shrink-0 w-full sm:w-auto justify-center"
+            >
+              <i className="fa-solid fa-palette"></i>
+              <span>Open Poster Template Maker →</span>
+            </button>
           </div>
 
           {/* Quick Mobile Upload & Sample Strip (Preserves 100% Original Resolution on Upload) */}
@@ -4443,8 +4785,18 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 1B: CATEGORY 1 — STUDIO TOOLS HUB */}
-      {activeRoute === 'studio-tools' && (
+      {/* ROUTE 1A: PREMIUM 36+ WEDDING, ANNIVERSARY & MEMORIAL POSTER TEMPLATE MAKER */}
+      {userProfile && activeRoute === 'poster-maker' && (
+        <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6">
+          <PosterTemplateMaker
+            onSendToStudio={handleSendImageToStudio}
+            showToast={showToast}
+          />
+        </main>
+      )}
+
+      {/* ROUTE 1B: CATEGORY 1 — STUDIO TOOLS HUB (REQUIRES LOGIN) */}
+      {userProfile && activeRoute === 'studio-tools' && (
         <main className="flex-1">
           <StudioToolsHub
             activeSubTool={activeStudioSubTool}
@@ -4461,8 +4813,8 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 1C: CATEGORY 2 — AKSHAYA TOOLS HUB */}
-      {activeRoute === 'akshaya-tools' && (
+      {/* ROUTE 1C: CATEGORY 2 — AKSHAYA TOOLS HUB (REQUIRES LOGIN) */}
+      {userProfile && activeRoute === 'akshaya-tools' && (
         <main className="flex-1">
           <AkshayaToolsHub
             activeSubTool={activeAkshayaSubTool}
@@ -4473,8 +4825,8 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 1D: CATEGORY 3 — MEDIA & LIVE TOOLS HUB */}
-      {activeRoute === 'media-live-tools' && (
+      {/* ROUTE 1D: CATEGORY 3 — MEDIA & LIVE TOOLS HUB (REQUIRES LOGIN) */}
+      {userProfile && activeRoute === 'media-live-tools' && (
         <main className="flex-1">
           <MediaLiveToolsHub
             activeSubTool={activeMediaLiveSubTool}
@@ -4485,8 +4837,8 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 2: DEDICATED TOOLS HUB (BG REMOVER, CLARITY ENHANCER, QR GENERATOR, LINK SHORTENER) */}
-      {activeRoute === 'tools' && (
+      {/* ROUTE 2: DEDICATED TOOLS HUB (REQUIRES LOGIN) */}
+      {userProfile && activeRoute === 'tools' && (
         <main className="flex-1">
           <ToolsHub
             activeTool={activeToolTab}
@@ -4611,7 +4963,8 @@ export default function App() {
         </div>
       </footer>
 
-      {/* FIXED MOBILE BOTTOM TAB BAR (Home, Studio Tools, Akshaya Tools, Media & Live, My Account, Add Credits QR) */}
+      {/* FIXED MOBILE BOTTOM TAB BAR (Only shown when logged in) */}
+      {userProfile && (
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070a14]/95 backdrop-blur-md border-t border-cyan-500/30 grid grid-cols-6 items-center h-16 px-1 select-none text-slate-400">
         <button
           onClick={() => setActiveRoute('studio')}
@@ -4672,7 +5025,7 @@ export default function App() {
         >
           <i className="fa-solid fa-user-circle text-sm"></i>
           <span className="text-[9px] tracking-tight mt-1">
-            {userProfile ? 'Account' : 'Login'}
+            Account
           </span>
         </button>
 
@@ -4687,6 +5040,7 @@ export default function App() {
           <span className="text-[9px] tracking-tight mt-1">Add Credit</span>
         </button>
       </nav>
+      )}
 
       {/* HD Export Modal */}
       {showExportModal && (

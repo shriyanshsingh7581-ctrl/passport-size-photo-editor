@@ -1486,7 +1486,7 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                               u.email?.toLowerCase().includes(userSearch.toLowerCase())
                           )
                           .map((u) => {
-                            const userCreds = typeof u.credits === 'number' ? u.credits : 25;
+                            const userCreds = typeof u.credits === 'number' ? u.credits : 5;
                             return (
                               <div
                                 key={u.uid}
