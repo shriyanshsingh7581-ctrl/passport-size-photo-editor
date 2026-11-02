@@ -56,6 +56,8 @@ import {
   applyHairMattingAndSpillRemoval,
   applyManualMaskBrushStroke,
   applySpotHealingBrushOnCanvas,
+  DEFAULT_REMOVE_BG_API_KEY,
+  triggerDirectPhotoPrint,
 } from './rmbgEngine';
 import { InteractivePrintSheetEditor } from './components/InteractivePrintSheetEditor';
 import {
@@ -309,10 +311,16 @@ export default function App() {
     width: 0,
     height: 0,
   });
-  const [removeBgApiKey, setRemoveBgApiKey] = useState('');
-  const [aiStatusText, setAiStatusText] = useState('Ready');
+  const [removeBgApiKey, setRemoveBgApiKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('malnadu_removebg_api_key') || DEFAULT_REMOVE_BG_API_KEY;
+    } catch {
+      return DEFAULT_REMOVE_BG_API_KEY;
+    }
+  });
+  const [aiStatusText, setAiStatusText] = useState('remove.bg API Ready');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiLoadingMsg, setAiLoadingMsg] = useState('Processing AI Cutout...');
+  const [aiLoadingMsg, setAiLoadingMsg] = useState('Removing Background via remove.bg API...');
   const [aiProgress, setAiProgress] = useState(20);
 
   // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Strong Master Password)
@@ -1452,7 +1460,7 @@ export default function App() {
     }
 
     setAiLoading(true);
-    setAiLoadingMsg('Processing AI Cutout...');
+    setAiLoadingMsg('Removing Background via remove.bg HD API...');
     setAiProgress(20);
 
     try {
@@ -1460,14 +1468,15 @@ export default function App() {
         targetImg,
         (pct, msg) => {
           setAiProgress(pct);
-          setAiLoadingMsg(msg || 'Processing AI Cutout...');
+          setAiLoadingMsg(msg || 'Removing Background via remove.bg API...');
         },
         {
           edgeShift: -Math.round((bgTolerance / 50) * 30),
           featherRadius: 1.5,
           blueSpillRemoval: spillRemovalStrength,
           hairDetailStrength: hairMattingStrength,
-        }
+        },
+        removeBgApiKey || DEFAULT_REMOVE_BG_API_KEY
       );
 
       if (highResResult) {
@@ -1490,10 +1499,10 @@ export default function App() {
         setCutoutEngine('rmbg');
         applyPixelColorGrading(brightness, contrast, saturate);
         setAiLoading(false);
-        setAiStatusText('AI Cutout Active');
+        setAiStatusText('remove.bg Cutout Active');
         renderAll();
         showToast(
-          `AI Background Removed! (-1 Credit · ${deduction.remaining} Photos Remaining)`
+          `Background Removed via remove.bg! (-1 Credit · ${deduction.remaining} Photos Remaining)`
         );
         return;
       }
@@ -1523,64 +1532,17 @@ export default function App() {
   };
 
   const runRemoveBgCloudApi = async () => {
-    if (!removeBgApiKey.trim() || !activeImageRef.current) {
-      showToast('Please enter a valid Remove.bg API Key');
+    const keyToUse = (removeBgApiKey || DEFAULT_REMOVE_BG_API_KEY).trim();
+    if (!keyToUse || !activeImageRef.current) {
+      showToast('Please enter a valid remove.bg API Key');
       return;
     }
     try {
-      setAiLoading(true);
-      setAiLoadingMsg('Connecting to Remove.bg Cloud...');
-      setAiProgress(60);
-
-      const c = document.createElement('canvas');
-      c.width = activeImageRef.current.width;
-      c.height = activeImageRef.current.height;
-      c.getContext('2d')!.drawImage(activeImageRef.current, 0, 0);
-      const blob = await new Promise<Blob | null>((res) =>
-        c.toBlob(res, 'image/jpeg', 0.92)
-      );
-      if (!blob) throw new Error('Blob conversion failed');
-
-      const formData = new FormData();
-      formData.append('image_file', blob, 'photo.jpg');
-      formData.append('size', 'auto');
-
-      const res = await fetch('https://api.remove.bg/v1.0/removebg', {
-        method: 'POST',
-        headers: { 'X-Api-Key': removeBgApiKey.trim() },
-        body: formData,
-      });
-      if (!res.ok) throw new Error('API Error');
-      const outBlob = await res.blob();
-      const outUrl = URL.createObjectURL(outBlob);
-      const cutImg = new Image();
-      cutImg.onload = () => {
-        try {
-          const outC = document.createElement('canvas');
-          outC.width = cutImg.width;
-          outC.height = cutImg.height;
-          outC.getContext('2d')!.drawImage(cutImg, 0, 0);
-          rawCutoutCanvasRef.current = outC;
-          retouchLayerCanvasRef.current = outC;
-          baseSubjectCanvasRef.current = outC;
-          applyPixelColorGrading(brightness, contrast, saturate);
-          setAiLoading(false);
-          setAiStatusText('Cloud Cutout');
-          renderAll();
-          showToast('Remove.bg Cloud Cutout Complete!');
-        } finally {
-          URL.revokeObjectURL(outUrl);
-        }
-      };
-      cutImg.onerror = () => {
-        URL.revokeObjectURL(outUrl);
-        setAiLoading(false);
-      };
-      cutImg.src = outUrl;
+      localStorage.setItem('malnadu_removebg_api_key', keyToUse);
     } catch {
-      setAiLoading(false);
-      showToast('Remove.bg API key invalid or quota exceeded.');
+      // ignore
     }
+    await triggerManualAiCutout(activeImageRef.current);
   };
 
   const handleSetCutoutEngine = (mode: 'rmbg' | 'removebg_api' | 'original') => {
@@ -1710,6 +1672,24 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     setShowExportModal(false);
     showToast('Downloaded 6×4" Print Sheet!');
+  };
+
+  const printSinglePhotoDirect = () => {
+    const exportCanvas = document.createElement('canvas');
+    renderPassportToCanvas(exportCanvas, false);
+    const dataUrl = exportCanvas.toDataURL('image/jpeg', 0.96);
+    triggerDirectPhotoPrint(dataUrl, 'MALNADU MEDIA — Passport / Post Size Photo Print', false);
+    setShowExportModal(false);
+    showToast('Opening Printer Dialog for Single Photo...');
+  };
+
+  const printSheetDirect = () => {
+    const tempSheet = document.createElement('canvas');
+    renderPrintableSheet(tempSheet);
+    const dataUrl = tempSheet.toDataURL('image/jpeg', 0.96);
+    triggerDirectPhotoPrint(dataUrl, 'MALNADU MEDIA — 6x4 Photo Print Sheet', true);
+    setShowExportModal(false);
+    showToast('Opening Printer Dialog for 6×4" Photo Sheet...');
   };
 
   const handleSendImageToStudio = (dataUrl: string) => {
@@ -3456,14 +3436,17 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {/* 1-Click Solid Background Replacement Buttons (#FFFFFF, #4A90E2, #E5E7EB, Custom Picker) */}
+              {/* 1-Click Solid Background Replacement Buttons (#FFFFFF, #D0E7FF, #4A90E2, #1E40AF, #DC2626, #E5E7EB, Custom Picker) */}
               <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200 px-2.5 py-1.5 rounded-2xl">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mr-0.5 hidden sm:inline">
-                  1-Click BG:
+                  Solid BG:
                 </span>
                 {[
                   { name: 'Pure White', hex: '#FFFFFF', border: '#CBD5E1' },
-                  { name: 'Studio Light Blue', hex: '#4A90E2', border: '#2563EB' },
+                  { name: 'Passport Blue', hex: '#D0E7FF', border: '#60A5FA' },
+                  { name: 'Sky Blue', hex: '#4A90E2', border: '#2563EB' },
+                  { name: 'Royal Blue', hex: '#1E40AF', border: '#1E3A8A' },
+                  { name: 'Official Red', hex: '#DC2626', border: '#B91C1C' },
                   { name: 'Light Gray', hex: '#E5E7EB', border: '#9CA3AF' },
                 ].map((preset) => {
                   const isSelected = bgColor.toLowerCase() === preset.hex.toLowerCase();
@@ -3474,7 +3457,7 @@ export default function App() {
                       onClick={() => {
                         setBgColor(preset.hex);
                         setBgName(preset.name);
-                        showToast(`Applied ${preset.name} (${preset.hex}) Background`);
+                        showToast(`Applied ${preset.name} (${preset.hex}) Solid Background`);
                       }}
                       title={`${preset.name} (${preset.hex})`}
                       className={`h-7 px-2 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition active:scale-95 ${
@@ -3487,7 +3470,7 @@ export default function App() {
                         className="w-3.5 h-3.5 rounded-full shrink-0 border"
                         style={{ backgroundColor: preset.hex, borderColor: preset.border }}
                       />
-                      <span className="hidden xl:inline">{preset.name}</span>
+                      <span className="hidden 2xl:inline">{preset.name}</span>
                     </button>
                   );
                 })}
@@ -3500,15 +3483,15 @@ export default function App() {
                     value={bgColor === 'transparent' ? '#FFFFFF' : bgColor}
                     onChange={(e) => {
                       setBgColor(e.target.value);
-                      setBgName('Custom Color');
+                      setBgName('Custom Solid Color');
                     }}
                     className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
                   />
-                  <span className="hidden sm:inline">Custom</span>
+                  <span className="hidden sm:inline">Color</span>
                 </label>
               </div>
 
-              {/* Client-Side AI Background Removal Button (Consumes 1 Wallet Credit) */}
+              {/* remove.bg AI Background Removal Button (Consumes 1 Wallet Credit) */}
               <button
                 onClick={() => {
                   if (availableCredits <= 0) {
@@ -3533,10 +3516,10 @@ export default function App() {
                 ></i>
                 <span>
                   {aiLoading
-                    ? 'Processing AI Cutout...'
+                    ? 'Removing BG (remove.bg)...'
                     : availableCredits <= 0
-                    ? 'AI Remove Background (0 Credits)'
-                    : 'AI Remove Background (-1 Credit)'}
+                    ? 'Remove Background (0 Credits)'
+                    : 'Remove Background (remove.bg AI)'}
                 </span>
               </button>
 
@@ -3552,19 +3535,12 @@ export default function App() {
               )}
 
               <button
-                onClick={() => {
-                  setPreviewMode('single');
-                  setControlTab('retouch');
-                  showToast('Spot Healing Brush active! Click any pimple or blemish on the photo.');
-                }}
-                className={`min-h-[44px] px-3.5 py-2 rounded-2xl border font-bold text-xs active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap ${
-                  controlTab === 'retouch'
-                    ? 'bg-[#070a14] text-emerald-300 border-emerald-400'
-                    : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
-                }`}
+                onClick={printSheetDirect}
+                className="min-h-[44px] px-3.5 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap"
+                title="Direct Print Photo Sheet Now"
               >
-                <i className="fa-solid fa-paintbrush"></i>
-                <span>Spot Heal</span>
+                <i className="fa-solid fa-print"></i>
+                <span>Print Now</span>
               </button>
             </div>
           </div>
@@ -3931,29 +3907,45 @@ export default function App() {
                 )}
               </div>
 
-              {/* Primary Export & Cloud Save Bar inside Canvas Card */}
-              <div className="pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                <button
-                  onClick={() => downloadSinglePhoto('jpeg')}
-                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-white font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-image text-cyan-400"></i>
-                  <span>Single HD Photo</span>
-                </button>
-                <button
-                  onClick={downloadPrintSheet}
-                  className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-print"></i>
-                  <span>Print {gridInfo.total} Photos (6×4")</span>
-                </button>
+              {/* Primary Direct Print, Download & Cloud Save Bar inside Canvas Card */}
+              <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    onClick={printSinglePhotoDirect}
+                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-print"></i>
+                    <span>Print Single Photo</span>
+                  </button>
+                  <button
+                    onClick={printSheetDirect}
+                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-print"></i>
+                    <span>Print {gridInfo.total} Photos (6×4")</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSinglePhoto('jpeg')}
+                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-white font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-download text-cyan-400"></i>
+                    <span>Download Single HD</span>
+                  </button>
+                  <button
+                    onClick={downloadPrintSheet}
+                    className="min-h-[46px] py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-400/30 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-file-arrow-down text-amber-400"></i>
+                    <span>Download 6×4" Sheet</span>
+                  </button>
+                </div>
                 <button
                   onClick={handleSavePhotoToCloud}
                   disabled={isSavingCloudPhoto}
-                  className="col-span-2 sm:col-span-1 min-h-[46px] py-2.5 px-3 rounded-2xl border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  className="w-full min-h-[42px] py-2 px-3 rounded-2xl border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-bold text-xs active:scale-[0.98] transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-cloud-arrow-up text-purple-600"></i>
-                  <span>{isSavingCloudPhoto ? 'Saving...' : 'Save to Account'}</span>
+                  <span>{isSavingCloudPhoto ? 'Saving...' : 'Save Photo to My Account'}</span>
                 </button>
               </div>
             </div>
@@ -4011,18 +4003,101 @@ export default function App() {
                 </button>
               </div>
 
-              {/* TAB 1: COUNTRY, PHOTO PRINT COUNT & CUSTOM SIZE */}
+              {/* TAB 1: COUNTRY, POST SIZE, BACKGROUND REMOVE, SOLID COLOR & PRINT */}
               {controlTab === 'size' && (
                 <div className="p-4 sm:p-5 space-y-4">
+                  {/* Direct All-In-One Remove Background (remove.bg) + Solid Color + Print Box right inside Size Tab */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-cyan-50 via-blue-50/70 to-purple-50 border border-cyan-200 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-700">
+                          remove.bg HD API Integrated
+                        </span>
+                        <h3 className="text-xs font-extrabold text-slate-900">
+                          1-Click Background Remove & Solid Color Fill
+                        </h3>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-lg bg-[#070a14] text-emerald-300 text-[10px] font-mono font-bold">
+                        {aiStatusText}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => triggerManualAiCutout()}
+                        disabled={aiLoading}
+                        className="min-h-[42px] px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 active:scale-95 transition"
+                      >
+                        <i className="fa-solid fa-wand-magic-sparkles"></i>
+                        <span>{aiLoading ? 'Removing BG...' : 'Remove Background'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={printSheetDirect}
+                        className="min-h-[42px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 active:scale-95 transition"
+                      >
+                        <i className="fa-solid fa-print"></i>
+                        <span>Print Photo / Sheet</span>
+                      </button>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1.5">
+                        <span>Choose Solid Color Background:</span>
+                        <span className="font-mono text-cyan-800">{bgName}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {BG_SWATCHES.filter((s) => s.hex !== 'transparent').map((swatch) => {
+                          const isSelected = bgColor.toLowerCase() === swatch.hex.toLowerCase();
+                          return (
+                            <button
+                              key={swatch.name}
+                              type="button"
+                              onClick={() => {
+                                setBgColor(swatch.hex);
+                                setBgName(swatch.name);
+                              }}
+                              title={`${swatch.name} (${swatch.hex})`}
+                              className={`h-8 px-2.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition active:scale-95 ${
+                                isSelected
+                                  ? 'bg-[#070a14] text-white border-cyan-500 ring-2 ring-cyan-400/30'
+                                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border shrink-0"
+                                style={{ backgroundColor: swatch.hex, borderColor: swatch.border }}
+                              />
+                              <span>{swatch.name}</span>
+                            </button>
+                          );
+                        })}
+                        <label className="h-8 px-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-[11px] font-bold text-slate-700 flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="color"
+                            value={bgColor === 'transparent' ? '#FFFFFF' : bgColor}
+                            onChange={(e) => {
+                              setBgColor(e.target.value);
+                              setBgName('Custom Solid Color');
+                            }}
+                            className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
+                          />
+                          <span>Custom Color</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Individual Photo Print Count Box (2, 3, 4, 5, 6, 7, 8, 9, 10, 12 Photos) */}
                   <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-2.5 border border-cyan-500/30">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-xs font-extrabold text-cyan-300">
-                          How Many Photos to Print? (फोटो संख्या)
+                          How Many Photos to Print?
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          Choose 2, 3, 4, 5, 6, 7, 8, 9 or 12 passport photos on sheet
+                          Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 or 12 photos on sheet
                         </div>
                       </div>
                       <span className="px-2.5 py-1 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-mono text-xs font-extrabold">
@@ -4058,7 +4133,7 @@ export default function App() {
                       type="text"
                       value={countrySearch}
                       onChange={(e) => setCountrySearch(e.target.value)}
-                      placeholder="Search India, UK, US, UAE, PAN Card..."
+                      placeholder="Search Passport Size, Post Size (4×6), Stamp, PAN, US, UK..."
                       className="w-full min-h-[46px] pl-9 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:bg-white transition"
                     />
                   </div>
@@ -4101,7 +4176,7 @@ export default function App() {
                   <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-800">
-                        Custom Size (കസ്റ്റം സൈസ്)
+                        Custom Passport / Post Size
                       </span>
                       <select
                         value={customUnit}

@@ -10,6 +10,7 @@ import {
   applyHairMattingAndSpillRemoval,
   HairMattingOptions,
   DEFAULT_HAIR_MATTING_OPTIONS,
+  triggerDirectPhotoPrint,
 } from '../rmbgEngine';
 import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
 
@@ -1011,24 +1012,41 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </div>
             </div>
 
-            {/* Download & Send to Studio Buttons */}
+            {/* Direct Print, Download & Send to Studio Buttons */}
             <div className="space-y-2.5 pt-1 border-t border-slate-100">
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!bgCutoutDataUrl) return;
+                    triggerDirectPhotoPrint(
+                      bgCutoutDataUrl,
+                      'MALNADU MEDIA — Background Removed Photo Print',
+                      false
+                    );
+                    showToast('Opening Printer Dialog for Photo...');
+                  }}
+                  disabled={!bgCutoutDataUrl || bgProcessing}
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs shadow-sm transition flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-print"></i>
+                  <span>Direct Print Photo</span>
+                </button>
                 <button
                   onClick={() => downloadCutoutImage('png')}
                   disabled={!bgCutoutDataUrl || bgProcessing}
-                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-1.5"
                 >
                   <i className="fa-solid fa-download"></i>
-                  <span>Download Full-Res PNG</span>
+                  <span>Download PNG</span>
                 </button>
                 <button
                   onClick={() => downloadCutoutImage('jpg')}
                   disabled={!bgCutoutDataUrl || bgProcessing}
-                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
+                  className="min-h-[46px] px-3 py-2.5 rounded-2xl bg-[#070a14] hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
                 >
                   <i className="fa-solid fa-file-image text-cyan-400"></i>
-                  <span>Download Full-Res JPG</span>
+                  <span>Download JPG</span>
                 </button>
               </div>
 
@@ -1044,7 +1062,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-300 text-cyan-900 font-extrabold text-xs transition flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-id-card text-cyan-600"></i>
-                  <span>Use This Photo in Passport Photo Studio →</span>
+                  <span>Use This Photo in Passport / Post Size Print Studio →</span>
                 </button>
               )}
             </div>

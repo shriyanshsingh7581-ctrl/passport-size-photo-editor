@@ -4,8 +4,15 @@ import {
   ShortLinkRecord,
   ToolCatalogItem,
   DEFAULT_TOOL_CATALOG,
+  BG_SWATCHES,
   generateSamplePortraitDataUrl,
 } from '../constants';
+import {
+  runHighResRmbgCutout,
+  DEFAULT_REMOVE_BG_API_KEY,
+  triggerDirectPhotoPrint,
+} from '../rmbgEngine';
+import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
 import { ToolsHub, ActiveToolTab } from './ToolsHub';
 import { InteractivePrintSheetEditor } from './InteractivePrintSheetEditor';
 
@@ -42,11 +49,13 @@ interface StudioToolsHubProps {
 }
 
 const STUDIO_RESIZE_PRESETS = [
-  { id: 'in-pass', label: 'India Passport (35×45 mm)', unit: 'mm' as const, w: 35, h: 45, dpi: 300 },
+  { id: 'in-pass', label: 'India Passport Size (35×45 mm)', unit: 'mm' as const, w: 35, h: 45, dpi: 300 },
+  { id: 'post-4x6', label: 'Post Size / Postcard Photo (4×6 inch)', unit: 'inch' as const, w: 4, h: 6, dpi: 300 },
+  { id: 'post-35x5', label: 'Post Size / Half Postcard (3.5×5 inch)', unit: 'inch' as const, w: 3.5, h: 5, dpi: 300 },
   { id: 'us-pass', label: 'US / OCI Passport (2×2 inch)', unit: 'inch' as const, w: 2, h: 2, dpi: 300 },
   { id: 'pan-psc', label: 'PAN / Kerala PSC (25×35 mm)', unit: 'mm' as const, w: 25, h: 35, dpi: 300 },
+  { id: 'stamp-20x25', label: 'India Stamp Size (20×25 mm)', unit: 'mm' as const, w: 20, h: 25, dpi: 300 },
   { id: 'psc-px', label: 'PSC Portal (150×200 px)', unit: 'px' as const, w: 150, h: 200, dpi: 300 },
-  { id: '4x6-print', label: '4×6" Studio Print', unit: 'inch' as const, w: 4, h: 6, dpi: 300 },
   { id: '5x7-print', label: '5×7" Portrait Frame', unit: 'inch' as const, w: 5, h: 7, dpi: 300 },
   { id: 'hd-1080', label: 'Full HD (1920×1080 px)', unit: 'px' as const, w: 1920, h: 1080, dpi: 300 },
   { id: 'sq-1080', label: 'Square Studio (1080×1080 px)', unit: 'px' as const, w: 1080, h: 1080, dpi: 300 },
@@ -104,7 +113,10 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   const [resizeDpi, setResizeDpi] = useState<number>(300);
   const [maintainAspect, setMaintainAspect] = useState<boolean>(false);
   const [fitMode, setFitMode] = useState<'cover' | 'contain' | 'stretch'>('cover');
-  const [padColor] = useState<string>('#FFFFFF');
+  const [padColor, setPadColor] = useState<string>('#FFFFFF');
+  const [resizeBgRemoved, setResizeBgRemoved] = useState<boolean>(false);
+  const [resizeBgLoading, setResizeBgLoading] = useState<boolean>(false);
+  const [resizeBgStatus, setResizeBgStatus] = useState<string>('remove.bg API Ready');
   const [outputFormat, setOutputFormat] = useState<'image/jpeg' | 'image/png' | 'image/webp'>('image/jpeg');
   const [outputQuality, setOutputQuality] = useState<number>(92);
   const [resizeTargetMaxKb, setResizeTargetMaxKb] = useState<number>(0); // 0 = no limit
@@ -116,6 +128,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
 
   const resizeFileInputRef = useRef<HTMLInputElement | null>(null);
   const resizeImgRef = useRef<HTMLImageElement | null>(null);
+  const resizeCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const convertToPixels = useCallback(
     (val: number, unit: 'px' | 'mm' | 'cm' | 'inch', dpiVal: number) => {
@@ -128,8 +141,11 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   );
 
   const runPhotoResizeRender = useCallback(() => {
-    const img = resizeImgRef.current;
-    if (!img) return;
+    const activeSource: HTMLImageElement | HTMLCanvasElement | null =
+      resizeBgRemoved && resizeCutoutCanvasRef.current
+        ? resizeCutoutCanvasRef.current
+        : resizeImgRef.current;
+    if (!activeSource) return;
 
     const rawW = parseFloat(resizeWidthInput);
     const rawH = parseFloat(resizeHeightInput);
@@ -152,23 +168,29 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    if (outputFormat === 'image/jpeg' || fitMode === 'contain') {
+    if (padColor !== 'transparent') {
       ctx.fillStyle = padColor;
+      ctx.fillRect(0, 0, targetW, targetH);
+    } else if (outputFormat === 'image/jpeg') {
+      ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, targetW, targetH);
     }
 
+    const srcW = activeSource.width;
+    const srcH = activeSource.height;
+
     if (fitMode === 'stretch') {
-      ctx.drawImage(img, 0, 0, targetW, targetH);
+      ctx.drawImage(activeSource, 0, 0, targetW, targetH);
     } else if (fitMode === 'contain') {
-      const scale = Math.min(targetW / img.width, targetH / img.height);
-      const dW = img.width * scale;
-      const dH = img.height * scale;
-      ctx.drawImage(img, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
+      const scale = Math.min(targetW / srcW, targetH / srcH);
+      const dW = srcW * scale;
+      const dH = srcH * scale;
+      ctx.drawImage(activeSource, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
     } else {
-      const scale = Math.max(targetW / img.width, targetH / img.height);
-      const dW = img.width * scale;
-      const dH = img.height * scale;
-      ctx.drawImage(img, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
+      const scale = Math.max(targetW / srcW, targetH / srcH);
+      const dW = srcW * scale;
+      const dH = srcH * scale;
+      ctx.drawImage(activeSource, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
     }
 
     let q = outputFormat === 'image/png' ? undefined : outputQuality / 100;
@@ -197,6 +219,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     setResizedDataUrl(outUrl);
     setResizedBytes(bytesCount);
   }, [
+    resizeBgRemoved,
     resizeWidthInput,
     resizeHeightInput,
     resizeUnit,
@@ -209,11 +232,52 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     convertToPixels,
   ]);
 
+  const handleRemoveBgInResize = async () => {
+    const img = resizeImgRef.current;
+    if (!img) return;
+    const credits = loadWalletCredits();
+    if (credits <= 0) {
+      showToast('Credit Quota Exhausted (0 Credits)! Please recharge your wallet via UPI QR.');
+      return;
+    }
+    setResizeBgLoading(true);
+    setResizeBgStatus('Removing BG via remove.bg API...');
+    try {
+      const res = await runHighResRmbgCutout(
+        img,
+        (_pct, msg) => setResizeBgStatus(msg || 'Removing BG...'),
+        undefined,
+        DEFAULT_REMOVE_BG_API_KEY
+      );
+      if (res && res.cutoutCanvas) {
+        resizeCutoutCanvasRef.current = res.cutoutCanvas;
+        setResizeBgRemoved(true);
+        const ded = deductWalletCredit();
+        setResizeBgStatus(`BG Removed (${ded.remaining} Credits Left)`);
+        showToast(`Background Removed via remove.bg! Pick any Solid Color Background below.`);
+      }
+    } catch (err) {
+      console.error('Resize BG Remove error:', err);
+      setResizeBgStatus('BG Remove Failed');
+    } finally {
+      setResizeBgLoading(false);
+    }
+  };
+
+  const handleRestoreOrigBgInResize = () => {
+    setResizeBgRemoved(false);
+    setResizeBgStatus('Original BG Active');
+    showToast('Restored Original Photo Background');
+  };
+
   const loadResizeImageFromUrl = useCallback((dataUrl: string, byteSize = 0) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       resizeImgRef.current = img;
+      resizeCutoutCanvasRef.current = null;
+      setResizeBgRemoved(false);
+      setResizeBgStatus('remove.bg API Ready');
       setResizeSrc(dataUrl);
       setResizeOrigW(img.naturalWidth || img.width);
       setResizeOrigH(img.naturalHeight || img.height);
@@ -231,6 +295,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     runPhotoResizeRender();
   }, [
     resizeSrc,
+    resizeBgRemoved,
     resizeWidthInput,
     resizeHeightInput,
     resizeUnit,
@@ -576,7 +641,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Quick Studio & Passport Presets
+                Quick Post Size & Passport Presets
               </label>
               <select
                 onChange={(e) => {
@@ -596,6 +661,97 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Direct remove.bg Background Removal & Solid Color Fill inside Post Size / Resize Tool */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-cyan-50 via-blue-50/70 to-purple-50 border border-cyan-200 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-700">
+                    remove.bg HD API Integrated
+                  </span>
+                  <h3 className="text-xs font-extrabold text-slate-900">
+                    Remove Background & Set Solid Color
+                  </h3>
+                </div>
+                <span className="px-2 py-0.5 rounded-lg bg-[#070a14] text-emerald-300 text-[10px] font-mono font-bold">
+                  {resizeBgStatus}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRemoveBgInResize}
+                  disabled={resizeBgLoading}
+                  className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 active:scale-95 transition"
+                >
+                  <i className="fa-solid fa-wand-magic-sparkles"></i>
+                  <span>
+                    {resizeBgLoading
+                      ? 'Removing BG (remove.bg)...'
+                      : 'Remove Background (remove.bg)'}
+                  </span>
+                </button>
+                {resizeBgRemoved && (
+                  <button
+                    type="button"
+                    onClick={handleRestoreOrigBgInResize}
+                    className="min-h-[42px] px-3 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs transition"
+                  >
+                    Original BG
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-1.5">
+                  <span>Solid Background Color:</span>
+                  <span className="font-mono text-cyan-800">{padColor.toUpperCase()}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {BG_SWATCHES.map((swatch) => {
+                    const isSelected = padColor.toLowerCase() === swatch.hex.toLowerCase();
+                    return (
+                      <button
+                        key={swatch.name}
+                        type="button"
+                        onClick={() => {
+                          setPadColor(swatch.hex);
+                          if (swatch.hex === 'transparent') {
+                            setOutputFormat('image/png');
+                          }
+                        }}
+                        className={`h-8 px-2.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition active:scale-95 ${
+                          isSelected
+                            ? 'bg-[#070a14] text-white border-cyan-500 ring-2 ring-cyan-400/30'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <span
+                          className={`w-3.5 h-3.5 rounded-full border shrink-0 ${
+                            swatch.hex === 'transparent' ? 'checkerboard' : ''
+                          }`}
+                          style={{
+                            backgroundColor: swatch.hex === 'transparent' ? undefined : swatch.hex,
+                            borderColor: swatch.border,
+                          }}
+                        />
+                        <span>{swatch.name}</span>
+                      </button>
+                    );
+                  })}
+                  <label className="h-8 px-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-[11px] font-bold text-slate-700 flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="color"
+                      value={padColor === 'transparent' ? '#FFFFFF' : padColor}
+                      onChange={(e) => setPadColor(e.target.value)}
+                      className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
+                    />
+                    <span>Custom</span>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
@@ -762,20 +918,37 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
             </div>
 
             <div className="space-y-2 pt-1">
-              <button
-                onClick={downloadResizedPhoto}
-                className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
-              >
-                <i className="fa-solid fa-download"></i>
-                <span>
-                  Download Resized Image ({resizedPxW}×{resizedPxH} px · {formatBytes(resizedBytes)})
-                </span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    if (!resizedDataUrl) return;
+                    triggerDirectPhotoPrint(
+                      resizedDataUrl,
+                      `MALNADU MEDIA — Print ${resizedPxW}x${resizedPxH} Photo`,
+                      false
+                    );
+                    showToast('Opening Printer Dialog for Photo...');
+                  }}
+                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-sm transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-print"></i>
+                  <span>Direct Print Photo Now</span>
+                </button>
+                <button
+                  onClick={downloadResizedPhoto}
+                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs shadow-sm transition flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-download"></i>
+                  <span>
+                    Download ({resizedPxW}×{resizedPxH} · {formatBytes(resizedBytes)})
+                  </span>
+                </button>
+              </div>
               <button
                 onClick={() => resizedDataUrl && onSendImageToStudio(resizedDataUrl)}
                 className="w-full min-h-[42px] py-2 px-4 rounded-2xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-900 font-bold text-xs transition"
               >
-                Send Resized Image to Passport Studio →
+                Open in Passport & Multi-Photo Print Sheet Studio →
               </button>
             </div>
           </div>

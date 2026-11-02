@@ -88,14 +88,92 @@ export function estimateBackdropColor(
   ];
 }
 
+export const DEFAULT_REMOVE_BG_API_KEY = 'hJD6PodKHDtRJTVhp8QDMP4T';
+
 /**
- * High-Resolution AI Background Removal (RMBG-1.4 + Smart Studio Fallback).
+ * Prints any rendered photo or print sheet DataURL directly via an embedded hidden iframe
+ * (works reliably inside iframes without window.open).
+ */
+export function triggerDirectPhotoPrint(
+  dataUrl: string,
+  title = 'MALNADU MEDIA — Photo Print',
+  isSheet = false
+): void {
+  if (!dataUrl) return;
+  const existingFrame = document.getElementById('malnadu-direct-print-frame');
+  if (existingFrame && existingFrame.parentNode) {
+    existingFrame.parentNode.removeChild(existingFrame);
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.id = 'malnadu-direct-print-frame';
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) return;
+
+  doc.open();
+  doc.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>${title}</title>
+  <style>
+    @page {
+      margin: ${isSheet ? '4mm' : '8mm'};
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      font-family: sans-serif;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      ${isSheet ? 'width: 6in; max-height: 4in; object-fit: contain;' : 'max-height: 92vh; object-fit: contain; border: 1px solid #cbd5e1;'}
+    }
+  </style>
+</head>
+<body>
+  <img id="print-target-img" src="${dataUrl}" alt="Print Photo" />
+  <script>
+    const img = document.getElementById('print-target-img');
+    function doPrint() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 150);
+    }
+    if (img.complete) {
+      doPrint();
+    } else {
+      img.onload = doPrint;
+    }
+  </script>
+</body>
+</html>`);
+  doc.close();
+}
+
+/**
+ * High-Resolution AI Background Removal (remove.bg Cloud API + RMBG-1.4 + Smart Studio Fallback).
  * Preserves the exact original dimensions (naturalWidth × naturalHeight) of `imgElement`.
  */
 export async function runHighResRmbgCutout(
   imgElement: HTMLImageElement,
   onProgress: (pct: number, msg: string) => void,
-  mattingOptions: HairMattingOptions = DEFAULT_HAIR_MATTING_OPTIONS
+  mattingOptions: HairMattingOptions = DEFAULT_HAIR_MATTING_OPTIONS,
+  apiKeyOverride?: string
 ): Promise<CutoutResult> {
   const origW = imgElement.naturalWidth || imgElement.width;
   const origH = imgElement.naturalHeight || imgElement.height;
@@ -110,7 +188,90 @@ export async function runHighResRmbgCutout(
   const origImgData = origCtx.getImageData(0, 0, origW, origH);
   const sampledBgColor = estimateBackdropColor(origImgData.data, origW, origH);
 
+  const activeApiKey = (
+    apiKeyOverride ||
+    (typeof window !== 'undefined' && localStorage.getItem('malnadu_removebg_api_key')) ||
+    DEFAULT_REMOVE_BG_API_KEY
+  ).trim();
+
   try {
+    // 0. Primary Engine: Official remove.bg API (using configured key hJD6PodKHDtRJTVhp8QDMP4T)
+    if (activeApiKey) {
+      try {
+        onProgress(22, 'Connecting to remove.bg AI Background Engine...');
+        const uploadBlob: Blob | null = await new Promise((resolve) =>
+          origCanvas.toBlob(resolve, 'image/jpeg', 0.94)
+        );
+        if (uploadBlob) {
+          const formData = new FormData();
+          formData.append('image_file', uploadBlob, 'studio-photo.jpg');
+          formData.append('size', 'auto');
+
+          onProgress(48, 'Removing Background via remove.bg API...');
+          const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+            method: 'POST',
+            headers: {
+              'X-Api-Key': activeApiKey,
+            },
+            body: formData,
+          });
+
+          if (response.ok) {
+            onProgress(78, 'Extracting HD Alpha Mask & Hair Edges...');
+            const outBlob = await response.blob();
+            let tempOutUrl = '';
+            try {
+              tempOutUrl = URL.createObjectURL(outBlob);
+              const cutImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+                const im = new Image();
+                im.crossOrigin = 'anonymous';
+                im.onload = () => resolve(im);
+                im.onerror = reject;
+                im.src = tempOutUrl;
+              });
+
+              const maskCanvas = document.createElement('canvas');
+              maskCanvas.width = origW;
+              maskCanvas.height = origH;
+              const mCtx = maskCanvas.getContext('2d')!;
+              mCtx.imageSmoothingEnabled = true;
+              mCtx.imageSmoothingQuality = 'high';
+              mCtx.drawImage(cutImg, 0, 0, origW, origH);
+              const mImgData = mCtx.getImageData(0, 0, origW, origH);
+              const mData = mImgData.data;
+
+              const alphaMask = new Uint8Array(origW * origH);
+              for (let i = 0; i < alphaMask.length; i++) {
+                alphaMask[i] = mData[i * 4 + 3];
+              }
+
+              onProgress(92, 'Refining Hair Strands & Solid Background Prep...');
+              const refinedCanvas = applyHairMattingAndSpillRemoval(
+                origImgData,
+                alphaMask,
+                sampledBgColor,
+                mattingOptions
+              );
+              onProgress(100, 'remove.bg Cutout Complete!');
+              return {
+                cutoutCanvas: refinedCanvas,
+                alphaMask,
+                sampledBgColor,
+                width: origW,
+                height: origH,
+              };
+            } finally {
+              if (tempOutUrl) URL.revokeObjectURL(tempOutUrl);
+            }
+          } else {
+            console.warn('remove.bg response status:', response.status, 'falling back to local neural engine');
+          }
+        }
+      } catch (apiErr) {
+        console.warn('remove.bg cloud request failed, using neural fallback:', apiErr);
+      }
+    }
+
     onProgress(12, 'Processing AI Cutout...');
 
     // 1. Attempt @imgly/background-removal client-side browser segmentation first if cached/available,
