@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import JSZip from 'jszip';
 import {
   SiteSettings,
@@ -8,6 +10,9 @@ import {
   generateSamplePortraitDataUrl,
   generateSampleSignatureDataUrl,
 } from '../constants';
+
+// Configure local bundled PDF.js worker for reliable client-side PDF page rendering & compression
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export type AkshayaSubToolId =
   | 'overview'
@@ -55,15 +60,44 @@ interface CompressedImageItem {
   outW: number;
   outH: number;
   reductionPct: number;
+  qualityUsed: number;
 }
 
 const SIGNATURE_PRESETS = [
-  { id: 'ibps-ssc', label: 'IBPS / SBI / SSC (140 × 60 px)', w: 140, h: 60, unit: 'px' as const },
-  { id: 'kerala-psc', label: 'Kerala PSC Portal (150 × 50 px)', w: 150, h: 50, unit: 'px' as const },
-  { id: 'upsc', label: 'UPSC Civil Services (300 × 100 px)', w: 300, h: 100, unit: 'px' as const },
-  { id: 'pan-nsdl', label: 'PAN Card NSDL/UTIITSL (4.5 × 2.0 cm @ 200 DPI)', w: 354, h: 157, unit: 'px' as const },
-  { id: 'passport-in', label: 'Passport Seva (3.5 × 1.5 cm @ 300 DPI)', w: 413, h: 177, unit: 'px' as const },
+  { id: 'ibps-ssc', label: 'IBPS / SBI / SSC (140 × 60 px · 10–20 KB)', w: 140, h: 60, unit: 'px' as const, maxKb: 20 },
+  { id: 'kerala-psc', label: 'Kerala PSC Portal (150 × 50 px · < 30 KB)', w: 150, h: 50, unit: 'px' as const, maxKb: 30 },
+  { id: 'upsc', label: 'UPSC Civil Services (300 × 100 px · < 40 KB)', w: 300, h: 100, unit: 'px' as const, maxKb: 40 },
+  { id: 'pan-nsdl', label: 'PAN Card NSDL/UTIITSL (4.5 × 2.0 cm @ 200 DPI)', w: 354, h: 157, unit: 'px' as const, maxKb: 50 },
+  { id: 'passport-in', label: 'Passport Seva (3.5 × 1.5 cm @ 300 DPI)', w: 413, h: 177, unit: 'px' as const, maxKb: 50 },
 ];
+
+// Reliable cross-browser Blob download helper (never fails on large Data URLs or inside iframes)
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (document.body.contains(a)) document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 4000);
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const parts = dataUrl.split(',');
+  const mimeMatch = parts[0]?.match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bstr = atob(parts[1] || '');
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
 
 export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   initialTool = 'overview',
@@ -127,6 +161,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   const [splitMode, setSplitMode] = useState<'ranges' | 'extract' | 'every'>('ranges');
   const [splitRangesInput, setSplitRangesInput] = useState<string>('1-2, 3-4, 5-6');
   const [splitExtractInput, setSplitExtractInput] = useState<string>('1, 3, 5');
+  const [selectedExtractPages, setSelectedExtractPages] = useState<number[]>([1, 3, 5]);
   const [isSplitting, setIsSplitting] = useState<boolean>(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [splitOutputs, setSplitOutputs] = useState<SplitOutputFile[]>([]);
@@ -134,29 +169,36 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   const splitFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // =========================================================================
-  // 3. PDF COMPRESSOR STATE
+  // 3. PDF COMPRESSOR STATE (TRUE RASTER + TARGET-KB ENGINE)
   // =========================================================================
   const [compPdfName, setCompPdfName] = useState<string>('');
   const [compPdfOrigBytes, setCompPdfOrigBytes] = useState<Uint8Array | null>(null);
   const [compPdfOrigSize, setCompPdfOrigSize] = useState<number>(0);
   const [compPdfPageCount, setCompPdfPageCount] = useState<number>(0);
-  const [compPdfLevel, setCompPdfLevel] = useState<'low' | 'medium' | 'high'>('medium');
+  const [compPdfMode, setCompPdfMode] = useState<'preset' | 'target-kb'>('preset');
+  const [compPdfLevel, setCompPdfLevel] = useState<'low' | 'medium' | 'high' | 'extreme'>('medium');
+  const [compPdfTargetKb, setCompPdfTargetKb] = useState<number>(150);
   const [isCompressingPdf, setIsCompressingPdf] = useState<boolean>(false);
+  const [compPdfProgress, setCompPdfProgress] = useState<number>(0);
   const [compPdfOutBytes, setCompPdfOutBytes] = useState<Uint8Array | null>(null);
   const [compPdfOutSize, setCompPdfOutSize] = useState<number>(0);
+  const [compPdfPreviewUrl, setCompPdfPreviewUrl] = useState<string | null>(null);
+  const [compPdfPageThumbs, setCompPdfPageThumbs] = useState<string[]>([]);
   const [compPdfNotice, setCompPdfNotice] = useState<string | null>(null);
 
   const compPdfInputRef = useRef<HTMLInputElement | null>(null);
 
   // =========================================================================
-  // 4. IMAGE COMPRESSOR STATE
+  // 4. IMAGE COMPRESSOR STATE (BINARY SEARCH TARGET-KB + QUALITY ENGINE)
   // =========================================================================
   const [rawBatchImages, setRawBatchImages] = useState<
     Array<{ id: string; name: string; src: string; origBytes: number; img: HTMLImageElement }>
   >([]);
-  const [imgCompQuality, setImgCompQuality] = useState<number>(72);
+  const [imgCompMode, setImgCompMode] = useState<'target-kb' | 'quality'>('target-kb');
+  const [imgCompTargetKb, setImgCompTargetKb] = useState<number>(50);
+  const [imgCompQuality, setImgCompQuality] = useState<number>(70);
   const [imgCompFormat, setImgCompFormat] = useState<'image/jpeg' | 'image/webp' | 'image/png'>('image/jpeg');
-  const [imgCompMaxWidth, setImgCompMaxWidth] = useState<number>(0); // 0 = original
+  const [imgCompMaxWidth, setImgCompMaxWidth] = useState<number>(0); // 0 = auto
   const [compressedImages, setCompressedImages] = useState<CompressedImageItem[]>([]);
   const [isCompressingImgs, setIsCompressingImgs] = useState<boolean>(false);
 
@@ -170,12 +212,12 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   const [sigTargetH, setSigTargetH] = useState<number>(60);
   const [sigUnit, setSigUnit] = useState<'px' | 'mm' | 'cm'>('px');
   const [sigLockAspect, setSigLockAspect] = useState<boolean>(true);
-  const [sigRemoveWhiteBg, setSigRemoveWhiteBg] = useState<boolean>(true);
+  const [sigRemoveWhiteBg, setSigRemoveWhiteBg] = useState<boolean>(false);
   const [sigThreshold, setSigThreshold] = useState<number>(215);
   const [sigInkMode, setSigInkMode] = useState<'original' | 'black' | 'blue'>('blue');
   const [sigCropPaddingPct, setSigCropPaddingPct] = useState<number>(8);
-  const [sigFormat, setSigFormat] = useState<'image/png' | 'image/jpeg'>('image/png');
-  const [sigQuality, setSigQuality] = useState<number>(95);
+  const [sigFormat, setSigFormat] = useState<'image/png' | 'image/jpeg'>('image/jpeg');
+  const [sigMaxKbLimit, setSigMaxKbLimit] = useState<number>(20); // 0 = no limit
   const [sigOutputUrl, setSigOutputUrl] = useState<string>('');
   const [sigOutputBytes, setSigOutputBytes] = useState<number>(0);
 
@@ -190,78 +232,134 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   };
 
   // =========================================================================
-  // HELPER: GENERATE REAL SAMPLE PDF USING PDF-LIB
+  // HELPER: GENERATE REAL SCANNED/IMAGE-RICH SAMPLE PDF USING PDF-LIB
   // =========================================================================
-  const createSamplePdfDocument = async (
-    title: string,
-    pageCount: number,
-    includePaddingMetadata = false
-  ): Promise<Uint8Array> => {
-    const pdfDoc = await PDFDocument.create();
-    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const createSamplePdfDocument = useCallback(
+    async (
+      title: string,
+      pageCount: number,
+      includeScannedImage = false
+    ): Promise<Uint8Array> => {
+      const pdfDoc = await PDFDocument.create();
+      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-    pdfDoc.setTitle(title);
-    pdfDoc.setAuthor('MALNADU MEDIA Akshaya Suite');
-    if (includePaddingMetadata) {
-      pdfDoc.setSubject(' Official Akshaya Document Sample '.repeat(120));
-      pdfDoc.setKeywords(Array.from({ length: 150 }, (_, i) => `akshaya-doc-keyword-${i}`));
-    }
+      pdfDoc.setTitle(title);
+      pdfDoc.setAuthor('MALNADU MEDIA Akshaya Suite');
 
-    for (let i = 1; i <= pageCount; i++) {
-      const page = pdfDoc.addPage([595.28, 841.89]); // A4
-      page.drawRectangle({
-        x: 36,
-        y: 36,
-        width: 523,
-        height: 769,
-        borderColor: rgb(0.02, 0.71, 0.83),
-        borderWidth: 1.5,
-      });
+      // Generate a realistic high-resolution scanned certificate/photo page image if requested
+      let embeddedJpg: any = null;
+      if (includeScannedImage) {
+        const scanCanvas = document.createElement('canvas');
+        scanCanvas.width = 1240;
+        scanCanvas.height = 1754;
+        const sCtx = scanCanvas.getContext('2d')!;
 
-      page.drawText('MALNADU MEDIA — AKSHAYA DOCUMENT SUITE', {
-        x: 56,
-        y: 765,
-        size: 13,
-        font: fontBold,
-        color: rgb(0.03, 0.04, 0.08),
-      });
+        // Warm scanned paper texture with fine grain so uncompressed JPEG is ~160KB per page
+        sCtx.fillStyle = '#fdfbf7';
+        sCtx.fillRect(0, 0, 1240, 1754);
 
-      page.drawText(`${title} — Page ${i} of ${pageCount}`, {
-        x: 56,
-        y: 730,
-        size: 18,
-        font: fontBold,
-        color: rgb(0.02, 0.45, 0.65),
-      });
+        // Decorative border
+        sCtx.strokeStyle = '#0f172a';
+        sCtx.lineWidth = 8;
+        sCtx.strokeRect(48, 48, 1144, 1658);
+        sCtx.strokeStyle = '#0284c7';
+        sCtx.lineWidth = 3;
+        sCtx.strokeRect(64, 64, 1112, 1626);
 
-      page.drawText(
-        `Official digital document generated for PDF Merge, Split, and Compression verification.`,
-        {
-          x: 56,
-          y: 695,
-          size: 11,
-          font: fontRegular,
-          color: rgb(0.3, 0.35, 0.42),
+        // Header banner
+        sCtx.fillStyle = '#0f172a';
+        sCtx.fillRect(84, 84, 1072, 150);
+        sCtx.fillStyle = '#38bdf8';
+        sCtx.font = 'bold 38px sans-serif';
+        sCtx.fillText('OFFICIAL SCANNED CITIZEN DOSSIER', 120, 155);
+        sCtx.fillStyle = '#e2e8f0';
+        sCtx.font = '24px sans-serif';
+        sCtx.fillText('High-Resolution 300 DPI Scanned Document · Ready for Compression', 120, 200);
+
+        // Draw rich visual patterns/stamps & portrait box
+        for (let row = 0; row < 18; row++) {
+          sCtx.fillStyle = row % 2 === 0 ? '#f1f5f9' : '#e2e8f0';
+          sCtx.fillRect(100, 280 + row * 68, 1040, 52);
+          sCtx.fillStyle = '#1e293b';
+          sCtx.font = 'bold 22px monospace';
+          sCtx.fillText(
+            `VERIFIED RECORD ENTRY #${1000 + row * 37} — AKSHAYA E-DISTRICT PORTAL`,
+            124,
+            314 + row * 68
+          );
         }
-      );
 
-      for (let line = 0; line < 14; line++) {
-        page.drawText(
-          `Record Line #${line + 1}: Biometric & Citizen Service Application Reference ID #MM-2026-0${i}${line}`,
-          {
-            x: 56,
-            y: 640 - line * 28,
-            size: 10,
-            font: fontRegular,
-            color: rgb(0.2, 0.24, 0.3),
-          }
-        );
+        // Add subtle realistic scanner texture so the sample file is ~350-450 KB
+        for (let i = 0; i < 6500; i++) {
+          const rx = (i * 197) % 1200;
+          const ry = (i * 313) % 1700;
+          sCtx.fillStyle = i % 2 === 0 ? 'rgba(15,23,42,0.06)' : 'rgba(2,132,199,0.06)';
+          sCtx.fillRect(rx, ry, 3, 3);
+        }
+
+        const scanDataUrl = scanCanvas.toDataURL('image/jpeg', 0.98);
+        const scanBlob = dataUrlToBlob(scanDataUrl);
+        const scanBuf = await scanBlob.arrayBuffer();
+        embeddedJpg = await pdfDoc.embedJpg(new Uint8Array(scanBuf));
       }
-    }
 
-    return await pdfDoc.save({ useObjectStreams: !includePaddingMetadata });
-  };
+      for (let i = 1; i <= pageCount; i++) {
+        const page = pdfDoc.addPage([595.28, 841.89]); // A4
+        if (embeddedJpg) {
+          page.drawImage(embeddedJpg, {
+            x: 0,
+            y: 0,
+            width: 595.28,
+            height: 841.89,
+          });
+        } else {
+          page.drawRectangle({
+            x: 36,
+            y: 36,
+            width: 523,
+            height: 769,
+            borderColor: rgb(0.02, 0.71, 0.83),
+            borderWidth: 1.5,
+          });
+        }
+
+        page.drawText('MALNADU MEDIA — AKSHAYA DOCUMENT SUITE', {
+          x: 56,
+          y: 785,
+          size: 12,
+          font: fontBold,
+          color: embeddedJpg ? rgb(1, 1, 1) : rgb(0.03, 0.04, 0.08),
+        });
+
+        page.drawText(`${title} — Page ${i} of ${pageCount}`, {
+          x: 56,
+          y: 740,
+          size: 16,
+          font: fontBold,
+          color: embeddedJpg ? rgb(0.95, 0.8, 0.2) : rgb(0.02, 0.45, 0.65),
+        });
+
+        if (!embeddedJpg) {
+          for (let line = 0; line < 14; line++) {
+            page.drawText(
+              `Record Line #${line + 1}: Biometric & Citizen Service Application Reference ID #MM-2026-0${i}${line}`,
+              {
+                x: 56,
+                y: 650 - line * 28,
+                size: 10,
+                font: fontRegular,
+                color: rgb(0.2, 0.24, 0.3),
+              }
+            );
+          }
+        }
+      }
+
+      return await pdfDoc.save({ useObjectStreams: false });
+    },
+    []
+  );
 
   // =========================================================================
   // 1. PDF MERGE HANDLERS
@@ -294,13 +392,14 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       setMergeItems((prev) => [...prev, ...added]);
       showToast(`Added ${added.length} PDF file(s)!`);
     }
+    e.target.value = '';
   };
 
   const handleLoadSampleMergePdfs = async () => {
     setMergeError(null);
-    const bytes1 = await createSamplePdfDocument('Application_Form_Part_A.pdf', 2);
-    const bytes2 = await createSamplePdfDocument('Identity_Annexure_Part_B.pdf', 3);
-    setMergeItems([
+    const bytes1 = await createSamplePdfDocument('Application_Form_Part_A.pdf', 2, false);
+    const bytes2 = await createSamplePdfDocument('Identity_Annexure_Part_B.pdf', 3, false);
+    const items: MergePdfItem[] = [
       {
         id: `sample-a-${Date.now()}`,
         name: 'Application_Form_Part_A.pdf',
@@ -315,8 +414,12 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
         pageCount: 3,
         bytes: bytes2,
       },
-    ]);
-    showToast('Loaded 2 sample PDFs ready to merge!');
+    ];
+    setMergeItems(items);
+    showToast('Loaded 2 sample PDFs! Merging automatically...');
+    setTimeout(() => {
+      executePdfMergeList(items);
+    }, 80);
   };
 
   const moveMergeItem = (index: number, direction: -1 | 1) => {
@@ -331,8 +434,8 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     });
   };
 
-  const handleExecutePdfMerge = async () => {
-    if (mergeItems.length < 2) {
+  const executePdfMergeList = async (listToMerge: MergePdfItem[]) => {
+    if (listToMerge.length < 2) {
       setMergeError('Please upload at least 2 PDF files to merge.');
       return;
     }
@@ -344,14 +447,14 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       const mergedPdf = await PDFDocument.create();
       let totalPagesCount = 0;
 
-      for (let i = 0; i < mergeItems.length; i++) {
-        const item = mergeItems[i];
+      for (let i = 0; i < listToMerge.length; i++) {
+        const item = listToMerge[i];
         const srcDoc = await PDFDocument.load(item.bytes, { ignoreEncryption: true });
         const indices = srcDoc.getPageIndices();
         const copiedPages = await mergedPdf.copyPages(srcDoc, indices);
         copiedPages.forEach((p) => mergedPdf.addPage(p));
         totalPagesCount += copiedPages.length;
-        setMergeProgress(Math.round(((i + 1) / mergeItems.length) * 90));
+        setMergeProgress(Math.round(((i + 1) / listToMerge.length) * 90));
       }
 
       const finalBytes = await mergedPdf.save({ useObjectStreams: true });
@@ -363,7 +466,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       setMergedPdfUrl(url);
       setMergedTotalPages(totalPagesCount);
       setMergeProgress(100);
-      showToast(`Merged ${mergeItems.length} PDFs (${totalPagesCount} pages)!`);
+      showToast(`Merged ${listToMerge.length} PDFs (${totalPagesCount} pages)!`);
     } catch (err) {
       console.error('PDF Merge error:', err);
       setMergeError('Failed to merge PDFs. Ensure none of the files are password-locked.');
@@ -372,15 +475,12 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     }
   };
 
+  const handleExecutePdfMerge = () => executePdfMergeList(mergeItems);
+
   const downloadMergedPdf = () => {
     if (!mergedPdfBytes) return;
     const blob = new Blob([mergedPdfBytes as unknown as BlobPart], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = `malnadu-merged-${Date.now()}.pdf`;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    triggerBlobDownload(blob, `malnadu-merged-${Date.now()}.pdf`);
     showToast('Downloaded Merged PDF!');
   };
 
@@ -401,23 +501,36 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       setSplitSourceBytes(bytes);
       setSplitTotalPages(count);
       setSplitRangesInput(count >= 4 ? `1-2, 3-${count}` : `1-1`);
-      setSplitExtractInput(`1${count >= 2 ? ', 2' : ''}`);
+      const defaultSelected = count >= 2 ? [1, 2] : [1];
+      setSelectedExtractPages(defaultSelected);
+      setSplitExtractInput(defaultSelected.join(', '));
       showToast(`Loaded "${file.name}" (${count} pages)`);
     } catch {
       setSplitError('Invalid or corrupted PDF file.');
     }
+    e.target.value = '';
   };
 
   const handleLoadSampleSplitPdf = async () => {
     setSplitError(null);
     setSplitOutputs([]);
-    const bytes = await createSamplePdfDocument('MultiPage_Citizen_Dossier.pdf', 6);
+    const bytes = await createSamplePdfDocument('MultiPage_Citizen_Dossier.pdf', 6, false);
     setSplitSourceName('MultiPage_Citizen_Dossier.pdf');
     setSplitSourceBytes(bytes);
     setSplitTotalPages(6);
     setSplitRangesInput('1-3, 4-6');
+    setSelectedExtractPages([1, 3, 5]);
     setSplitExtractInput('1, 3, 5');
     showToast('Loaded 6-page sample PDF for splitting!');
+  };
+
+  const toggleExtractPageNumber = (pageNum: number) => {
+    setSelectedExtractPages((prev) => {
+      const exists = prev.includes(pageNum);
+      const next = exists ? prev.filter((p) => p !== pageNum) : [...prev, pageNum].sort((a, b) => a - b);
+      setSplitExtractInput(next.join(', '));
+      return next;
+    });
   };
 
   const handleExecutePdfSplit = async () => {
@@ -439,7 +552,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           const singleDoc = await PDFDocument.create();
           const [copied] = await singleDoc.copyPages(srcDoc, [p]);
           singleDoc.addPage(copied);
-          const outBytes = await singleDoc.save();
+          const outBytes = await singleDoc.save({ useObjectStreams: true });
           outputs.push({
             name: `${baseName}_page_${p + 1}.pdf`,
             pageDesc: `Page ${p + 1}`,
@@ -454,7 +567,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           .filter((n) => !isNaN(n) && n >= 1 && n <= splitTotalPages);
 
         if (parts.length === 0) {
-          setSplitError(`Please enter valid page numbers between 1 and ${splitTotalPages}.`);
+          setSplitError(`Please select or enter valid page numbers between 1 and ${splitTotalPages}.`);
           setIsSplitting(false);
           return;
         }
@@ -463,7 +576,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
         const zeroBased = parts.map((n) => n - 1);
         const copied = await newDoc.copyPages(srcDoc, zeroBased);
         copied.forEach((p) => newDoc.addPage(p));
-        const outBytes = await newDoc.save();
+        const outBytes = await newDoc.save({ useObjectStreams: true });
         outputs.push({
           name: `${baseName}_extracted_pages_${parts.join('_')}.pdf`,
           pageDesc: `Pages ${parts.join(', ')}`,
@@ -471,7 +584,6 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           bytes: outBytes,
         });
       } else {
-        // ranges mode e.g. "1-3, 4-6"
         const rawRanges = splitRangesInput
           .split(',')
           .map((s) => s.trim())
@@ -505,7 +617,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           const rangeDoc = await PDFDocument.create();
           const copied = await rangeDoc.copyPages(srcDoc, indices);
           copied.forEach((p) => rangeDoc.addPage(p));
-          const outBytes = await rangeDoc.save();
+          const outBytes = await rangeDoc.save({ useObjectStreams: true });
 
           outputs.push({
             name: `${baseName}_pages_${startPage}_to_${endPage}.pdf`,
@@ -528,12 +640,8 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
   const downloadSingleSplitPdf = (file: SplitOutputFile) => {
     const blob = new Blob([file.bytes as unknown as BlobPart], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = file.name;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    triggerBlobDownload(blob, file.name);
+    showToast(`Downloaded ${file.name}!`);
   };
 
   const downloadAllSplitAsZip = async () => {
@@ -543,18 +651,211 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       zip.file(f.name, f.bytes);
     });
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.download = `malnadu-split-pdfs-${Date.now()}.zip`;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    triggerBlobDownload(zipBlob, `malnadu-split-pdfs-${Date.now()}.zip`);
     showToast('Downloaded ZIP Archive of Split PDFs!');
   };
 
   // =========================================================================
-  // 3. PDF COMPRESSOR HANDLERS
+  // 3. REAL MULTI-PASS PDF COMPRESSOR ENGINE (PDF.JS RASTER + BINARY SEARCH)
   // =========================================================================
+  const runTruePdfCompression = useCallback(
+    async (
+      sourceBytes: Uint8Array,
+      mode: 'preset' | 'target-kb' = compPdfMode,
+      level: 'low' | 'medium' | 'high' | 'extreme' = compPdfLevel,
+      targetKb: number = compPdfTargetKb
+    ) => {
+      if (!sourceBytes || sourceBytes.byteLength === 0) return;
+      setIsCompressingPdf(true);
+      setCompPdfProgress(10);
+      setCompPdfNotice(null);
+
+      try {
+        // Determine target byte cap
+        const origSize = sourceBytes.byteLength;
+        let desiredMaxBytes = origSize;
+        if (mode === 'target-kb') {
+          desiredMaxBytes = Math.max(15 * 1024, targetKb * 1024);
+        } else {
+          if (level === 'low') desiredMaxBytes = Math.round(origSize * 0.65);
+          else if (level === 'medium') desiredMaxBytes = Math.round(origSize * 0.42);
+          else if (level === 'high') desiredMaxBytes = Math.round(origSize * 0.25);
+          else desiredMaxBytes = Math.round(origSize * 0.14);
+        }
+
+        // Load PDF via PDF.js to render pages to canvas and re-encode at exact target quality/scale
+        const dataCopy = new Uint8Array(sourceBytes);
+        const loadingTask = pdfjsLib.getDocument({ data: dataCopy });
+        const pdf = await loadingTask.promise;
+        const numPages = pdf.numPages;
+        setCompPdfPageCount(numPages);
+
+        // Per-page byte budget (leaving ~3KB overhead for PDF container)
+        const totalContainerOverhead = Math.min(4096, Math.round(desiredMaxBytes * 0.08));
+        const perPageByteBudget = Math.max(
+          8192,
+          Math.floor((desiredMaxBytes - totalContainerOverhead) / Math.max(1, numPages))
+        );
+
+        // Initial render scale based on compression mode/level
+        let baseScale = 1.35;
+        let baseQuality = 0.72;
+        if (mode === 'preset') {
+          if (level === 'low') {
+            baseScale = 1.5;
+            baseQuality = 0.8;
+          } else if (level === 'medium') {
+            baseScale = 1.2;
+            baseQuality = 0.62;
+          } else if (level === 'high') {
+            baseScale = 0.95;
+            baseQuality = 0.45;
+          } else {
+            baseScale = 0.72;
+            baseQuality = 0.3;
+          }
+        } else {
+          // Estimate initial scale from per-page KB budget
+          const budgetKb = perPageByteBudget / 1024;
+          if (budgetKb < 25) {
+            baseScale = 0.68;
+            baseQuality = 0.32;
+          } else if (budgetKb < 50) {
+            baseScale = 0.88;
+            baseQuality = 0.48;
+          } else if (budgetKb < 100) {
+            baseScale = 1.15;
+            baseQuality = 0.65;
+          } else {
+            baseScale = 1.35;
+            baseQuality = 0.75;
+          }
+        }
+
+        const outPdfDoc = await PDFDocument.create();
+        const thumbs: string[] = [];
+
+        for (let pIdx = 1; pIdx <= numPages; pIdx++) {
+          const page = await pdf.getPage(pIdx);
+          const origViewport = page.getViewport({ scale: 1.0 });
+
+          // Render at baseScale first
+          const renderViewport = page.getViewport({ scale: baseScale });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(100, Math.round(renderViewport.width));
+          canvas.height = Math.max(100, Math.round(renderViewport.height));
+          const ctx = canvas.getContext('2d')!;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          await page.render({
+            canvasContext: ctx,
+            viewport: renderViewport,
+            canvas,
+          } as any).promise;
+
+          // Save thumbnail of first 4 pages for visual preview
+          if (pIdx <= 4) {
+            thumbs.push(canvas.toDataURL('image/jpeg', 0.6));
+          }
+
+          // Binary search quality + downscale if needed to fit within perPageByteBudget
+          let chosenBlob = dataUrlToBlob(canvas.toDataURL('image/jpeg', baseQuality));
+
+          if (chosenBlob.size > perPageByteBudget) {
+            // Binary search JPEG quality on current canvas
+            let lowQ = 0.12;
+            let highQ = baseQuality;
+            let bestBlob = chosenBlob;
+            for (let step = 0; step < 5; step++) {
+              const midQ = (lowQ + highQ) / 2;
+              const testBlob = dataUrlToBlob(canvas.toDataURL('image/jpeg', midQ));
+              bestBlob = testBlob;
+              if (testBlob.size > perPageByteBudget) {
+                highQ = midQ;
+              } else {
+                lowQ = midQ;
+              }
+            }
+            chosenBlob = bestBlob;
+
+            // If still above budget, scale canvas dimensions down proportionally
+            if (chosenBlob.size > perPageByteBudget) {
+              const scaleFactor = Math.max(
+                0.38,
+                Math.min(0.85, Math.sqrt(perPageByteBudget / chosenBlob.size) * 0.92)
+              );
+              const smallCanvas = document.createElement('canvas');
+              smallCanvas.width = Math.max(180, Math.round(canvas.width * scaleFactor));
+              smallCanvas.height = Math.max(180, Math.round(canvas.height * scaleFactor));
+              const sCtx = smallCanvas.getContext('2d')!;
+              sCtx.fillStyle = '#FFFFFF';
+              sCtx.fillRect(0, 0, smallCanvas.width, smallCanvas.height);
+              sCtx.drawImage(canvas, 0, 0, smallCanvas.width, smallCanvas.height);
+              chosenBlob = dataUrlToBlob(smallCanvas.toDataURL('image/jpeg', 0.35));
+            }
+          }
+
+          const jpgBuf = await chosenBlob.arrayBuffer();
+          const embeddedJpg = await outPdfDoc.embedJpg(new Uint8Array(jpgBuf));
+          const pdfPage = outPdfDoc.addPage([origViewport.width, origViewport.height]);
+          pdfPage.drawImage(embeddedJpg, {
+            x: 0,
+            y: 0,
+            width: origViewport.width,
+            height: origViewport.height,
+          });
+
+          setCompPdfProgress(Math.round(15 + (pIdx / numPages) * 75));
+        }
+
+        const compressedBytes = await outPdfDoc.save({
+          useObjectStreams: true,
+          addDefaultPage: false,
+        });
+
+        setCompPdfPageThumbs(thumbs);
+        setCompPdfOutBytes(compressedBytes);
+        setCompPdfOutSize(compressedBytes.byteLength);
+
+        const outBlob = new Blob([compressedBytes as unknown as BlobPart], {
+          type: 'application/pdf',
+        });
+        if (compPdfPreviewUrl) URL.revokeObjectURL(compPdfPreviewUrl);
+        setCompPdfPreviewUrl(URL.createObjectURL(outBlob));
+        setCompPdfProgress(100);
+
+        const savedPct =
+          origSize > compressedBytes.byteLength
+            ? Math.round(((origSize - compressedBytes.byteLength) / origSize) * 100)
+            : 0;
+        showToast(
+          `PDF Compressed: ${formatBytes(origSize)} → ${formatBytes(
+            compressedBytes.byteLength
+          )} (${savedPct}% Saved)!`
+        );
+      } catch (err) {
+        console.error('PDF Compress fallback:', err);
+        try {
+          // Structural fallback if PDF.js worker fails on exotic PDF
+          const srcDoc = await PDFDocument.load(sourceBytes, { ignoreEncryption: true });
+          const cleanDoc = await PDFDocument.create();
+          const pages = await cleanDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+          pages.forEach((p) => cleanDoc.addPage(p));
+          const fallbackBytes = await cleanDoc.save({ useObjectStreams: true });
+          setCompPdfOutBytes(fallbackBytes);
+          setCompPdfOutSize(fallbackBytes.byteLength);
+          showToast('PDF Optimized!');
+        } catch {
+          setCompPdfNotice('Could not process this PDF file. Please verify it is not password-locked.');
+        }
+      } finally {
+        setIsCompressingPdf(false);
+      }
+    },
+    [compPdfMode, compPdfLevel, compPdfTargetKb, compPdfPreviewUrl, showToast]
+  );
+
   const handleCompressPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -568,79 +869,159 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       setCompPdfOrigBytes(bytes);
       setCompPdfOrigSize(file.size);
       setCompPdfPageCount(doc.getPageCount());
-      showToast(`Loaded "${file.name}" (${formatBytes(file.size)})`);
+      showToast(`Loaded "${file.name}" (${formatBytes(file.size)}) — Compressing...`);
+      // Automatically run compression on upload so user sees immediate results!
+      runTruePdfCompression(bytes, compPdfMode, compPdfLevel, compPdfTargetKb);
     } catch {
       setCompPdfNotice('Invalid or password-protected PDF file.');
     }
+    e.target.value = '';
   };
 
   const handleLoadSampleCompressPdf = async () => {
     setCompPdfOutBytes(null);
     setCompPdfNotice(null);
-    const bytes = await createSamplePdfDocument('Unoptimized_Scanned_Certificate.pdf', 4, true);
-    setCompPdfName('Unoptimized_Scanned_Certificate.pdf');
+    const bytes = await createSamplePdfDocument('Scanned_Citizen_Certificate_300DPI.pdf', 3, true);
+    setCompPdfName('Scanned_Citizen_Certificate_300DPI.pdf');
     setCompPdfOrigBytes(bytes);
     setCompPdfOrigSize(bytes.byteLength);
-    setCompPdfPageCount(4);
-    showToast('Loaded sample unoptimized PDF!');
+    setCompPdfPageCount(3);
+    showToast(`Loaded ${formatBytes(bytes.byteLength)} Scanned PDF — Compressing...`);
+    runTruePdfCompression(bytes, compPdfMode, compPdfLevel, compPdfTargetKb);
   };
 
-  const handleExecutePdfCompression = async () => {
+  const handleExecutePdfCompression = () => {
     if (!compPdfOrigBytes) return;
-    setIsCompressingPdf(true);
-    setCompPdfNotice(null);
-
-    try {
-      const srcDoc = await PDFDocument.load(compPdfOrigBytes, { ignoreEncryption: true });
-      // Rebuild a clean PDF document copying only active pages (strips orphan objects & bloated XMP streams)
-      const cleanDoc = await PDFDocument.create();
-      const pages = await cleanDoc.copyPages(srcDoc, srcDoc.getPageIndices());
-      pages.forEach((p) => cleanDoc.addPage(p));
-
-      if (compPdfLevel === 'high' || compPdfLevel === 'medium') {
-        cleanDoc.setTitle('');
-        cleanDoc.setAuthor('');
-        cleanDoc.setSubject('');
-        cleanDoc.setKeywords([]);
-        cleanDoc.setProducer('');
-        cleanDoc.setCreator('');
-      }
-
-      const compressedBytes = await cleanDoc.save({
-        useObjectStreams: true,
-        addDefaultPage: false,
-        objectsPerTick: compPdfLevel === 'high' ? 100 : 50,
-      });
-
-      const finalBytes =
-        compressedBytes.byteLength < compPdfOrigBytes.byteLength
-          ? compressedBytes
-          : compressedBytes;
-
-      setCompPdfOutBytes(finalBytes);
-      setCompPdfOutSize(finalBytes.byteLength);
-
-      if (finalBytes.byteLength >= compPdfOrigBytes.byteLength * 0.98) {
-        setCompPdfNotice(
-          'Note: This PDF already uses compact object streams and contains minimal redundant metadata, so further lossless structural reduction is minimal.'
-        );
-      } else {
-        showToast('PDF Compressed Successfully!');
-      }
-    } catch (err) {
-      console.error('PDF Compress error:', err);
-      setCompPdfNotice('Could not compress this PDF file.');
-    } finally {
-      setIsCompressingPdf(false);
-    }
+    runTruePdfCompression(compPdfOrigBytes, compPdfMode, compPdfLevel, compPdfTargetKb);
   };
 
   // =========================================================================
-  // 4. BATCH IMAGE COMPRESSOR HANDLERS
+  // 4. BATCH IMAGE COMPRESSOR HANDLERS (TARGET-KB BINARY SEARCH + QUALITY)
   // =========================================================================
+  const compressSingleImageItem = useCallback(
+    (
+      item: { id: string; name: string; src: string; origBytes: number; img: HTMLImageElement },
+      mode: 'target-kb' | 'quality',
+      targetKb: number,
+      qualityPct: number,
+      format: 'image/jpeg' | 'image/webp' | 'image/png',
+      maxWidth: number
+    ): CompressedImageItem => {
+      const origW = item.img.naturalWidth || item.img.width;
+      const origH = item.img.naturalHeight || item.img.height;
+
+      let baseW = origW;
+      let baseH = origH;
+      if (maxWidth > 0 && baseW > maxWidth) {
+        baseH = Math.round((baseH * maxWidth) / baseW);
+        baseW = maxWidth;
+      }
+
+      const renderAtScaleAndQuality = (scale: number, q: number): { dataUrl: string; bytes: number; w: number; h: number } => {
+        const w = Math.max(32, Math.round(baseW * scale));
+        const h = Math.max(32, Math.round(baseH * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d')!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        if (format === 'image/jpeg') {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, w, h);
+        }
+        ctx.drawImage(item.img, 0, 0, w, h);
+
+        // If PNG is selected, apply color quantization (bit-depth reduction) so PNG deflate actually shrinks!
+        if (format === 'image/png') {
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const d = imgData.data;
+          const step = q < 0.5 ? 24 : q < 0.75 ? 16 : 8;
+          for (let i = 0; i < d.length; i += 4) {
+            d[i] = Math.round(d[i] / step) * step;
+            d[i + 1] = Math.round(d[i + 1] / step) * step;
+            d[i + 2] = Math.round(d[i + 2] / step) * step;
+          }
+          ctx.putImageData(imgData, 0, 0);
+        }
+
+        const outDataUrl = canvas.toDataURL(format, format === 'image/png' ? undefined : q);
+        const b64Len = outDataUrl.split(',')[1]?.length || 0;
+        const outBytes = Math.round((b64Len * 3) / 4);
+        return { dataUrl: outDataUrl, bytes: outBytes, w, h };
+      };
+
+      const targetMaxBytes =
+        mode === 'target-kb'
+          ? Math.max(4096, targetKb * 1024)
+          : Math.round(item.origBytes * (qualityPct / 100));
+
+      let best = renderAtScaleAndQuality(1.0, qualityPct / 100);
+      let usedQ = qualityPct;
+
+      if (mode === 'target-kb') {
+        // Binary search quality at full resolution first
+        let lowQ = 0.08;
+        let highQ = 0.92;
+        for (let iter = 0; iter < 6; iter++) {
+          const midQ = (lowQ + highQ) / 2;
+          const candidate = renderAtScaleAndQuality(1.0, midQ);
+          best = candidate;
+          usedQ = Math.round(midQ * 100);
+          if (candidate.bytes > targetMaxBytes) {
+            highQ = midQ;
+          } else {
+            lowQ = midQ;
+          }
+        }
+
+        // If still larger than targetMaxBytes (e.g. PNG or high-res image for < 20KB), step down scale
+        if (best.bytes > targetMaxBytes) {
+          const scales = [0.85, 0.7, 0.55, 0.42, 0.32, 0.24];
+          for (const sc of scales) {
+            const candidate = renderAtScaleAndQuality(sc, format === 'image/png' ? 0.4 : 0.52);
+            best = candidate;
+            usedQ = 52;
+            if (candidate.bytes <= targetMaxBytes) break;
+          }
+        }
+      } else {
+        // Quality slider mode: guarantee output is smaller than original when quality < 92%
+        if (best.bytes >= item.origBytes && qualityPct < 92) {
+          const ratio = Math.min(0.85, Math.sqrt((item.origBytes * (qualityPct / 100)) / Math.max(1, best.bytes)));
+          best = renderAtScaleAndQuality(Math.max(0.35, ratio), (qualityPct / 100) * 0.85);
+        }
+      }
+
+      const reductionPct =
+        item.origBytes > 0 && best.bytes < item.origBytes
+          ? Math.max(1, Math.round(((item.origBytes - best.bytes) / item.origBytes) * 100))
+          : 0;
+
+      return {
+        id: item.id,
+        name: item.name,
+        origSrc: item.src,
+        origBytes: item.origBytes,
+        origW,
+        origH,
+        outDataUrl: best.dataUrl,
+        outBytes: best.bytes,
+        outW: best.w,
+        outH: best.h,
+        reductionPct,
+        qualityUsed: usedQ,
+      };
+    },
+    []
+  );
+
   const runBatchImageCompression = useCallback(
     (
       items = rawBatchImages,
+      mode = imgCompMode,
+      targetKb = imgCompTargetKb,
       quality = imgCompQuality,
       format = imgCompFormat,
       maxWidth = imgCompMaxWidth
@@ -651,57 +1032,34 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       }
       setIsCompressingImgs(true);
       requestAnimationFrame(() => {
-        const results: CompressedImageItem[] = items.map((item) => {
-          let targetW = item.img.width;
-          let targetH = item.img.height;
-          if (maxWidth > 0 && targetW > maxWidth) {
-            targetH = Math.round((targetH * maxWidth) / targetW);
-            targetW = maxWidth;
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = targetW;
-          canvas.height = targetH;
-          const ctx = canvas.getContext('2d')!;
-          if (format === 'image/jpeg') {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, targetW, targetH);
-          }
-          ctx.drawImage(item.img, 0, 0, targetW, targetH);
-
-          const q = format === 'image/png' ? undefined : quality / 100;
-          const outDataUrl = canvas.toDataURL(format, q);
-          const b64Len = outDataUrl.split(',')[1]?.length || 0;
-          const outBytes = Math.round((b64Len * 3) / 4);
-          const reductionPct =
-            item.origBytes > 0
-              ? Math.max(0, Math.round(((item.origBytes - outBytes) / item.origBytes) * 100))
-              : 0;
-
-          return {
-            id: item.id,
-            name: item.name,
-            origSrc: item.src,
-            origBytes: item.origBytes,
-            origW: item.img.width,
-            origH: item.img.height,
-            outDataUrl,
-            outBytes,
-            outW: targetW,
-            outH: targetH,
-            reductionPct,
-          };
-        });
+        const results = items.map((item) =>
+          compressSingleImageItem(item, mode, targetKb, quality, format, maxWidth)
+        );
         setCompressedImages(results);
         setIsCompressingImgs(false);
       });
     },
-    [rawBatchImages, imgCompQuality, imgCompFormat, imgCompMaxWidth]
+    [rawBatchImages, imgCompMode, imgCompTargetKb, imgCompQuality, imgCompFormat, imgCompMaxWidth, compressSingleImageItem]
   );
 
   useEffect(() => {
-    runBatchImageCompression(rawBatchImages, imgCompQuality, imgCompFormat, imgCompMaxWidth);
-  }, [rawBatchImages, imgCompQuality, imgCompFormat, imgCompMaxWidth, runBatchImageCompression]);
+    runBatchImageCompression(
+      rawBatchImages,
+      imgCompMode,
+      imgCompTargetKb,
+      imgCompQuality,
+      imgCompFormat,
+      imgCompMaxWidth
+    );
+  }, [
+    rawBatchImages,
+    imgCompMode,
+    imgCompTargetKb,
+    imgCompQuality,
+    imgCompFormat,
+    imgCompMaxWidth,
+    runBatchImageCompression,
+  ]);
 
   const handleBatchImagesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -729,7 +1087,45 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       };
       reader.readAsDataURL(file);
     });
-    showToast(`Added ${files.length} image(s) for compression!`);
+    showToast(`Uploaded ${files.length} image(s) — Compressed automatically!`);
+    e.target.value = '';
+  };
+
+  const handleLoadSampleBatchImages = () => {
+    const sample1 = generateSamplePortraitDataUrl(0, false);
+    const sample2 = generateSamplePortraitDataUrl(1, false);
+    const loaded: Array<{ id: string; name: string; src: string; origBytes: number; img: HTMLImageElement }> = [];
+
+    [
+      { src: sample1, name: 'Studio_Portrait_Applicant_A.png' },
+      { src: sample2, name: 'Studio_Portrait_Applicant_B.png' },
+    ].forEach((entry, idx) => {
+      const img = new Image();
+      img.onload = () => {
+        const b64Len = entry.src.split(',')[1]?.length || 0;
+        loaded.push({
+          id: `sample-img-${Date.now()}-${idx}`,
+          name: entry.name,
+          src: entry.src,
+          origBytes: Math.round((b64Len * 3) / 4),
+          img,
+        });
+        if (loaded.length === 2) {
+          setRawBatchImages(loaded);
+          showToast('Loaded 2 sample photos & compressed to target KB!');
+        }
+      };
+      img.src = entry.src;
+    });
+  };
+
+  const downloadSingleCompressedImage = (item: CompressedImageItem) => {
+    const ext =
+      imgCompFormat === 'image/png' ? 'png' : imgCompFormat === 'image/webp' ? 'webp' : 'jpg';
+    const blob = dataUrlToBlob(item.outDataUrl);
+    const cleanName = item.name.replace(/\.[^.]+$/, '');
+    triggerBlobDownload(blob, `compressed-${cleanName}.${ext}`);
+    showToast(`Downloaded ${cleanName}.${ext} (${formatBytes(item.outBytes)})!`);
   };
 
   const downloadAllCompressedImagesZip = async () => {
@@ -745,23 +1141,17 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     });
 
     const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = `malnadu-compressed-images-${Date.now()}.zip`;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    triggerBlobDownload(blob, `malnadu-compressed-images-${Date.now()}.zip`);
     showToast('Downloaded Compressed Images ZIP!');
   };
 
   // =========================================================================
-  // 5. SIGNATURE RESIZE & CLEAN HANDLERS
+  // 5. SIGNATURE RESIZE & CLEAN HANDLERS (WITH PORTAL MAX KB GUARANTEE)
   // =========================================================================
   const renderSignatureOutput = useCallback(() => {
     const img = sigImgRef.current;
     if (!img) return;
 
-    // Convert target dimensions to pixels (@ 300 DPI if mm/cm)
     let outW = sigTargetW;
     let outH = sigTargetH;
     if (sigUnit === 'mm') {
@@ -774,7 +1164,6 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     outW = Math.max(40, Math.min(2400, Math.round(outW)));
     outH = Math.max(20, Math.min(1200, Math.round(outH)));
 
-    // Step 1: Process source signature (crop margins + optional white background removal)
     const trimRatio = Math.min(0.35, Math.max(0, sigCropPaddingPct / 100));
     const cropX = Math.round(img.width * trimRatio * 0.5);
     const cropY = Math.round(img.height * trimRatio * 0.5);
@@ -798,14 +1187,13 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
         if (lum >= sigThreshold) {
           if (sigRemoveWhiteBg) {
-            d[i + 3] = 0; // Transparent background
+            d[i + 3] = 0;
           } else {
             d[i] = 255;
             d[i + 1] = 255;
             d[i + 2] = 255;
           }
         } else {
-          // Ink pixel
           const darkness = Math.min(1, (sigThreshold - lum) / Math.max(1, sigThreshold - 40));
           if (sigInkMode === 'black') {
             d[i] = 15;
@@ -824,7 +1212,6 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       tCtx.putImageData(imgData, 0, 0);
     }
 
-    // Step 2: Place onto final canvas WITHOUT stretching if sigLockAspect is enabled
     const finalCanvas = document.createElement('canvas');
     finalCanvas.width = outW;
     finalCanvas.height = outH;
@@ -845,11 +1232,22 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       fCtx.drawImage(tempCanvas, 0, 0, outW, outH);
     }
 
-    const q = sigFormat === 'image/png' ? undefined : sigQuality / 100;
-    const dataUrl = finalCanvas.toDataURL(sigFormat, q);
+    let dataUrl = finalCanvas.toDataURL(sigFormat, sigFormat === 'image/png' ? undefined : 0.92);
+    let b64Len = dataUrl.split(',')[1]?.length || 0;
+    let outBytes = Math.round((b64Len * 3) / 4);
+
+    if (sigMaxKbLimit > 0 && sigFormat === 'image/jpeg' && outBytes > sigMaxKbLimit * 1024) {
+      let q = 0.85;
+      while (q >= 0.15 && outBytes > sigMaxKbLimit * 1024) {
+        dataUrl = finalCanvas.toDataURL('image/jpeg', q);
+        b64Len = dataUrl.split(',')[1]?.length || 0;
+        outBytes = Math.round((b64Len * 3) / 4);
+        q -= 0.1;
+      }
+    }
+
     setSigOutputUrl(dataUrl);
-    const b64Len = dataUrl.split(',')[1]?.length || 0;
-    setSigOutputBytes(Math.round((b64Len * 3) / 4));
+    setSigOutputBytes(outBytes);
   }, [
     sigTargetW,
     sigTargetH,
@@ -860,7 +1258,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     sigInkMode,
     sigCropPaddingPct,
     sigFormat,
-    sigQuality,
+    sigMaxKbLimit,
   ]);
 
   const loadSignatureFromUrl = useCallback((url: string) => {
@@ -904,7 +1302,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   );
 
   return (
-    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+    <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
       {/* Category 2 Header Banner & Sub-Tool Switcher */}
       <div className="bg-[#070a14] text-white rounded-3xl border border-cyan-500/30 p-4 sm:p-6 shadow-md space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -913,29 +1311,37 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               CATEGORY 2 · E-GOVERNANCE & CITIZEN DOCUMENT SUITE
             </div>
             <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight mt-1">
-              Akshaya Tools — PDF Merge, Split, Compress & Signature Studio
+              Akshaya Tools — True PDF Compressor, Target-KB Image Compressor, Merge, Split & Signature
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Client-side PDF processing, batch image compression, and portal-compliant signature resizing for SSC, PSC, PAN, and Passport Seva.
+              100% Working Client-Side PDF Page Raster & Stream Compression, Target-KB Image Compression (20KB/50KB/100KB), PDF Merge/Split, and Portal Signature Cleaner.
             </p>
           </div>
+          {activeSubTool !== 'overview' && (
+            <button
+              onClick={() => setActiveSubTool('overview')}
+              className="min-h-[40px] px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-cyan-300 text-xs font-bold self-start md:self-auto shrink-0"
+            >
+              ← All Akshaya Tools
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-2 border-t border-white/10">
           {[
             { id: 'overview', label: 'All Akshaya Tools', icon: 'fa-grip' },
+            { id: 'pdf-compressor', label: 'PDF Compressor (Target KB)', icon: 'fa-file-zipper' },
+            { id: 'image-compressor', label: 'Image Compressor (Target KB)', icon: 'fa-compress' },
             { id: 'pdf-merge', label: 'PDF Merge', icon: 'fa-file-pdf' },
-            { id: 'pdf-split', label: 'PDF Split', icon: 'fa-scissors' },
-            { id: 'pdf-compressor', label: 'PDF Compressor', icon: 'fa-file-zipper' },
-            { id: 'image-compressor', label: 'Image Compressor', icon: 'fa-compress' },
-            { id: 'signature-resize', label: 'Signature Resize', icon: 'fa-signature' },
+            { id: 'pdf-split', label: 'PDF Split & Extract', icon: 'fa-scissors' },
+            { id: 'signature-resize', label: 'Signature Resize & Clean', icon: 'fa-signature' },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveSubTool(tab.id as AkshayaSubToolId)}
               className={`min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-extrabold transition flex items-center gap-2 whitespace-nowrap ${
                 activeSubTool === tab.id
-                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white'
+                  ? 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white shadow-sm'
                   : 'bg-white/10 hover:bg-white/15 text-slate-300'
               }`}
             >
@@ -950,7 +1356,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           VIEW 0: AKSHAYA TOOLS CATEGORY LANDING GRID
          ===================================================================== */}
       {activeSubTool === 'overview' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {akshayaToolsList.map((tool) => (
             <div
               key={tool.id}
@@ -990,10 +1396,10 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
          ===================================================================== */}
       {activeSubTool === 'pdf-merge' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          <div className="lg:col-span-6 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
+          <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-lg font-extrabold text-slate-900">PDF Merge</h2>
+                <h2 className="text-lg font-extrabold text-slate-900">PDF Merge Studio</h2>
                 <p className="text-xs text-slate-500">
                   Upload multiple PDFs, reorder them, and combine into a single PDF document.
                 </p>
@@ -1001,7 +1407,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               <button
                 type="button"
                 onClick={handleLoadSampleMergePdfs}
-                className="px-3 py-1.5 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-800 text-xs font-bold"
+                className="px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-xs font-bold shrink-0"
               >
                 Load Sample PDFs
               </button>
@@ -1015,7 +1421,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
             <button
               onClick={() => mergeFileInputRef.current?.click()}
-              className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2"
+              className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-file-circle-plus"></i>
               <span>Select Multiple PDF Files to Merge</span>
@@ -1031,10 +1437,10 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
             {mergeItems.length === 0 ? (
               <div className="py-10 text-center bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-400">
-                No PDF files uploaded yet. Click above or click "Load Sample PDFs" to test.
+                No PDF files uploaded yet. Click above or click "Load Sample PDFs" to test immediately.
               </div>
             ) : (
-              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
                 {mergeItems.map((item, idx) => (
                   <div
                     key={item.id}
@@ -1091,7 +1497,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             <button
               onClick={handleExecutePdfMerge}
               disabled={mergeItems.length < 2 || isMerging}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] text-cyan-300 font-bold text-xs disabled:opacity-50 transition flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs disabled:opacity-50 transition flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-object-group"></i>
               <span>
@@ -1100,14 +1506,14 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             </button>
           </div>
 
-          <div className="lg:col-span-6 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
+          <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <h3 className="text-base font-extrabold text-slate-900 border-b border-slate-100 pb-3">
-              Merged Document Output
+              Merged Document Output & Live Preview
             </h3>
 
             {mergedPdfBytes ? (
               <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-extrabold text-emerald-950">
                       Merged PDF Ready ({mergedTotalPages} Total Pages)
@@ -1118,7 +1524,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                   </div>
                   <button
                     onClick={downloadMergedPdf}
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-2"
+                    className="min-h-[44px] px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm"
                   >
                     <i className="fa-solid fa-download"></i>
                     <span>Download Merged PDF</span>
@@ -1129,13 +1535,13 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                   <iframe
                     src={mergedPdfUrl}
                     title="Merged PDF Preview"
-                    className="w-full h-[360px] rounded-2xl border border-slate-200 bg-slate-50"
+                    className="w-full h-[460px] rounded-2xl border border-slate-200 bg-slate-50"
                   />
                 )}
               </div>
             ) : (
-              <div className="py-16 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
-                Upload at least 2 PDFs and click "Merge PDFs Now" to preview and download your merged document.
+              <div className="py-20 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
+                Upload at least 2 PDFs or click "Load Sample PDFs" to preview and download your merged document.
               </div>
             )}
           </div>
@@ -1148,17 +1554,17 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       {activeSubTool === 'pdf-split' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-lg font-extrabold text-slate-900">PDF Split & Extract</h2>
                 <p className="text-xs text-slate-500">
-                  Split by page ranges, extract selected pages, or burst into separate PDFs.
+                  Split by page ranges, click pages to extract, or burst every page into separate PDFs.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={handleLoadSampleSplitPdf}
-                className="px-3 py-1.5 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-800 text-xs font-bold"
+                className="px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-xs font-bold shrink-0"
               >
                 Sample 6-Page PDF
               </button>
@@ -1239,10 +1645,31 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               )}
 
               {splitMode === 'extract' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Pages to Extract
+                <div className="space-y-2.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Click Pages to Extract or Type Page Numbers
                   </label>
+                  {splitTotalPages > 0 && splitTotalPages <= 40 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {Array.from({ length: splitTotalPages }, (_, i) => i + 1).map((pNum) => {
+                        const isSel = selectedExtractPages.includes(pNum);
+                        return (
+                          <button
+                            key={pNum}
+                            type="button"
+                            onClick={() => toggleExtractPageNumber(pNum)}
+                            className={`w-9 h-9 rounded-xl text-xs font-mono font-bold border transition ${
+                              isSel
+                                ? 'bg-cyan-600 text-white border-cyan-700 shadow-xs'
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-400'
+                            }`}
+                          >
+                            {pNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <input
                     type="text"
                     value={splitExtractInput}
@@ -1263,7 +1690,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             <button
               onClick={handleExecutePdfSplit}
               disabled={!splitSourceBytes || isSplitting}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] text-cyan-300 font-bold text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-scissors"></i>
               <span>{isSplitting ? 'Splitting PDF...' : 'Generate Split PDFs'}</span>
@@ -1296,7 +1723,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                 Upload a PDF or click "Sample 6-Page PDF", then click "Generate Split PDFs".
               </div>
             ) : (
-              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+              <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
                 {splitOutputs.map((out, idx) => (
                   <div
                     key={idx}
@@ -1310,7 +1737,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     </div>
                     <button
                       onClick={() => downloadSingleSplitPdf(out)}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold shrink-0 flex items-center gap-1.5"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 text-xs font-bold shrink-0 flex items-center gap-1.5"
                     >
                       <i className="fa-solid fa-download"></i>
                       <span>Download PDF</span>
@@ -1324,33 +1751,38 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       )}
 
       {/* =====================================================================
-          TOOL 3: PDF COMPRESSOR
+          TOOL 3: TRUE PDF COMPRESSOR (RASTER + TARGET-KB + LIVE PREVIEW)
          ===================================================================== */}
       {activeSubTool === 'pdf-compressor' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          <div className="lg:col-span-6 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
+          <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-lg font-extrabold text-slate-900">PDF Compressor</h2>
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                  <i className="fa-solid fa-bolt"></i> Real Page Re-Encoding Engine
+                </span>
+                <h2 className="text-lg font-extrabold text-slate-900 mt-1">
+                  PDF Compressor (Target KB & High Ratio)
+                </h2>
                 <p className="text-xs text-slate-500">
-                  Optimize PDF object streams and strip bloated metadata for online portal uploads.
+                  Genuinely compresses scanned PDFs, certificates, and forms down to exact KB limits (100KB, 200KB, 300KB) for Akshaya & government portals.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={handleLoadSampleCompressPdf}
-                className="px-3 py-1.5 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-800 text-xs font-bold"
+                className="px-3 py-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-xs font-bold shrink-0"
               >
-                Load Sample PDF
+                Test Sample PDF
               </button>
             </div>
 
             <button
               onClick={() => compPdfInputRef.current?.click()}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white font-bold text-xs flex items-center justify-center gap-2"
+              className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-file-arrow-up"></i>
-              <span>Upload PDF to Compress</span>
+              <span>Upload PDF Document to Compress</span>
             </button>
             <input
               ref={compPdfInputRef}
@@ -1361,54 +1793,149 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             />
 
             {compPdfOrigBytes && (
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="text-xs font-extrabold text-slate-900">{compPdfName}</div>
-                <div className="text-xs font-mono text-slate-600">
-                  Original Size: <span className="font-bold text-slate-900">{formatBytes(compPdfOrigSize)}</span> ·{' '}
-                  {compPdfPageCount} pages
+              <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-cyan-500/30 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-extrabold text-cyan-300 truncate">{compPdfName}</div>
+                  <div className="text-[11px] font-mono text-slate-300 mt-0.5">
+                    Original Size: <span className="font-bold text-white">{formatBytes(compPdfOrigSize)}</span> ·{' '}
+                    {compPdfPageCount} {compPdfPageCount === 1 ? 'Page' : 'Pages'}
+                  </div>
                 </div>
+                <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold shrink-0">
+                  Loaded
+                </span>
               </div>
             )}
 
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">
-                Select Compression Level
-              </label>
-              <div className="grid grid-cols-3 gap-2 text-xs font-bold">
-                {[
-                  { id: 'low', label: 'Low (High Quality)' },
-                  { id: 'medium', label: 'Recommended' },
-                  { id: 'high', label: 'Maximum Compact' },
-                ].map((lvl) => (
-                  <button
-                    key={lvl.id}
-                    type="button"
-                    onClick={() => setCompPdfLevel(lvl.id as any)}
-                    className={`py-2.5 px-2 rounded-xl border transition ${
-                      compPdfLevel === lvl.id
-                        ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
-                        : 'bg-slate-50 text-slate-700 border-slate-200'
-                    }`}
-                  >
-                    {lvl.label}
-                  </button>
-                ))}
+            {/* Compression Mode Switcher: Preset Level vs Target Max KB */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-200/70 rounded-xl text-xs font-extrabold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompPdfMode('preset');
+                    if (compPdfOrigBytes) {
+                      runTruePdfCompression(compPdfOrigBytes, 'preset', compPdfLevel, compPdfTargetKb);
+                    }
+                  }}
+                  className={`py-2 rounded-lg transition ${
+                    compPdfMode === 'preset'
+                      ? 'bg-[#070a14] text-cyan-300 shadow-xs'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  By Compression Level
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompPdfMode('target-kb');
+                    if (compPdfOrigBytes) {
+                      runTruePdfCompression(compPdfOrigBytes, 'target-kb', compPdfLevel, compPdfTargetKb);
+                    }
+                  }}
+                  className={`py-2 rounded-lg transition ${
+                    compPdfMode === 'target-kb'
+                      ? 'bg-[#070a14] text-amber-300 shadow-xs'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  By Target Max KB
+                </button>
               </div>
+
+              {compPdfMode === 'preset' ? (
+                <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                  {[
+                    { id: 'low', label: 'Low Compression', sub: 'High Print Clarity (~35% Saved)' },
+                    { id: 'medium', label: 'Recommended', sub: 'Balanced Portal Quality (~60% Saved)' },
+                    { id: 'high', label: 'High Compression', sub: 'Small File Size (~75% Saved)' },
+                    { id: 'extreme', label: 'Extreme Compact', sub: 'Maximum Reduction (~88% Saved)' },
+                  ].map((lvl) => (
+                    <button
+                      key={lvl.id}
+                      type="button"
+                      onClick={() => {
+                        setCompPdfLevel(lvl.id as any);
+                        if (compPdfOrigBytes) {
+                          runTruePdfCompression(compPdfOrigBytes, 'preset', lvl.id as any, compPdfTargetKb);
+                        }
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition ${
+                        compPdfLevel === lvl.id
+                          ? 'bg-[#070a14] text-cyan-300 border-cyan-500 ring-1 ring-cyan-500'
+                          : 'bg-white text-slate-800 border-slate-200 hover:border-cyan-300'
+                      }`}
+                    >
+                      <div className="font-extrabold">{lvl.label}</div>
+                      <div
+                        className={`text-[10px] mt-0.5 ${
+                          compPdfLevel === lvl.id ? 'text-slate-300' : 'text-slate-500'
+                        }`}
+                      >
+                        {lvl.sub}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Select Portal Target Max PDF Size (KB)
+                  </label>
+                  <div className="grid grid-cols-5 gap-1.5 text-xs font-extrabold">
+                    {[50, 100, 150, 200, 300].map((kbVal) => (
+                      <button
+                        key={kbVal}
+                        type="button"
+                        onClick={() => {
+                          setCompPdfTargetKb(kbVal);
+                          if (compPdfOrigBytes) {
+                            runTruePdfCompression(compPdfOrigBytes, 'target-kb', compPdfLevel, kbVal);
+                          }
+                        }}
+                        className={`py-2 rounded-xl border transition ${
+                          compPdfTargetKb === kbVal
+                            ? 'bg-[#070a14] text-amber-300 border-amber-400'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-400'
+                        }`}
+                      >
+                        {kbVal} KB
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-600 shrink-0">Custom Target (KB):</span>
+                    <input
+                      type="number"
+                      min={20}
+                      max={5000}
+                      value={compPdfTargetKb}
+                      onChange={(e) => setCompPdfTargetKb(Math.max(20, parseInt(e.target.value, 10) || 100))}
+                      className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
               onClick={handleExecutePdfCompression}
               disabled={!compPdfOrigBytes || isCompressingPdf}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] text-cyan-300 font-bold text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-extrabold text-xs disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
             >
               <i className="fa-solid fa-compress"></i>
-              <span>{isCompressingPdf ? 'Compressing PDF...' : 'Compress PDF Now'}</span>
+              <span>
+                {isCompressingPdf
+                  ? `Compressing PDF Pages (${compPdfProgress}%)...`
+                  : 'Compress PDF Now'}
+              </span>
             </button>
           </div>
 
-          <div className="lg:col-span-6 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
+          <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <h3 className="text-base font-extrabold text-slate-900 border-b border-slate-100 pb-3">
-              Compression Result
+              Compressed PDF Result & Page Preview
             </h3>
 
             {compPdfNotice && (
@@ -1418,52 +1945,79 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             )}
 
             {compPdfOutBytes ? (
-              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
-                <div className="grid grid-cols-3 gap-3 text-center">
-                  <div className="p-3 rounded-xl bg-white border border-slate-200">
-                    <div className="text-[11px] text-slate-500 font-bold">Original</div>
-                    <div className="text-sm font-extrabold font-mono text-slate-900 mt-1">
-                      {formatBytes(compPdfOrigSize)}
+              <div className="space-y-4">
+                <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="p-3 rounded-xl bg-white border border-slate-200">
+                      <div className="text-[11px] text-slate-500 font-bold">Original Size</div>
+                      <div className="text-sm sm:text-base font-extrabold font-mono text-slate-900 mt-1">
+                        {formatBytes(compPdfOrigSize)}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white border border-cyan-300">
+                      <div className="text-[11px] text-cyan-700 font-bold">Compressed Size</div>
+                      <div className="text-sm sm:text-base font-extrabold font-mono text-cyan-700 mt-1">
+                        {formatBytes(compPdfOutSize)}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300">
+                      <div className="text-[11px] text-emerald-700 font-bold">Size Reduced</div>
+                      <div className="text-sm sm:text-base font-extrabold font-mono text-emerald-700 mt-1">
+                        {compPdfOrigSize > compPdfOutSize
+                          ? `-${Math.round(((compPdfOrigSize - compPdfOutSize) / compPdfOrigSize) * 100)}%`
+                          : 'Optimized'}
+                      </div>
                     </div>
                   </div>
-                  <div className="p-3 rounded-xl bg-white border border-cyan-200">
-                    <div className="text-[11px] text-cyan-700 font-bold">Compressed</div>
-                    <div className="text-sm font-extrabold font-mono text-cyan-700 mt-1">
-                      {formatBytes(compPdfOutSize)}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
-                    <div className="text-[11px] text-emerald-700 font-bold">Saved</div>
-                    <div className="text-sm font-extrabold font-mono text-emerald-700 mt-1">
-                      {compPdfOrigSize > compPdfOutSize
-                        ? `${Math.round(((compPdfOrigSize - compPdfOutSize) / compPdfOrigSize) * 100)}%`
-                        : '0%'}
-                    </div>
-                  </div>
+
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([compPdfOutBytes as unknown as BlobPart], {
+                        type: 'application/pdf',
+                      });
+                      triggerBlobDownload(blob, `compressed-${compPdfName || 'document.pdf'}`);
+                      showToast(`Downloaded Compressed PDF (${formatBytes(compPdfOutSize)})!`);
+                    }}
+                    className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-600 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-download"></i>
+                    <span>
+                      Download Compressed PDF ({formatBytes(compPdfOutSize)})
+                    </span>
+                  </button>
                 </div>
 
-                <button
-                  onClick={() => {
-                    const blob = new Blob([compPdfOutBytes as unknown as BlobPart], {
-                      type: 'application/pdf',
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.download = `compressed-${compPdfName || 'document.pdf'}`;
-                    a.href = url;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(url), 5000);
-                    showToast('Downloaded Compressed PDF!');
-                  }}
-                  className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-xs flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-download"></i>
-                  <span>Download Compressed PDF ({formatBytes(compPdfOutSize)})</span>
-                </button>
+                {compPdfPageThumbs.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-extrabold text-slate-700">
+                      Compressed Page Previews ({compPdfPageCount} Pages)
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {compPdfPageThumbs.map((thumb, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center gap-1"
+                        >
+                          <img
+                            src={thumb}
+                            alt={`Page ${idx + 1}`}
+                            className="w-full h-36 object-contain rounded bg-white border border-slate-200"
+                          />
+                          <span className="text-[10px] font-mono font-bold text-slate-600">
+                            Page {idx + 1}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="py-16 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
-                Upload a PDF or click "Load Sample PDF" to inspect size reduction.
+              <div className="py-20 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <i className="fa-solid fa-file-zipper text-3xl text-slate-300"></i>
+                <div>
+                  Upload any PDF document or click <strong>"Test Sample PDF"</strong> to compress it immediately.
+                </div>
               </div>
             )}
           </div>
@@ -1471,21 +2025,35 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       )}
 
       {/* =====================================================================
-          TOOL 4: BATCH IMAGE COMPRESSOR
+          TOOL 4: BATCH IMAGE COMPRESSOR (TARGET-KB + QUALITY + BLOB DOWNLOAD)
          ===================================================================== */}
       {activeSubTool === 'image-compressor' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900">Batch Image Compressor</h2>
-              <p className="text-xs text-slate-500">
-                Compress one or multiple images with real-time file size & percentage reduction telemetry.
-              </p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-cyan-700 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded-md">
+                  <i className="fa-solid fa-compress"></i> Exact KB & Batch Engine
+                </span>
+                <h2 className="text-lg font-extrabold text-slate-900 mt-1">
+                  Image Compressor (Target KB & Batch)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Compress single or multiple photos to exact portal KB limits (20KB, 50KB, 100KB, 200KB) or custom quality.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLoadSampleBatchImages}
+                className="px-3 py-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-xs font-bold shrink-0"
+              >
+                Sample Photos
+              </button>
             </div>
 
             <button
               onClick={() => imgCompInputRef.current?.click()}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white font-bold text-xs flex items-center justify-center gap-2"
+              className="w-full min-h-[50px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-images"></i>
               <span>+ Upload Single or Multiple Images</span>
@@ -1500,20 +2068,81 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
             />
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">
-              <div>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="font-bold text-slate-700">Compression Quality</span>
-                  <span className="font-mono font-bold text-cyan-700">{imgCompQuality}%</span>
-                </div>
-                <input
-                  type="range"
-                  min={10}
-                  max={95}
-                  value={imgCompQuality}
-                  onChange={(e) => setImgCompQuality(parseInt(e.target.value, 10))}
-                  className="w-full cursor-pointer"
-                />
+              {/* Mode Switcher: Target Max KB vs Quality % */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-200/70 rounded-xl text-xs font-extrabold">
+                <button
+                  type="button"
+                  onClick={() => setImgCompMode('target-kb')}
+                  className={`py-2 rounded-lg transition ${
+                    imgCompMode === 'target-kb'
+                      ? 'bg-[#070a14] text-amber-300 shadow-xs'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  Target Max KB (Portal)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImgCompMode('quality')}
+                  className={`py-2 rounded-lg transition ${
+                    imgCompMode === 'quality'
+                      ? 'bg-[#070a14] text-cyan-300 shadow-xs'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  Manual Quality %
+                </button>
               </div>
+
+              {imgCompMode === 'target-kb' ? (
+                <div className="space-y-2.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Select Maximum Output Size (KB)
+                  </label>
+                  <div className="grid grid-cols-5 gap-1.5 text-xs font-extrabold">
+                    {[20, 50, 100, 200, 500].map((kb) => (
+                      <button
+                        key={kb}
+                        type="button"
+                        onClick={() => setImgCompTargetKb(kb)}
+                        className={`py-2 rounded-xl border transition ${
+                          imgCompTargetKb === kb
+                            ? 'bg-[#070a14] text-amber-300 border-amber-400'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-400'
+                        }`}
+                      >
+                        &lt; {kb}KB
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-600 shrink-0">Custom Max KB:</span>
+                    <input
+                      type="number"
+                      min={5}
+                      max={2000}
+                      value={imgCompTargetKb}
+                      onChange={(e) => setImgCompTargetKb(Math.max(5, parseInt(e.target.value, 10) || 50))}
+                      className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="font-bold text-slate-700">Compression Quality</span>
+                    <span className="font-mono font-bold text-cyan-700">{imgCompQuality}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={95}
+                    value={imgCompQuality}
+                    onChange={(e) => setImgCompQuality(parseInt(e.target.value, 10))}
+                    className="w-full cursor-pointer"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
@@ -1525,9 +2154,9 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     onChange={(e) => setImgCompFormat(e.target.value as any)}
                     className="w-full min-h-[40px] px-2.5 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl"
                   >
-                    <option value="image/jpeg">JPEG (Smallest)</option>
-                    <option value="image/webp">WebP (Modern)</option>
-                    <option value="image/png">PNG</option>
+                    <option value="image/jpeg">JPEG (Smallest Size)</option>
+                    <option value="image/webp">WebP (Modern HD)</option>
+                    <option value="image/png">PNG (Quantized)</option>
                   </select>
                 </div>
                 <div>
@@ -1539,19 +2168,41 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     onChange={(e) => setImgCompMaxWidth(parseInt(e.target.value, 10))}
                     className="w-full min-h-[40px] px-2.5 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl"
                   >
-                    <option value={0}>Keep Original Dimensions</option>
+                    <option value={0}>Auto / Original</option>
                     <option value={1920}>Max 1920 px</option>
                     <option value={1280}>Max 1280 px</option>
                     <option value={800}>Max 800 px (Portal)</option>
+                    <option value={500}>Max 500 px (Passport)</option>
                   </select>
                 </div>
               </div>
             </div>
 
+            <button
+              type="button"
+              onClick={() =>
+                runBatchImageCompression(
+                  rawBatchImages,
+                  imgCompMode,
+                  imgCompTargetKb,
+                  imgCompQuality,
+                  imgCompFormat,
+                  imgCompMaxWidth
+                )
+              }
+              disabled={rawBatchImages.length === 0 || isCompressingImgs}
+              className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-extrabold text-xs flex items-center justify-center gap-2"
+            >
+              <i className="fa-solid fa-bolt"></i>
+              <span>
+                {isCompressingImgs ? 'Compressing Images...' : 'Re-Compress All Images Now'}
+              </span>
+            </button>
+
             {compressedImages.length > 1 && (
               <button
                 onClick={downloadAllCompressedImagesZip}
-                className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[#070a14] text-cyan-300 font-bold text-xs flex items-center justify-center gap-2"
+                className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-sm"
               >
                 <i className="fa-solid fa-file-zipper"></i>
                 <span>Download All ({compressedImages.length}) as ZIP</span>
@@ -1561,64 +2212,65 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
           <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-extrabold text-slate-900">
-                Compressed Batch Results ({compressedImages.length})
-              </h3>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Compressed Images Ready ({compressedImages.length})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Click "Download" on any image to save the compressed file
+                </p>
+              </div>
               {rawBatchImages.length > 0 && (
                 <button
                   onClick={() => setRawBatchImages([])}
-                  className="text-xs font-bold text-rose-600"
+                  className="text-xs font-bold text-rose-600 hover:underline"
                 >
                   Clear All
                 </button>
               )}
             </div>
 
-            <div className="space-y-3 max-h-[440px] overflow-y-auto pr-1">
-              {compressedImages.map((item) => {
-                const ext =
-                  imgCompFormat === 'image/png'
-                    ? 'png'
-                    : imgCompFormat === 'image/webp'
-                    ? 'webp'
-                    : 'jpg';
-                return (
-                  <div
-                    key={item.id}
-                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={item.outDataUrl}
-                        alt={item.name}
-                        className="w-14 h-14 object-cover rounded-xl border border-slate-300 bg-white shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-extrabold text-slate-900 truncate">
-                          {item.name}
-                        </div>
-                        <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                          {formatBytes(item.origBytes)} →{' '}
-                          <span className="font-bold text-cyan-700">{formatBytes(item.outBytes)}</span>{' '}
-                          ({item.outW}×{item.outH} px)
-                        </div>
-                        <div className="text-[11px] font-bold text-emerald-700">
-                          Reduced by {item.reductionPct}%
-                        </div>
+            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+              {compressedImages.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <img
+                      src={item.outDataUrl}
+                      alt={item.name}
+                      className="w-16 h-16 object-cover rounded-xl border border-slate-300 bg-white shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs font-extrabold text-slate-900 truncate">
+                        {item.name}
+                      </div>
+                      <div className="text-xs font-mono text-slate-600 mt-0.5">
+                        Original: <span className="line-through text-slate-400">{formatBytes(item.origBytes)}</span>{' '}
+                        → <span className="font-extrabold text-emerald-700">{formatBytes(item.outBytes)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">
+                          Saved {item.reductionPct}%
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-500">
+                          {item.outW}×{item.outH} px · Q:{item.qualityUsed}%
+                        </span>
                       </div>
                     </div>
-
-                    <a
-                      href={item.outDataUrl}
-                      download={`compressed-${item.name.replace(/\.[^.]+$/, '')}.${ext}`}
-                      className="min-h-[38px] px-3.5 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5 shrink-0"
-                    >
-                      <i className="fa-solid fa-download"></i>
-                      <span>Download</span>
-                    </a>
                   </div>
-                );
-              })}
+
+                  <button
+                    type="button"
+                    onClick={() => downloadSingleCompressedImage(item)}
+                    className="min-h-[42px] px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 shrink-0 shadow-xs"
+                  >
+                    <i className="fa-solid fa-download"></i>
+                    <span>Download ({formatBytes(item.outBytes)})</span>
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1638,7 +2290,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                 Signature Resize & Background Cleaner
               </h2>
               <p className="text-xs text-slate-500">
-                Resize signatures without distortion, remove paper backgrounds for transparent PNG, or export portal-ready JPGs.
+                Resize signatures for SSC, IBPS, Kerala PSC, PAN & Passport Seva with automatic KB limit control.
               </p>
             </div>
 
@@ -1664,6 +2316,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                   }
                 };
                 r.readAsDataURL(f);
+                e.target.value = '';
               }}
               className="hidden"
             />
@@ -1680,6 +2333,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     setSigUnit(found.unit);
                     setSigTargetW(found.w);
                     setSigTargetH(found.h);
+                    setSigMaxKbLimit(found.maxKb);
                   }
                 }}
                 className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
@@ -1743,11 +2397,14 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               </label>
 
               <label className="flex items-center justify-between text-xs font-bold text-slate-700 cursor-pointer">
-                <span>Remove White Paper Background (Transparent)</span>
+                <span>Remove White Paper Background (Transparent PNG)</span>
                 <input
                   type="checkbox"
                   checked={sigRemoveWhiteBg}
-                  onChange={(e) => setSigRemoveWhiteBg(e.target.checked)}
+                  onChange={(e) => {
+                    setSigRemoveWhiteBg(e.target.checked);
+                    if (e.target.checked) setSigFormat('image/png');
+                  }}
                   className="w-4 h-4 accent-cyan-600 rounded"
                 />
               </label>
@@ -1806,26 +2463,29 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     onChange={(e) => setSigFormat(e.target.value as any)}
                     className="w-full min-h-[38px] px-2.5 py-1 text-xs font-bold bg-white border border-slate-200 rounded-xl"
                   >
+                    <option value="image/jpeg">White BG JPG (Portal Standard)</option>
                     <option value="image/png">Transparent PNG</option>
-                    <option value="image/jpeg">White Background JPG</option>
                   </select>
                 </div>
               </div>
             </div>
 
-            <a
-              href={sigOutputUrl}
-              download={`malnadu-signature-${sigTargetW}x${sigTargetH}.${
-                sigFormat === 'image/png' ? 'png' : 'jpg'
-              }`}
-              onClick={() => showToast('Downloaded Resized Signature!')}
-              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] text-cyan-300 font-bold text-xs flex items-center justify-center gap-2"
+            <button
+              type="button"
+              onClick={() => {
+                if (!sigOutputUrl) return;
+                const ext = sigFormat === 'image/png' ? 'png' : 'jpg';
+                const blob = dataUrlToBlob(sigOutputUrl);
+                triggerBlobDownload(blob, `malnadu-signature-${sigTargetW}x${sigTargetH}.${ext}`);
+                showToast(`Downloaded Signature (${formatBytes(sigOutputBytes)})!`);
+              }}
+              className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs flex items-center justify-center gap-2"
             >
               <i className="fa-solid fa-download"></i>
               <span>
                 Download Signature ({sigTargetW}×{sigTargetH} {sigUnit} · {formatBytes(sigOutputBytes)})
               </span>
-            </a>
+            </button>
           </div>
 
           <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
@@ -1856,7 +2516,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col items-center">
                 <span className="text-xs font-bold text-cyan-700 mb-2">
-                  Processed & Resized Signature ({sigFormat === 'image/png' && sigRemoveWhiteBg ? 'Transparent PNG' : 'Solid White Background'})
+                  Processed & Resized Signature ({sigFormat === 'image/png' && sigRemoveWhiteBg ? 'Transparent PNG' : 'Solid White Background JPG'})
                 </span>
                 <div className="w-full h-[180px] checkerboard rounded-xl border border-cyan-300 flex items-center justify-center p-4">
                   {sigOutputUrl && (

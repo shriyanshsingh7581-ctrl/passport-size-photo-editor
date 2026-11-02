@@ -356,10 +356,23 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
     ctx.drawImage(raw, -raw.width / 2, -raw.height / 2);
     ctx.restore();
 
+    const dataUrl = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
+    const parts = dataUrl.split(',');
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    const blob = new Blob([u8arr], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = `malnadu-media-bg-removed.${format}`;
-    link.href = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
+    link.href = url;
+    document.body.appendChild(link);
     link.click();
+    setTimeout(() => {
+      if (document.body.contains(link)) document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 4000);
     showToast(`Downloaded ${format.toUpperCase()} Cutout!`);
   };
 
@@ -522,10 +535,23 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       c.width = img.width;
       c.height = img.height;
       c.getContext('2d')!.drawImage(img, 0, 0);
+      const dataUrl = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.97);
+      const parts = dataUrl.split(',');
+      const bstr = atob(parts[1] || '');
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) u8arr[n] = bstr.charCodeAt(n);
+      const blob = new Blob([u8arr], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.download = `malnadu-media-clarity-hd.${format}`;
-      a.href = c.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.97);
+      a.href = url;
+      document.body.appendChild(a);
       a.click();
+      setTimeout(() => {
+        if (document.body.contains(a)) document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 4000);
       showToast(`Downloaded Enhanced HD ${format.toUpperCase()}!`);
     };
     img.src = clarityEnhancedUrl;
@@ -573,10 +599,22 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
 
   const handleDownloadQrCode = () => {
     if (!qrDataUrl) return;
+    const parts = qrDataUrl.split(',');
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    const blob = new Blob([u8arr], { type: 'image/png' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.download = `malnadu-media-qr-${Date.now()}.png`;
-    a.href = qrDataUrl;
+    a.href = url;
+    document.body.appendChild(a);
     a.click();
+    setTimeout(() => {
+      if (document.body.contains(a)) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 4000);
     showToast('Downloaded High-Resolution QR Code PNG!');
   };
 
@@ -651,7 +689,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   }, []);
 
   return (
-    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+    <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
       {/* Top Tool Switcher Bar — Styled with MALNADU MEDIA Butterfly-Camera Logo Theme */}
       <div className="bg-[#070a14] rounded-3xl border border-cyan-500/30 p-3 sm:p-4 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">

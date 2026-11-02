@@ -1406,10 +1406,23 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
   const exportCurrentGraphic = (format: 'png' | 'jpg') => {
     if (!mainGraphicCanvasRef.current) return;
     const canvas = mainGraphicCanvasRef.current;
+    const dataUrl = canvas.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
+    const parts = dataUrl.split(',');
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    const blob = new Blob([u8arr], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.download = `malnadu-${activeSubTool}-${Date.now()}.${format}`;
-    a.href = canvas.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
+    a.href = url;
+    document.body.appendChild(a);
     a.click();
+    setTimeout(() => {
+      if (document.body.contains(a)) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 4000);
     showToast(`Exported ${canvas.width}×${canvas.height}px ${format.toUpperCase()}!`);
   };
 
@@ -1650,7 +1663,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
     activeSubTool !== 'video-converter';
 
   return (
-    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+    <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
       {/* Category 3 Header & Tool Bar */}
       <div className="bg-[#070a14] text-white rounded-3xl border border-cyan-500/30 p-4 sm:p-6 shadow-md space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

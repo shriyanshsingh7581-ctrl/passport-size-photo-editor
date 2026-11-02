@@ -106,7 +106,8 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   const [fitMode, setFitMode] = useState<'cover' | 'contain' | 'stretch'>('cover');
   const [padColor] = useState<string>('#FFFFFF');
   const [outputFormat, setOutputFormat] = useState<'image/jpeg' | 'image/png' | 'image/webp'>('image/jpeg');
-  const [outputQuality, setOutputQuality] = useState<number>(95);
+  const [outputQuality, setOutputQuality] = useState<number>(92);
+  const [resizeTargetMaxKb, setResizeTargetMaxKb] = useState<number>(0); // 0 = no limit
   const [resizedDataUrl, setResizedDataUrl] = useState<string>('');
   const [resizedPxW, setResizedPxW] = useState<number>(413);
   const [resizedPxH, setResizedPxH] = useState<number>(531);
@@ -170,12 +171,31 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
       ctx.drawImage(img, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
     }
 
-    const q = outputFormat === 'image/png' ? undefined : outputQuality / 100;
-    const outUrl = canvas.toDataURL(outputFormat, q);
-    setResizedDataUrl(outUrl);
+    let q = outputFormat === 'image/png' ? undefined : outputQuality / 100;
+    let outUrl = canvas.toDataURL(outputFormat, q);
+    let base64Len = outUrl.split(',')[1]?.length || 0;
+    let bytesCount = Math.round((base64Len * 3) / 4);
 
-    const base64Len = outUrl.split(',')[1]?.length || 0;
-    setResizedBytes(Math.round((base64Len * 3) / 4));
+    if (resizeTargetMaxKb > 0 && outputFormat !== 'image/png' && bytesCount > resizeTargetMaxKb * 1024) {
+      let lowQ = 0.08;
+      let highQ = q || 0.92;
+      for (let i = 0; i < 6; i++) {
+        const midQ = (lowQ + highQ) / 2;
+        const candidateUrl = canvas.toDataURL(outputFormat, midQ);
+        const cLen = candidateUrl.split(',')[1]?.length || 0;
+        const cBytes = Math.round((cLen * 3) / 4);
+        outUrl = candidateUrl;
+        bytesCount = cBytes;
+        if (cBytes > resizeTargetMaxKb * 1024) {
+          highQ = midQ;
+        } else {
+          lowQ = midQ;
+        }
+      }
+    }
+
+    setResizedDataUrl(outUrl);
+    setResizedBytes(bytesCount);
   }, [
     resizeWidthInput,
     resizeHeightInput,
@@ -185,6 +205,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     padColor,
     outputFormat,
     outputQuality,
+    resizeTargetMaxKb,
     convertToPixels,
   ]);
 
@@ -274,11 +295,25 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     if (!resizedDataUrl) return;
     const ext =
       outputFormat === 'image/png' ? 'png' : outputFormat === 'image/webp' ? 'webp' : 'jpg';
+    const parts = resizedDataUrl.split(',');
+    const mimeMatch = parts[0]?.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : outputFormat;
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    const blob = new Blob([u8arr], { type: mime });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.download = `malnadu-resized-${resizedPxW}x${resizedPxH}.${ext}`;
-    a.href = resizedDataUrl;
+    a.href = url;
+    document.body.appendChild(a);
     a.click();
-    showToast(`Downloaded ${resizedPxW}×${resizedPxH}px ${ext.toUpperCase()}!`);
+    setTimeout(() => {
+      if (document.body.contains(a)) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 4000);
+    showToast(`Downloaded ${resizedPxW}×${resizedPxH}px ${ext.toUpperCase()} (${formatBytes(resizedBytes)})!`);
   };
 
   const formatBytes = (bytes: number) => {
@@ -309,7 +344,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   ) {
     return (
       <div className="space-y-2">
-        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-4">
+        <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2 bg-[#070a14] text-white px-4 py-3 rounded-2xl border border-cyan-500/30">
             <div className="flex items-center gap-2.5">
               <button
@@ -362,7 +397,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+    <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
       {/* Studio Tools Category Header & Tool Switcher */}
       <div className="bg-[#070a14] text-white rounded-3xl border border-cyan-500/30 p-4 sm:p-6 shadow-md space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -685,7 +720,7 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
                   </label>
                   <input
                     type="range"
-                    min={20}
+                    min={15}
                     max={100}
                     disabled={outputFormat === 'image/png'}
                     value={outputQuality}
@@ -694,6 +729,36 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
                   />
                 </div>
               </div>
+
+              {outputFormat !== 'image/png' && (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Target Max File Size (Portal KB Limit)
+                  </label>
+                  <div className="grid grid-cols-5 gap-1.5 text-xs font-extrabold">
+                    {[
+                      { kb: 0, label: 'No Limit' },
+                      { kb: 20, label: '< 20KB' },
+                      { kb: 50, label: '< 50KB' },
+                      { kb: 100, label: '< 100KB' },
+                      { kb: 200, label: '< 200KB' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.kb}
+                        type="button"
+                        onClick={() => setResizeTargetMaxKb(opt.kb)}
+                        className={`py-1.5 rounded-xl border transition ${
+                          resizeTargetMaxKb === opt.kb
+                            ? 'bg-[#070a14] text-amber-300 border-amber-400'
+                            : 'bg-white text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2 pt-1">

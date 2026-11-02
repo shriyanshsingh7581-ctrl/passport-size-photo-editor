@@ -1666,13 +1666,24 @@ export default function App() {
   const downloadSinglePhoto = (format: 'png' | 'jpeg' = 'png') => {
     const exportCanvas = document.createElement('canvas');
     renderPassportToCanvas(exportCanvas, false);
+    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const dataUrl = exportCanvas.toDataURL(mime, 0.96);
+    const parts = dataUrl.split(',');
+    const byteString = atob(parts[1] || '');
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    const blob = new Blob([ab], { type: mime });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    link.href = url;
     link.download = `malnadu-media-passport.${format === 'jpeg' ? 'jpg' : 'png'}`;
-    link.href = exportCanvas.toDataURL(
-      format === 'jpeg' ? 'image/jpeg' : 'image/png',
-      0.96
-    );
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
     setShowExportModal(false);
     showToast('Downloaded HD Passport Photo!');
   };
@@ -1680,10 +1691,23 @@ export default function App() {
   const downloadPrintSheet = () => {
     const tempSheet = document.createElement('canvas');
     renderPrintableSheet(tempSheet);
+    const dataUrl = tempSheet.toDataURL('image/jpeg', 0.96);
+    const parts = dataUrl.split(',');
+    const byteString = atob(parts[1] || '');
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    const blob = new Blob([ab], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    link.href = url;
     link.download = 'malnadu-media-6x4-sheet-300dpi.jpg';
-    link.href = tempSheet.toDataURL('image/jpeg', 0.96);
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
     setShowExportModal(false);
     showToast('Downloaded 6×4" Print Sheet!');
   };
@@ -2805,7 +2829,7 @@ export default function App() {
         className="sticky top-0 z-30 border-b border-cyan-500/25 shadow-lg"
         style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
       >
-        <div className="max-w-6xl w-full mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-3">
+        <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 h-16 flex items-center justify-between gap-3">
           {/* Zone 1: MALNADU MEDIA Brand Logo & Wordmark */}
           <button
             onClick={() => setActiveRoute('studio')}
@@ -2872,7 +2896,7 @@ export default function App() {
                 }`}
               >
                 <i className="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
-                <span>Poster Maker (36+)</span>
+                <span>Poster Maker (48+)</span>
               </button>
 
               {siteSettings.enableMediaLiveToolsCategory !== false && (
@@ -3188,9 +3212,9 @@ export default function App() {
 
       {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE (REQUIRES LOGIN) */}
       {userProfile && activeRoute === 'studio' && (
-        <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-3.5 sm:py-6 space-y-4">
+        <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
           {/* 3 Main Platform Categories Launcher Strip (Studio Tools, Akshaya Tools, Media & Live Tools) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {siteSettings.enableStudioToolsCategory !== false && (
               <div className="bg-[#070a14] text-white rounded-3xl p-4 border border-cyan-500/30 shadow-sm flex flex-col justify-between gap-3">
                 <div className="flex items-start justify-between gap-3">
@@ -3268,10 +3292,10 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {[
+                    { id: 'pdf-compressor', label: 'PDF Compressor (Target KB)' },
+                    { id: 'batch-image-compressor', label: 'Image Compressor (Target KB)' },
                     { id: 'pdf-merge', label: 'PDF Merge' },
                     { id: 'pdf-split', label: 'PDF Split' },
-                    { id: 'pdf-compressor', label: 'PDF Compressor' },
-                    { id: 'batch-image-compressor', label: 'Image Compressor' },
                     { id: 'signature-resize', label: 'Signature Resize' },
                   ].map((item) => (
                     <button
@@ -3319,7 +3343,7 @@ export default function App() {
                     className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500/30 to-rose-500/30 hover:from-amber-500/40 hover:to-rose-500/40 border border-amber-400/40 text-[11px] font-extrabold text-amber-200 transition flex items-center gap-1"
                   >
                     <i className="fa-solid fa-wand-magic-sparkles text-amber-300"></i>
-                    <span>36+ Poster Template Maker</span>
+                    <span>48+ Poster Template Maker</span>
                   </button>
                   {[
                     { id: 'youtube-thumbnail', label: 'Upload & Redesign Thumbnail' },
@@ -3343,7 +3367,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Featured 36+ Wedding, Anniversary, Birthday & Memorial Poster Template Maker Banner */}
+          {/* Featured 48+ Wedding, Anniversary, Birthday & Memorial Poster Template Maker Banner */}
           <div className="bg-gradient-to-r from-[#070a14] via-purple-950 to-slate-900 text-white rounded-3xl border border-amber-400/40 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3.5">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-md shrink-0">
@@ -3352,14 +3376,14 @@ export default function App() {
               <div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300">
-                    New · 36 Editable Templates
+                    New · 48 Editable Templates Across 8 Categories
                   </span>
                   <span className="text-[10px] font-bold text-slate-400">
-                    Wedding · Anniversary · Engagement · Birthday · Memorial · Festival
+                    Wedding · Anniversary · Engagement · Birthday · Memorial · Festival · Housewarming · Baby Shower
                   </span>
                 </div>
                 <h2 className="text-sm sm:text-base font-extrabold text-white mt-0.5">
-                  Premium Wedding, Anniversary & Memorial Poster Template Maker
+                  Premium Wedding, Anniversary, Birthday, Housewarming & Memorial Poster Maker
                 </h2>
                 <p className="text-xs text-slate-300 mt-0.5">
                   Upload single or multiple photos into predefined arch, circle, oval & royal frames. Drag, zoom, crop & customize all text fields with HD PNG/JPG download.
@@ -4785,9 +4809,9 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 1A: PREMIUM 36+ WEDDING, ANNIVERSARY & MEMORIAL POSTER TEMPLATE MAKER */}
+      {/* ROUTE 1A: PREMIUM 48+ WEDDING, ANNIVERSARY & MEMORIAL POSTER TEMPLATE MAKER */}
       {userProfile && activeRoute === 'poster-maker' && (
-        <main className="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6">
+        <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6">
           <PosterTemplateMaker
             onSendToStudio={handleSendImageToStudio}
             showToast={showToast}
@@ -4942,7 +4966,7 @@ export default function App() {
         style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
       >
         <div className="h-[2px] w-full bg-gradient-to-r from-cyan-400 via-purple-500 to-amber-400"></div>
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-center sm:text-left">
             {renderBrandLogo(false)}
           </div>

@@ -8,7 +8,9 @@ export type PosterCategory =
   | 'engagement'
   | 'birthday'
   | 'memorial'
-  | 'festival';
+  | 'festival'
+  | 'housewarming'
+  | 'baby-congrats';
 
 export type PhotoSlotShape = 'rect' | 'rounded' | 'arch' | 'circle' | 'oval' | 'octagon';
 
@@ -4270,6 +4272,1393 @@ export const POSTER_TEMPLATES: PosterTemplateSpec[] = [
       },
     ],
   },
+
+  // --------------------------------------------------------------------------
+  // EXTRA WEDDING, BIRTHDAY & MEMORIAL TEMPLATES + NEW CATEGORIES (48 TOTAL)
+  // --------------------------------------------------------------------------
+  {
+    id: 'wed-07-peacock-sangeet-mehendi',
+    name: 'Royal Peacock Blue & Gold Sangeet / Mehendi Night Invite',
+    category: 'wedding',
+    categoryLabel: 'Wedding Invitation',
+    badge: 'Couple Arch + Sangeet Theme',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#042f2e', '#0f766e', '#1e1b4b'],
+    bgPattern: 'mandala',
+    outerBorderStyle: 'royal-gold',
+    primaryAccent: '#facc15',
+    secondaryAccent: '#2dd4bf',
+    decorMotif: 'royal-mandala-arch',
+    photoSlots: [
+      {
+        id: 'sangeet-couple',
+        label: 'Couple Portrait (Center Arch)',
+        x: 300,
+        y: 220,
+        width: 480,
+        height: 540,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#facc15',
+        defaultSampleIndex: 0,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Top Header',
+        defaultValue: '✨ SANGEET, MEHENDI & HALDI NIGHT INVITATION ✨',
+        x: 540,
+        y: 120,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fef08a',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Bride & Groom Names',
+        defaultValue: 'SIDDHARTH  &  ISHITA',
+        x: 540,
+        y: 825,
+        maxWidth: 920,
+        fontSize: 54,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#facc15',
+        align: 'center',
+      },
+      {
+        id: 'family_line',
+        label: 'Event Subtitle',
+        defaultValue: 'An Evening of Music, Dance, Henna & Celebration with Family & Friends',
+        x: 540,
+        y: 910,
+        maxWidth: 860,
+        fontSize: 23,
+        fontFamily: 'serif',
+        fontWeight: '600',
+        color: '#ccfbf1',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'FRIDAY, 18 DECEMBER 2026 · 7:00 PM ONWARDS',
+        x: 540,
+        y: 1015,
+        maxWidth: 880,
+        fontSize: 27,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#ffffff',
+        align: 'center',
+        pillBgColor: 'rgba(250, 204, 21, 0.2)',
+      },
+      {
+        id: 'venue',
+        label: 'Venue',
+        defaultValue: 'Poolside Lawns, Taj West End, Race Course Road, Bengaluru',
+        x: 540,
+        y: 1115,
+        maxWidth: 880,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#fde047',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Dress Code / RSVP',
+        defaultValue: 'Dress Code: Festive Indo-Western · RSVP: Kapoor & Joshi Families',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#99f6e4',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'wed-08-kerala-kasavu-muhurtham',
+    name: 'Traditional Kasavu Cream & Gold South Indian Muhurtham Invite',
+    category: 'wedding',
+    categoryLabel: 'Wedding Invitation',
+    badge: 'Left Photo + Kasavu Border',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#fffbeb', '#fef3c7', '#fde68a'],
+    bgPattern: 'minimal-linen',
+    outerBorderStyle: 'temple-border',
+    primaryAccent: '#b45309',
+    secondaryAccent: '#991b1b',
+    decorMotif: 'temple-kalash-gold',
+    photoSlots: [
+      {
+        id: 'kasavu-couple',
+        label: 'Bride & Groom Photo (Left Arch)',
+        x: 80,
+        y: 240,
+        width: 430,
+        height: 760,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#b45309',
+        defaultSampleIndex: 1,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Auspicious Header',
+        defaultValue: 'ॐ HARI OM · SUBHA VIVAHAM MUHURTHAM ॐ',
+        x: 540,
+        y: 120,
+        maxWidth: 900,
+        fontSize: 24,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Bride & Groom Names',
+        defaultValue: 'VISHNU PRASAD\nweds\nAMRITHA MENON',
+        x: 545,
+        y: 340,
+        maxWidth: 455,
+        fontSize: 48,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#7c2d12',
+        align: 'left',
+        lineHeight: 1.2,
+      },
+      {
+        id: 'family_line',
+        label: 'Parents / Family Line',
+        defaultValue: 'With the blessings of Guruvayurappan & our beloved elders, we cordially invite you to the wedding ceremony.',
+        x: 545,
+        y: 600,
+        maxWidth: 450,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '600',
+        color: '#451a03',
+        align: 'left',
+        lineHeight: 1.38,
+      },
+      {
+        id: 'datetime',
+        label: 'Muhurtham Date & Time',
+        defaultValue: 'SUNDAY, 22 NOVEMBER 2026\nMuhurtham: 10:15 AM – 10:50 AM',
+        x: 545,
+        y: 785,
+        maxWidth: 450,
+        fontSize: 25,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'left',
+      },
+      {
+        id: 'venue',
+        label: 'Auditorium / Venue',
+        defaultValue: 'Lakshmi Narayana Convention Centre,\nThrissur, Kerala',
+        x: 545,
+        y: 920,
+        maxWidth: 450,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#78350f',
+        align: 'left',
+      },
+      {
+        id: 'message',
+        label: 'Compliments',
+        defaultValue: 'With Best Compliments From: Menon & Nair Families',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'bday-07-silver-25th-crown',
+    name: '25th Silver Birthday Royal Navy & Gold Poster',
+    category: 'birthday',
+    categoryLabel: 'Birthday',
+    badge: 'Left Portrait + Right Wishes',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#090d16', '#1e293b', '#0f172a'],
+    bgPattern: 'bokeh',
+    outerBorderStyle: 'royal-gold',
+    primaryAccent: '#fbbf24',
+    secondaryAccent: '#38bdf8',
+    decorMotif: 'birthday-confetti-crown',
+    photoSlots: [
+      {
+        id: 'bday-25-main',
+        label: 'Birthday Portrait (Left Frame)',
+        x: 80,
+        y: 240,
+        width: 430,
+        height: 760,
+        shape: 'rounded',
+        frameStyle: 'gold-double',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 0,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Top Badge',
+        defaultValue: '👑 HAPPY 25th SILVER BIRTHDAY CELEBRATION 👑',
+        x: 540,
+        y: 120,
+        maxWidth: 900,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Birthday Person Name',
+        defaultValue: 'HAPPY BIRTHDAY\nROHIT SHETTY',
+        x: 545,
+        y: 350,
+        maxWidth: 455,
+        fontSize: 52,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#fbbf24',
+        align: 'left',
+        lineHeight: 1.2,
+      },
+      {
+        id: 'family_line',
+        label: 'Birthday Wish',
+        defaultValue: 'Wishing you a year filled with bold adventures, grand success, good health, and endless happiness!',
+        x: 545,
+        y: 575,
+        maxWidth: 450,
+        fontSize: 23,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#e2e8f0',
+        align: 'left',
+        lineHeight: 1.4,
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'SATURDAY, 14 NOVEMBER 2026\nParty Starts at 8:00 PM',
+        x: 545,
+        y: 780,
+        maxWidth: 450,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#38bdf8',
+        align: 'left',
+      },
+      {
+        id: 'venue',
+        label: 'Party Venue',
+        defaultValue: 'Skyline Rooftop Lounge, MG Road, Mangaluru',
+        x: 545,
+        y: 920,
+        maxWidth: 450,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#fde68a',
+        align: 'left',
+      },
+      {
+        id: 'message',
+        label: 'Wishes From',
+        defaultValue: 'Best Wishes From: Family & All Friends Circle',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#fbbf24',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'bday-08-dual-frame-celebration',
+    name: 'Dual-Photo Birthday Memories & Party Invite Poster',
+    category: 'birthday',
+    categoryLabel: 'Birthday',
+    badge: '2 Photo Areas',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#3b0764', '#581c87', '#1e1b4b'],
+    bgPattern: 'rays',
+    outerBorderStyle: 'floral-frame',
+    primaryAccent: '#f472b6',
+    secondaryAccent: '#fde047',
+    decorMotif: 'birthday-confetti-crown',
+    photoSlots: [
+      {
+        id: 'bday-left-circle',
+        label: 'Photo 1 (Left Circle)',
+        x: 110,
+        y: 250,
+        width: 390,
+        height: 390,
+        shape: 'circle',
+        frameStyle: 'floral-wreath',
+        accentColor: '#fde047',
+        defaultSampleIndex: 1,
+      },
+      {
+        id: 'bday-right-circle',
+        label: 'Photo 2 (Right Circle)',
+        x: 580,
+        y: 250,
+        width: 390,
+        height: 390,
+        shape: 'circle',
+        frameStyle: 'floral-wreath',
+        accentColor: '#f472b6',
+        defaultSampleIndex: 2,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Header',
+        defaultValue: '🎉 JOIN US FOR A MAGICAL BIRTHDAY CELEBRATION 🎉',
+        x: 540,
+        y: 125,
+        maxWidth: 900,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Birthday Name',
+        defaultValue: 'AARAV KRISHNA TURNS 5!',
+        x: 540,
+        y: 745,
+        maxWidth: 920,
+        fontSize: 52,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#ffffff',
+        align: 'center',
+      },
+      {
+        id: 'family_line',
+        label: 'Invite Line',
+        defaultValue: 'Cake Cutting, Magic Show, Games & Dinner Party',
+        x: 540,
+        y: 840,
+        maxWidth: 860,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#f472b6',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'SUNDAY, 29 NOVEMBER 2026 AT 6:30 PM',
+        x: 540,
+        y: 950,
+        maxWidth: 880,
+        fontSize: 28,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+        pillBgColor: 'rgba(244, 114, 182, 0.2)',
+      },
+      {
+        id: 'venue',
+        label: 'Venue',
+        defaultValue: 'Rainbow Banquet Hall, Jayanagar, Bengaluru',
+        x: 540,
+        y: 1080,
+        maxWidth: 880,
+        fontSize: 24,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#f3e8ff',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Hosted By',
+        defaultValue: 'Warmly Invited By: Krishna & Divya Family',
+        x: 540,
+        y: 1215,
+        maxWidth: 880,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#fde047',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'mem-07-vaikunta-samaradhane-prayer',
+    name: 'Vaikunta Samaradhane / Terahvi / 13th Day Prayer Service Card',
+    category: 'memorial',
+    categoryLabel: 'Memorial / Condolence',
+    badge: 'Left Garland Portrait + Right Details',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#fffbeb', '#fef3c7', '#fde68a'],
+    bgPattern: 'minimal-linen',
+    outerBorderStyle: 'dignified-frame',
+    primaryAccent: '#92400e',
+    secondaryAccent: '#b45309',
+    decorMotif: 'memorial-lotus-diya',
+    photoSlots: [
+      {
+        id: 'mem-vaikunta-photo',
+        label: 'Portrait Photo (Left Garland Frame)',
+        x: 90,
+        y: 260,
+        width: 410,
+        height: 540,
+        shape: 'oval',
+        frameStyle: 'garland-tribute',
+        accentColor: '#b45309',
+        defaultSampleIndex: 2,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Prayer Header',
+        defaultValue: 'ॐ श्री गुरुभ्यो नमः · VAIKUNTA SAMARADHANE / PRAYER MEETING ॐ',
+        x: 540,
+        y: 120,
+        maxWidth: 920,
+        fontSize: 24,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#92400e',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Deceased Name',
+        defaultValue: 'LATE SHRI K. V. SUBRAMANYA RAO',
+        x: 540,
+        y: 320,
+        maxWidth: 460,
+        fontSize: 42,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#451a03',
+        align: 'left',
+        lineHeight: 1.2,
+      },
+      {
+        id: 'datetime',
+        label: 'Life Span Dates',
+        defaultValue: 'Sunrise: 12.04.1945  —  Sunset: 18.10.2026',
+        x: 540,
+        y: 470,
+        maxWidth: 460,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'left',
+      },
+      {
+        id: 'family_line',
+        label: 'Prayer Invitation Message',
+        defaultValue: 'With profound grief, we inform the heavenly abode of our beloved father. We request your presence at the Vaikunta Samaradhane & Punyatithi prayers.',
+        x: 540,
+        y: 550,
+        maxWidth: 460,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#451a03',
+        align: 'left',
+        lineHeight: 1.4,
+      },
+      {
+        id: 'venue',
+        label: 'Prayer Date, Time & Venue',
+        defaultValue: 'Friday, 30 Oct 2026 at 12:00 Noon\nVenue: Shankara Matha Sabhabhavana, Shivamogga',
+        x: 540,
+        y: 920,
+        maxWidth: 900,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#7c2d12',
+        align: 'center',
+        pillBgColor: 'rgba(180, 83, 9, 0.12)',
+      },
+      {
+        id: 'message',
+        label: 'Bereaved Family',
+        defaultValue: 'Deeply Mourned By: Wife, Sons, Daughters & Grandchildren',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#92400e',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'mem-08-dual-remembrance-parents',
+    name: 'In Loving Memory Dual-Portrait Parents Remembrance Tribute',
+    category: 'memorial',
+    categoryLabel: 'Memorial / Condolence',
+    badge: '2 Portrait Frames',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#0f172a', '#1e293b', '#090d16'],
+    bgPattern: 'velvet-vignette',
+    outerBorderStyle: 'dignified-frame',
+    primaryAccent: '#fbbf24',
+    secondaryAccent: '#e2e8f0',
+    decorMotif: 'memorial-garland-pillar',
+    photoSlots: [
+      {
+        id: 'mem-parent-1',
+        label: 'Portrait 1 (Left Oval)',
+        x: 120,
+        y: 250,
+        width: 370,
+        height: 460,
+        shape: 'oval',
+        frameStyle: 'garland-tribute',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 0,
+      },
+      {
+        id: 'mem-parent-2',
+        label: 'Portrait 2 (Right Oval)',
+        x: 590,
+        y: 250,
+        width: 370,
+        height: 460,
+        shape: 'oval',
+        frameStyle: 'garland-tribute',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 1,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Top Header',
+        defaultValue: '🙏 IN EVERLOVING MEMORY OF OUR BELOVED PARENTS 🙏',
+        x: 540,
+        y: 125,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Names',
+        defaultValue: 'LATE SHRI MOHAN DAS  &  LATE SMT. KAMALA DAS',
+        x: 540,
+        y: 800,
+        maxWidth: 920,
+        fontSize: 42,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#fbbf24',
+        align: 'center',
+      },
+      {
+        id: 'family_line',
+        label: 'Tribute Quote',
+        defaultValue: '“Your guiding hands on our shoulders will remain with us forever. Fondly remembered on your Annual Remembrance Day.”',
+        x: 540,
+        y: 890,
+        maxWidth: 860,
+        fontSize: 23,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#e2e8f0',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Remembrance Date',
+        defaultValue: 'ANNUAL REMEMBRANCE PRAYER · 15 NOVEMBER 2026',
+        x: 540,
+        y: 1020,
+        maxWidth: 880,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#ffffff',
+        align: 'center',
+      },
+      {
+        id: 'venue',
+        label: 'Location',
+        defaultValue: 'Family Residence: “Kamala Nivas”, Udupi',
+        x: 540,
+        y: 1110,
+        maxWidth: 880,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Family Line',
+        defaultValue: 'Forever in Our Hearts: Children, Grandchildren & Relatives',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#cbd5e1',
+        align: 'center',
+      },
+    ],
+  },
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 7: HOUSEWARMING / GRIHA PRAVESH & INAUGURATION (3 Templates)
+  // --------------------------------------------------------------------------
+  {
+    id: 'house-01-griha-pravesh-kalash',
+    name: 'Auspicious Griha Pravesh / Housewarming Dual-Photo Invitation',
+    category: 'housewarming',
+    categoryLabel: 'Housewarming / Inauguration',
+    badge: 'Home Photo + Family Photo',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#450a0a', '#7f1d1d', '#2a0505'],
+    bgPattern: 'mandala',
+    outerBorderStyle: 'festive-toran',
+    primaryAccent: '#fbbf24',
+    secondaryAccent: '#fde68a',
+    decorMotif: 'temple-kalash-gold',
+    photoSlots: [
+      {
+        id: 'home-photo-main',
+        label: 'New Home / Residence Photo (Left Arch)',
+        x: 85,
+        y: 240,
+        width: 520,
+        height: 490,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 0,
+      },
+      {
+        id: 'host-family-photo',
+        label: 'Host Family Portrait (Right Circle)',
+        x: 645,
+        y: 310,
+        width: 350,
+        height: 350,
+        shape: 'circle',
+        frameStyle: 'floral-wreath',
+        accentColor: '#fde68a',
+        defaultSampleIndex: 1,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Top Header',
+        defaultValue: '🏠 ॐ श्री गणेशाय नमः · GRIHA PRAVESHAM INVITATION 🏠',
+        x: 540,
+        y: 120,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Residence Name & Host',
+        defaultValue: '“SRI LAKSHMI VENKATESHWARA NILAYA”\nHosted By: Sri Naveen Kumar & Smt.Kavitha',
+        x: 540,
+        y: 800,
+        maxWidth: 920,
+        fontSize: 38,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#fbbf24',
+        align: 'center',
+        lineHeight: 1.25,
+      },
+      {
+        id: 'family_line',
+        label: 'Invitation Line',
+        defaultValue: 'We cordially invite you with family to grace the auspicious Housewarming, Vastu Pooja & Satyanarayana Swamy Vratham of our new residence.',
+        x: 540,
+        y: 925,
+        maxWidth: 880,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#fef3c7',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Pooja Time',
+        defaultValue: 'SUNDAY, 22 NOVEMBER 2026 · POOJA AT 9:30 AM',
+        x: 540,
+        y: 1040,
+        maxWidth: 880,
+        fontSize: 27,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#ffffff',
+        align: 'center',
+        pillBgColor: 'rgba(251, 191, 36, 0.2)',
+      },
+      {
+        id: 'venue',
+        label: 'New House Address',
+        defaultValue: 'Plot #42, 3rd Cross, Vijayashree Layout, Mysuru',
+        x: 540,
+        y: 1135,
+        maxWidth: 880,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Lunch / Contact',
+        defaultValue: 'Followed by Traditional Lunch at 12:30 PM · Contact: +91 98450 11223',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#fef08a',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'house-02-vastu-shanti-ivory',
+    name: 'Royal Ivory & Gold Gruhapravesham / Sweet Home Invitation',
+    category: 'housewarming',
+    categoryLabel: 'Housewarming / Inauguration',
+    badge: 'Left Arch Photo + Right Text',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#fffbeb', '#fef3c7', '#fde68a'],
+    bgPattern: 'minimal-linen',
+    outerBorderStyle: 'temple-border',
+    primaryAccent: '#b45309',
+    secondaryAccent: '#991b1b',
+    decorMotif: 'festival-traditional-toran',
+    photoSlots: [
+      {
+        id: 'vastu-home-left',
+        label: 'Home / Family Photo (Left Arch)',
+        x: 80,
+        y: 240,
+        width: 430,
+        height: 760,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#b45309',
+        defaultSampleIndex: 2,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Header',
+        defaultValue: '✨ NEW HOME · NEW BEGINNINGS · HOUSEWARMING INVITE ✨',
+        x: 540,
+        y: 120,
+        maxWidth: 900,
+        fontSize: 24,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'House Name & Hosts',
+        defaultValue: '“SHANTI NIKETAN”\nPrakash Hegde & Family',
+        x: 545,
+        y: 350,
+        maxWidth: 455,
+        fontSize: 44,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#7c2d12',
+        align: 'left',
+        lineHeight: 1.25,
+      },
+      {
+        id: 'family_line',
+        label: 'Message',
+        defaultValue: 'By the grace of the Almighty, we have built our dream home and would be delighted by your presence at our Housewarming Ceremony.',
+        x: 545,
+        y: 560,
+        maxWidth: 450,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '600',
+        color: '#451a03',
+        align: 'left',
+        lineHeight: 1.4,
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'WEDNESDAY, 25 NOV 2026\nMuhurtham: 8:45 AM Onwards',
+        x: 545,
+        y: 775,
+        maxWidth: 450,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'left',
+      },
+      {
+        id: 'venue',
+        label: 'Address',
+        defaultValue: 'Near Temple Circle, Vidyanagar, Hubballi',
+        x: 545,
+        y: 920,
+        maxWidth: 450,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#78350f',
+        align: 'left',
+      },
+      {
+        id: 'message',
+        label: 'Footer',
+        defaultValue: 'Your Presence & Blessings are Our Greatest Gift',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#991b1b',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'house-03-grand-opening-business',
+    name: 'Grand Opening / Showroom & Studio Inauguration Poster',
+    category: 'housewarming',
+    categoryLabel: 'Housewarming / Inauguration',
+    badge: 'Founder + Showroom Dual Frame',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#070a14', '#1e1b4b', '#0f172a'],
+    bgPattern: 'rays',
+    outerBorderStyle: 'royal-gold',
+    primaryAccent: '#fbbf24',
+    secondaryAccent: '#38bdf8',
+    decorMotif: 'golden-jubilee-crest',
+    photoSlots: [
+      {
+        id: 'biz-main',
+        label: 'Showroom / Brand Photo (Left Rounded)',
+        x: 90,
+        y: 250,
+        width: 500,
+        height: 460,
+        shape: 'rounded',
+        frameStyle: 'gold-double',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 0,
+      },
+      {
+        id: 'biz-guest',
+        label: 'Chief Guest / Founder Photo (Right Circle)',
+        x: 635,
+        y: 300,
+        width: 350,
+        height: 350,
+        shape: 'circle',
+        frameStyle: 'gold-double',
+        accentColor: '#38bdf8',
+        defaultSampleIndex: 2,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Header',
+        defaultValue: '✂️ GRAND OPENING & INAUGURATION CEREMONY ✂️',
+        x: 540,
+        y: 125,
+        maxWidth: 920,
+        fontSize: 26,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Business / Enterprise Name',
+        defaultValue: 'MALNADU DIGITAL STUDIO & BROADCAST HUB',
+        x: 540,
+        y: 790,
+        maxWidth: 920,
+        fontSize: 44,
+        fontFamily: 'sans',
+        fontWeight: '900',
+        color: '#fbbf24',
+        align: 'center',
+      },
+      {
+        id: 'family_line',
+        label: 'Invitation Text',
+        defaultValue: 'We take immense pleasure in inviting you to the Grand Inauguration of our new 4K Studio & Digital Seva Center.',
+        x: 540,
+        y: 895,
+        maxWidth: 860,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '500',
+        color: '#e2e8f0',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Ribbon Cutting Time',
+        defaultValue: 'MONDAY, 16 NOVEMBER 2026 AT 10:30 AM',
+        x: 540,
+        y: 1015,
+        maxWidth: 880,
+        fontSize: 28,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#38bdf8',
+        align: 'center',
+        pillBgColor: 'rgba(56, 189, 248, 0.15)',
+      },
+      {
+        id: 'venue',
+        label: 'Address',
+        defaultValue: '1st Floor, City Plaza Complex, MG Road, Chikmagalur',
+        x: 540,
+        y: 1120,
+        maxWidth: 880,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Footer',
+        defaultValue: 'Warm Regards: Management & Staff · Contact: +91 98450 11223',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#cbd5e1',
+        align: 'center',
+      },
+    ],
+  },
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 8: BABY SHOWER / NAMING CEREMONY & CONGRATS (3 Templates)
+  // --------------------------------------------------------------------------
+  {
+    id: 'baby-01-naming-ceremony-cradle',
+    name: 'Auspicious Naming Ceremony / Namakaranam Invitation',
+    category: 'baby-congrats',
+    categoryLabel: 'Baby & Congrats',
+    badge: 'Baby Circle + Parents Frame',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#1e1b4b', '#312e81', '#4c1d95'],
+    bgPattern: 'bokeh',
+    outerBorderStyle: 'floral-frame',
+    primaryAccent: '#fde047',
+    secondaryAccent: '#f472b6',
+    decorMotif: 'kids-carnival-bunting',
+    photoSlots: [
+      {
+        id: 'baby-center',
+        label: 'Baby Portrait (Center Circle)',
+        x: 290,
+        y: 220,
+        width: 500,
+        height: 500,
+        shape: 'circle',
+        frameStyle: 'floral-wreath',
+        accentColor: '#fde047',
+        defaultSampleIndex: 1,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Header',
+        defaultValue: '👶 NAMING CEREMONY (NAMAKARANAM) INVITATION 👶',
+        x: 540,
+        y: 125,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Headline & Parents',
+        defaultValue: 'JOIN US TO NAME OUR LITTLE BUNDLE OF JOY!\nProud Parents: Kiran & Anjali',
+        x: 540,
+        y: 800,
+        maxWidth: 920,
+        fontSize: 40,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#ffffff',
+        align: 'center',
+        lineHeight: 1.25,
+      },
+      {
+        id: 'family_line',
+        label: 'Invite Line',
+        defaultValue: 'We warmly invite you to shower your blessings on our little angel at the Cradle & Naming Ceremony.',
+        x: 540,
+        y: 925,
+        maxWidth: 860,
+        fontSize: 23,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#fbcfe8',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'SUNDAY, 29 NOVEMBER 2026 AT 11:30 AM',
+        x: 540,
+        y: 1035,
+        maxWidth: 880,
+        fontSize: 27,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#fde047',
+        align: 'center',
+        pillBgColor: 'rgba(244, 114, 182, 0.2)',
+      },
+      {
+        id: 'venue',
+        label: 'Venue',
+        defaultValue: 'Swarna Banquet Hall, Malleshwaram, Bengaluru',
+        x: 540,
+        y: 1130,
+        maxWidth: 880,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#e0e7ff',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Footer',
+        defaultValue: 'Followed by Lunch · RSVP: Grandparents & Family',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#fde047',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'baby-02-seemantham-baby-shower',
+    name: 'Traditional Seemantham / Godh Bharai / Baby Shower Invite',
+    category: 'baby-congrats',
+    categoryLabel: 'Baby & Congrats',
+    badge: 'Left Mom-to-Be Arch + Right Text',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#064e3b', '#047857', '#022c22'],
+    bgPattern: 'mandala',
+    outerBorderStyle: 'festive-toran',
+    primaryAccent: '#fbbf24',
+    secondaryAccent: '#fde68a',
+    decorMotif: 'temple-kalash-gold',
+    photoSlots: [
+      {
+        id: 'seemantham-photo',
+        label: 'Mom-to-Be / Couple Photo (Left Arch)',
+        x: 80,
+        y: 240,
+        width: 430,
+        height: 760,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#fbbf24',
+        defaultSampleIndex: 1,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Header',
+        defaultValue: '🌸 SEEMANTHAM / BABY SHOWER INVITATION 🌸',
+        x: 540,
+        y: 125,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fde68a',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Honoree Names',
+        defaultValue: 'SMT. MEGHANA\n&\nSRI SANDEEP RAO',
+        x: 545,
+        y: 350,
+        maxWidth: 455,
+        fontSize: 48,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#fbbf24',
+        align: 'left',
+        lineHeight: 1.2,
+      },
+      {
+        id: 'family_line',
+        label: 'Invitation Text',
+        defaultValue: 'As we await the arrival of our little miracle, we cordially invite you to bless the Mom-to-Be at the traditional Seemantham Ceremony.',
+        x: 545,
+        y: 590,
+        maxWidth: 450,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#d1fae5',
+        align: 'left',
+        lineHeight: 1.4,
+      },
+      {
+        id: 'datetime',
+        label: 'Date & Time',
+        defaultValue: 'SUNDAY, 22 NOVEMBER 2026\n10:30 AM ONWARDS',
+        x: 545,
+        y: 790,
+        maxWidth: 450,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#ffffff',
+        align: 'left',
+      },
+      {
+        id: 'venue',
+        label: 'Venue',
+        defaultValue: 'Subhodaya Kalyana Mantapa, Jayanagar, Hassan',
+        x: 545,
+        y: 920,
+        maxWidth: 450,
+        fontSize: 23,
+        fontFamily: 'sans',
+        fontWeight: '600',
+        color: '#fde68a',
+        align: 'left',
+      },
+      {
+        id: 'message',
+        label: 'Footer',
+        defaultValue: 'With Best Compliments: Rao & Kulkarni Families',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'serif',
+        fontWeight: '700',
+        color: '#fde68a',
+        align: 'center',
+      },
+    ],
+  },
+  {
+    id: 'baby-03-achievement-congrats-poster',
+    name: 'Hearty Congratulations / Exam Topper & Achievement Poster',
+    category: 'baby-congrats',
+    categoryLabel: 'Baby & Congrats',
+    badge: 'Center Star Portrait + Banner',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ['#0f172a', '#1e3a8a', '#172554'],
+    bgPattern: 'rays',
+    outerBorderStyle: 'royal-gold',
+    primaryAccent: '#facc15',
+    secondaryAccent: '#38bdf8',
+    decorMotif: 'golden-jubilee-crest',
+    photoSlots: [
+      {
+        id: 'achiever-photo',
+        label: 'Achiever Portrait (Center Frame)',
+        x: 310,
+        y: 230,
+        width: 460,
+        height: 510,
+        shape: 'arch',
+        frameStyle: 'gold-double',
+        accentColor: '#facc15',
+        defaultSampleIndex: 0,
+      },
+    ],
+    textFields: [
+      {
+        id: 'auspicious',
+        label: 'Top Header',
+        defaultValue: '🏆 HEARTY CONGRATULATIONS ON YOUR GRAND SUCCESS! 🏆',
+        x: 540,
+        y: 125,
+        maxWidth: 920,
+        fontSize: 25,
+        fontFamily: 'serif',
+        fontWeight: '800',
+        color: '#fef08a',
+        align: 'center',
+      },
+      {
+        id: 'bride_groom',
+        label: 'Achiever Name & Title',
+        defaultValue: 'DR. AISHWARYA GOWDA, MBBS, MD',
+        x: 540,
+        y: 810,
+        maxWidth: 920,
+        fontSize: 48,
+        fontFamily: 'serif',
+        fontWeight: '900',
+        color: '#facc15',
+        align: 'center',
+      },
+      {
+        id: 'family_line',
+        label: 'Achievement Details',
+        defaultValue: 'For Securing Gold Medal & State 1st Rank in Postgraduate Medical Examinations 2026!',
+        x: 540,
+        y: 900,
+        maxWidth: 860,
+        fontSize: 25,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#ffffff',
+        align: 'center',
+      },
+      {
+        id: 'datetime',
+        label: 'Highlight Badge',
+        defaultValue: 'PRIDE OF CHIKMAGALUR DISTRICT · SHINING STAR',
+        x: 540,
+        y: 1020,
+        maxWidth: 880,
+        fontSize: 26,
+        fontFamily: 'sans',
+        fontWeight: '800',
+        color: '#38bdf8',
+        align: 'center',
+        pillBgColor: 'rgba(56, 189, 248, 0.16)',
+      },
+      {
+        id: 'venue',
+        label: 'Wishes Note',
+        defaultValue: 'May you continue to achieve greater heights in your career and service to society!',
+        x: 540,
+        y: 1120,
+        maxWidth: 880,
+        fontSize: 22,
+        fontFamily: 'serif',
+        fontWeight: '500',
+        color: '#e0f2fe',
+        align: 'center',
+      },
+      {
+        id: 'message',
+        label: 'Wishes From',
+        defaultValue: 'Best Wishes From: Parents, Family Members & Well-Wishers',
+        x: 540,
+        y: 1215,
+        maxWidth: 900,
+        fontSize: 21,
+        fontFamily: 'sans',
+        fontWeight: '700',
+        color: '#fde047',
+        align: 'center',
+      },
+    ],
+  },
 ];
 
 // ============================================================================
@@ -4680,13 +6069,15 @@ interface PosterTemplateMakerProps {
 }
 
 const CATEGORY_TABS: Array<{ id: PosterCategory; label: string; icon: string }> = [
-  { id: 'all', label: 'All 36 Templates', icon: 'fa-border-all' },
-  { id: 'wedding', label: 'Wedding Invitations (6)', icon: 'fa-ring' },
-  { id: 'anniversary', label: 'Wedding Anniversary (6)', icon: 'fa-heart' },
+  { id: 'all', label: 'All 48 Templates', icon: 'fa-border-all' },
+  { id: 'wedding', label: 'Wedding (8)', icon: 'fa-ring' },
+  { id: 'anniversary', label: 'Anniversary (6)', icon: 'fa-heart' },
   { id: 'engagement', label: 'Engagement (6)', icon: 'fa-gem' },
-  { id: 'birthday', label: 'Birthday (6)', icon: 'fa-cake-candles' },
-  { id: 'memorial', label: 'Memorial / Condolence (6)', icon: 'fa-dove' },
-  { id: 'festival', label: 'Festival Greetings (6)', icon: 'fa-dharmachakra' },
+  { id: 'birthday', label: 'Birthday (8)', icon: 'fa-cake-candles' },
+  { id: 'memorial', label: 'Memorial (8)', icon: 'fa-dove' },
+  { id: 'festival', label: 'Festival (6)', icon: 'fa-dharmachakra' },
+  { id: 'housewarming', label: 'Housewarming & Opening (3)', icon: 'fa-house-chimney' },
+  { id: 'baby-congrats', label: 'Baby & Congrats (3)', icon: 'fa-award' },
 ];
 
 export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
@@ -4756,11 +6147,11 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   }, []);
 
   const initializeTemplateSlots = useCallback(
-    (tpl: PosterTemplateSpec, samples = samplePortraitsRef.current) => {
+    (tpl: PosterTemplateSpec, samples = samplePortraitsRef.current, forceResetSamples = false) => {
       setSlotTransforms((prev) => {
         const next = { ...prev };
         tpl.photoSlots.forEach((slot) => {
-          if (!next[slot.id]) {
+          if (!next[slot.id] || forceResetSamples) {
             const sampleImg = samples[slot.defaultSampleIndex % Math.max(1, samples.length)] || null;
             next[slot.id] = {
               imageUrl: sampleImg ? sampleImg.src : '',
@@ -4810,7 +6201,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           (Math.min(slot.width, slot.height) * (transform?.cropInset || 0)) / 200
         );
 
-        // Slot dark backdrop before drawing photo
         ctx.save();
         defineSlotClipPath(ctx, slot, cropInsetPx);
         ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
@@ -4822,7 +6212,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           const imgW = img.naturalWidth || img.width || 600;
           const imgH = img.naturalHeight || img.height || 800;
 
-          // Cover-fit scaling inside slot
           const coverScale = Math.max(slot.width / imgW, slot.height / imgH);
           const finalScale = coverScale * ((transform.zoom || 100) / 100);
 
@@ -4840,7 +6229,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
           ctx.filter = 'none';
         } else {
-          // Placeholder prompt inside empty photo slot
           ctx.fillStyle = '#cbd5e1';
           ctx.font = '700 22px sans-serif';
           ctx.textAlign = 'center';
@@ -5007,17 +6395,28 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     updateActiveSlotTransform({ zoom: nextZoom });
   };
 
+  // Reliable Blob-based export for PNG and JPG
   const handleExportPoster = (format: 'png' | 'jpeg') => {
     const exportCanvas = document.createElement('canvas');
-    renderPosterCanvas(exportCanvas, false); // Export without dashed selection ring
-    const dataUrl = exportCanvas.toDataURL(
-      format === 'jpeg' ? 'image/jpeg' : 'image/png',
-      0.96
-    );
+    renderPosterCanvas(exportCanvas, false);
+    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const dataUrl = exportCanvas.toDataURL(mime, 0.96);
+    const parts = dataUrl.split(',');
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    const blob = new Blob([u8arr], { type: mime });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = `${activeTemplate.id}-poster.${format === 'jpeg' ? 'jpg' : 'png'}`;
-    link.href = dataUrl;
+    link.href = url;
+    document.body.appendChild(link);
     link.click();
+    setTimeout(() => {
+      if (document.body.contains(link)) document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 4000);
     showToast(`Downloaded High-Resolution ${format.toUpperCase()} Poster!`);
   };
 
@@ -5045,19 +6444,19 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Top Studio Header Bar */}
       <div className="bg-[#070a14] text-white rounded-3xl p-4 sm:p-6 border border-cyan-500/30 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
             <i className="fa-solid fa-wand-magic-sparkles"></i>
-            <span>36 Ready-Made Studio Poster Templates · 100% Browser Canvas Editor</span>
+            <span>48 Ready-Made Studio Poster Templates · Full Desktop & Mobile Canvas Editor</span>
           </div>
           <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white">
-            Wedding, Anniversary, Engagement, Birthday, Memorial & Festival Poster Maker
+            Wedding, Anniversary, Birthday, Memorial, Housewarming & Festival Poster Maker
           </h2>
           <p className="text-xs text-slate-300 max-w-3xl">
-            Select from 36 handcrafted templates with predefined photo frames. Upload your photos into each frame, drag directly on the poster to reposition, zoom/crop independently, edit all text fields, and download in HD PNG or JPG.
+            Select from 48 handcrafted templates across 8 categories. Upload your photos into predefined frames, drag directly on the poster to reposition, zoom/crop independently, edit all text fields, and download in HD PNG or JPG.
           </p>
         </div>
 
@@ -5093,8 +6492,8 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
       {/* Category Filter Bar */}
       <div className="bg-white rounded-3xl border border-slate-200 p-3.5 shadow-2xs space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 xl:pb-0">
             {CATEGORY_TABS.map((cat) => (
               <button
                 key={cat.id}
@@ -5112,20 +6511,20 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
             ))}
           </div>
 
-          <div className="relative w-full sm:w-64 shrink-0">
+          <div className="relative w-full xl:w-72 shrink-0">
             <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 36 templates..."
+              placeholder="Search 48 templates..."
               className="w-full min-h-[38px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-cyan-500"
             />
           </div>
         </div>
 
-        {/* Horizontal Quick Template Selector Strip */}
-        <div className="flex items-center gap-2.5 overflow-x-auto pb-1.5 pt-1">
+        {/* Mobile/Tablet Horizontal Quick Template Strip (Hidden on XL where Left Sidebar shows full grid) */}
+        <div className="xl:hidden flex items-center gap-2.5 overflow-x-auto pb-1.5 pt-1">
           {filteredTemplates.map((tpl) => {
             const isSelected = tpl.id === activeTemplate.id;
             return (
@@ -5146,9 +6545,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                   }}
                 >
                   <div className="flex items-center justify-between text-[9px] font-bold text-white/90">
-                    <span>{tpl.categoryLabel}</span>
-                    <span className="font-mono" style={{ color: tpl.primaryAccent }}>
-                      {tpl.photoSlots.length} {tpl.photoSlots.length === 1 ? 'Photo' : 'Photos'}
+                    <span className="truncate">{tpl.categoryLabel}</span>
+                    <span className="font-mono shrink-0" style={{ color: tpl.primaryAccent }}>
+                      {tpl.photoSlots.length}P
                     </span>
                   </div>
                   <div
@@ -5170,10 +6569,61 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         </div>
       </div>
 
-      {/* Main Two-Column Poster Editor Workspace */}
+      {/* FULL-VIEW 3-PANE DESKTOP STUDIO WORKSPACE (Left Template Browser · Center Live Canvas · Right Photo & Text Inspector) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* LEFT COLUMN (7 Cols): Interactive Poster Canvas Preview */}
-        <div className="lg:col-span-7 bg-[#070a14] rounded-3xl border border-cyan-500/30 p-4 sm:p-6 space-y-4 shadow-xl">
+        {/* PANE 1 (XL 3 Cols): Dedicated Desktop Template Browser Sidebar */}
+        <div className="hidden xl:flex xl:col-span-3 bg-white rounded-3xl border border-slate-200 p-4 flex-col gap-3 shadow-xs max-h-[820px]">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <span className="text-xs font-extrabold text-slate-900">
+              Templates ({filteredTemplates.length} / 48)
+            </span>
+            <span className="text-[11px] font-mono font-bold text-cyan-700">Click to Load</span>
+          </div>
+          <div className="space-y-2.5 overflow-y-auto pr-1 flex-1">
+            {filteredTemplates.map((tpl) => {
+              const isSelected = tpl.id === activeTemplate.id;
+              return (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => handleSelectTemplate(tpl)}
+                  className={`w-full p-2.5 rounded-2xl border text-left transition space-y-1.5 ${
+                    isSelected
+                      ? 'border-cyan-500 bg-cyan-50/70 ring-2 ring-cyan-500/20'
+                      : 'border-slate-200 bg-slate-50/70 hover:bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div
+                    className="h-16 rounded-xl p-2 flex flex-col justify-between"
+                    style={{
+                      background: `linear-gradient(135deg, ${tpl.bgColors[0]}, ${tpl.bgColors[1]}, ${tpl.bgColors[2]})`,
+                    }}
+                  >
+                    <div className="flex items-center justify-between text-[9px] font-extrabold uppercase tracking-wider text-white/85">
+                      <span>{tpl.categoryLabel}</span>
+                      <span className="font-mono" style={{ color: tpl.primaryAccent }}>
+                        {tpl.photoSlots.length} {tpl.photoSlots.length === 1 ? 'Photo' : 'Photos'}
+                      </span>
+                    </div>
+                    <div
+                      className="text-xs font-extrabold leading-tight truncate"
+                      style={{ color: tpl.primaryAccent }}
+                    >
+                      {tpl.name}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 px-0.5">
+                    <span className="truncate">{tpl.badge}</span>
+                    {isSelected && <span className="text-cyan-700 font-extrabold">● Active</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* PANE 2 (LG 7 Cols / XL 5 Cols): Interactive Poster Canvas Preview */}
+        <div className="lg:col-span-7 xl:col-span-5 bg-[#070a14] rounded-3xl border border-cyan-500/30 p-4 sm:p-5 space-y-4 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
             <div>
               <div className="text-xs font-extrabold text-white flex items-center gap-2">
@@ -5184,7 +6634,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Tip: Click & drag directly on any photo frame below to reposition the photo, or scroll wheel to zoom in/out.
+                Drag directly on any photo frame to reposition · Scroll wheel to zoom in/out
               </p>
             </div>
 
@@ -5272,8 +6722,8 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           </div>
         </div>
 
-        {/* RIGHT COLUMN (5 Cols): Photo Placement Controls, Text Editor & Template Browser */}
-        <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+        {/* PANE 3 (LG 5 Cols / XL 4 Cols): Photo Placement Controls & Text Editor */}
+        <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
           {/* Segmented Control Tabs */}
           <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1.5 rounded-2xl text-xs font-extrabold">
             <button
@@ -5310,7 +6760,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
               }`}
             >
               <i className="fa-solid fa-swatchbook"></i>
-              <span>All 36 Designs</span>
+              <span>48 Designs</span>
             </button>
           </div>
 
@@ -5321,9 +6771,18 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
             <div className="space-y-4">
               {/* Photo Slot Selector */}
               <div className="space-y-2">
-                <label className="block text-xs font-extrabold text-slate-800">
-                  1. Select Predefined Photo Area to Edit
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-extrabold text-slate-800">
+                    1. Select Predefined Photo Area to Edit
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => initializeTemplateSlots(activeTemplate, samplePortraitsRef.current, true)}
+                    className="text-[11px] font-bold text-cyan-700 hover:underline"
+                  >
+                    Fill Sample Photos
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 gap-2">
                   {activeTemplate.photoSlots.map((slot, idx) => {
                     const isSelected = slot.id === activeSlotSpec.id;
@@ -5573,7 +7032,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
               TAB 2: EDITABLE TEXT FIELDS (NAMES, DATE/TIME, VENUE, MESSAGE)
              ================================================================= */}
           {editorPanelTab === 'text' && (
-            <div className="space-y-3.5 max-h-[560px] overflow-y-auto pr-1">
+            <div className="space-y-3.5 max-h-[600px] overflow-y-auto pr-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-extrabold text-slate-800">
                   Edit Poster Text Layers (Auto-Aligned)
@@ -5667,12 +7126,12 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           )}
 
           {/* =================================================================
-              TAB 3: FULL 36 TEMPLATE GALLERY GRID
+              TAB 3: FULL 48 TEMPLATE GALLERY GRID
              ================================================================= */}
           {editorPanelTab === 'templates' && (
-            <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
               <div className="text-xs font-bold text-slate-600">
-                Showing {filteredTemplates.length} of 36 Ready-Made Templates:
+                Showing {filteredTemplates.length} of 48 Ready-Made Templates:
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {filteredTemplates.map((tpl) => {
