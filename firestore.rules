@@ -46,7 +46,7 @@ service cloud.firestore {
     // 3. Entity Validation Blueprints (Anti-Update-Gap)
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'createdAt', 'updatedAt']) &&
-             data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'credits', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'createdAt', 'updatedAt']) &&
              data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
              data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
              data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
@@ -61,6 +61,8 @@ service cloud.firestore {
                data.status == 'suspended'
              ) &&
              (!('credits' in data) || (data.credits is int && data.credits >= 0 && data.credits <= 1000000)) &&
+             (!('freeCreditsClaimed' in data) || (data.freeCreditsClaimed is bool)) &&
+             (!('deviceFingerprint' in data) || (data.deviceFingerprint is string && data.deviceFingerprint.size() >= 0 && data.deviceFingerprint.size() <= 128)) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp;
     }
@@ -244,14 +246,15 @@ service cloud.firestore {
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
                     (
-                      // Action 1: Owner updates displayName or phone (cannot change role or status)
+                      // Action 1: Owner updates displayName, phone, or deducts spent credits (cannot increase credits or change role/status)
                       (isOwner(userId) &&
                        incoming().role == existing().role &&
                        incoming().status == existing().status &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'updatedAt'])) ||
-                      // Action 2: Admin updates role, status, credits, displayName, or phone
+                       (!('credits' in incoming()) || !('credits' in existing()) || incoming().credits <= existing().credits) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'credits', 'updatedAt'])) ||
+                      // Action 2: Admin updates role, status, credits, freeCreditsClaimed, displayName, or phone
                       (isAdmin() &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'role', 'status', 'credits', 'updatedAt']))
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'updatedAt']))
                     );
 
       allow delete: if isValidId(userId) && isAdmin();

@@ -69,6 +69,9 @@ import {
   rechargeWalletWithPin,
   loadPaymentCreditRequests,
   allocateNewUserSignupCredits,
+  normalizeIdentityEmail,
+  syncExistingUsersIntoFreeCreditGuard,
+  checkDuplicateSignupIdentity,
   DEFAULT_ADMIN_WHATSAPP,
 } from './creditWallet';
 import { UserDashboard } from './components/UserDashboard';
@@ -352,7 +355,21 @@ export default function App() {
   const [aiProgress, setAiProgress] = useState(20);
 
   // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Strong Master Password)
-  const [availableCredits, setAvailableCredits] = useState<number>(() => loadWalletCredits());
+  // Unauthenticated guests have 0 credits; credits are loaded only from an authenticated user's profile
+  const [availableCredits, setAvailableCredits] = useState<number>(() => {
+    try {
+      const savedUser = localStorage.getItem(LOCAL_ACTIVE_USER_KEY);
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && typeof parsed.credits === 'number') {
+          return saveWalletCredits(parsed.credits);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return saveWalletCredits(0);
+  });
   const [adminCreditPool, setAdminCreditPool] = useState<number>(() => loadAdminCreditPool());
   const [pendingPaymentRequestsCount, setPendingPaymentRequestsCount] = useState<number>(
     () => loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
@@ -755,6 +772,7 @@ export default function App() {
             prev.forEach((u) => map.set(u.uid, u));
             firestoreUsers.forEach((u) => map.set(u.uid, u));
             const merged = Array.from(map.values());
+            syncExistingUsersIntoFreeCreditGuard(merged);
             try {
               localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(merged));
             } catch {
@@ -793,6 +811,7 @@ export default function App() {
       }
     } else {
       setUserProfile(null);
+      setAvailableCredits(saveWalletCredits(0));
       try {
         localStorage.removeItem(LOCAL_ACTIVE_USER_KEY);
       } catch {
@@ -892,20 +911,33 @@ export default function App() {
           'Studio User'
         ).slice(0, 100);
         const baseEmail = (user.email || 'user@malnadumedia.com').slice(0, 150);
+        const normEmail = normalizeIdentityEmail(baseEmail);
 
         const userRef = doc(db, 'users', user.uid);
         try {
           const snap = await getDoc(userRef);
           if (!snap.exists()) {
             const localMatch = allUsers.find(
-              (u) => u.uid === user.uid || u.email.toLowerCase() === baseEmail.toLowerCase()
+              (u) => u.uid === user.uid || normalizeIdentityEmail(u.email) === normEmail
             );
             let initialCredits = 0;
+            let deviceFp = '';
             if (localMatch && typeof localMatch.credits === 'number') {
               initialCredits = localMatch.credits;
+              deviceFp = localMatch.deviceFingerprint || '';
+              syncExistingUsersIntoFreeCreditGuard([localMatch]);
             } else {
-              const grant = allocateNewUserSignupCredits(baseDisplayName, baseEmail);
+              const grant = allocateNewUserSignupCredits(
+                baseDisplayName,
+                baseEmail,
+                undefined,
+                undefined,
+                user.phoneNumber || '',
+                user.uid,
+                allUsers
+              );
               initialCredits = grant.grantedCredits;
+              deviceFp = grant.deviceFingerprint;
               setAdminCreditPool(grant.remainingAdminPool);
               try {
                 updateDoc(doc(db, 'siteSettings', 'global'), {
@@ -923,6 +955,8 @@ export default function App() {
               role: isBootstrapAdmin ? 'admin' : 'user',
               status: 'approved',
               credits: initialCredits,
+              freeCreditsClaimed: true,
+              deviceFingerprint: deviceFp.slice(0, 128),
               createdAt: new Date().toISOString(),
             };
 
@@ -939,22 +973,32 @@ export default function App() {
               ...existingData,
               credits: typeof existingData.credits === 'number' ? existingData.credits : 0,
             };
+            syncExistingUsersIntoFreeCreditGuard([withCredits]);
             persistActiveUserSession(withCredits);
             upsertUserInLocalState(withCredits);
           }
         } catch {
           const localMatch = allUsers.find(
-            (u) => u.uid === user.uid || u.email.toLowerCase() === baseEmail.toLowerCase()
+            (u) => u.uid === user.uid || normalizeIdentityEmail(u.email) === normEmail
           );
           if (localMatch) {
             const resolved: UserProfile = {
               ...localMatch,
               credits: typeof localMatch.credits === 'number' ? localMatch.credits : 0,
             };
+            syncExistingUsersIntoFreeCreditGuard([resolved]);
             persistActiveUserSession(resolved);
             upsertUserInLocalState(resolved);
           } else {
-            const grant = allocateNewUserSignupCredits(baseDisplayName, baseEmail);
+            const grant = allocateNewUserSignupCredits(
+              baseDisplayName,
+              baseEmail,
+              undefined,
+              undefined,
+              user.phoneNumber || '',
+              user.uid,
+              allUsers
+            );
             setAdminCreditPool(grant.remainingAdminPool);
             const defaultProfile: UserProfile = {
               uid: user.uid,
@@ -964,6 +1008,8 @@ export default function App() {
               role: isBootstrapAdmin ? 'admin' : 'user',
               status: 'approved',
               credits: grant.grantedCredits,
+              freeCreditsClaimed: true,
+              deviceFingerprint: grant.deviceFingerprint.slice(0, 128),
               createdAt: new Date().toISOString(),
             };
             persistActiveUserSession(defaultProfile);
@@ -1581,12 +1627,21 @@ export default function App() {
     const targetImg = imgOverride || activeImageRef.current;
     if (!targetImg) return;
 
-    // 1. Check Available Wallet Credits before running AI Background Removal
+    // 1. Require user signup/login so free credits only apply after new account signup
+    if (!userProfile) {
+      setAuthMode('signup');
+      setAuthError(null);
+      setShowAuthModal(true);
+      showToast('Please Sign Up for a new account to receive Free Signup Credits!');
+      return;
+    }
+
+    // 2. Check Available Wallet Credits before running AI Background Removal
     const currentBalance = loadWalletCredits();
     setAvailableCredits(currentBalance);
     if (currentBalance <= 0) {
       setShowCreditExhaustedModal(true);
-      showToast('Credit Quota Exhausted! Please recharge your wallet.');
+      showToast('Credit Quota Exhausted! Please recharge your wallet via UPI QR.');
       return;
     }
 
@@ -2214,23 +2269,49 @@ export default function App() {
           setAuthError('Please enter your full name.');
           return;
         }
-        let createdUid = `user-${Date.now()}`;
+
+        // Anti-Abuse Duplicate Email / Alias Check before signup
+        const normTargetEmail = normalizeIdentityEmail(emailClean);
+        const existingEmailAccount = allUsers.find(
+          (u) => normalizeIdentityEmail(u.email) === normTargetEmail
+        );
+        if (existingEmailAccount) {
+          setAuthError(
+            'This email account is already registered! Duplicate signup for free credits is blocked — please switch to Login.'
+          );
+          return;
+        }
+
+        // Allocate signup credits FIRST (with 4-layer Device Fingerprint + Email + Phone + UID detection)
+        // so that onAuthStateChanged cannot double-grant credits
+        const tempUid = `user-${Date.now()}`;
+        const signupGrant = allocateNewUserSignupCredits(
+          authFullName.trim().slice(0, 100),
+          emailClean.slice(0, 150),
+          siteSettings.enableFreeSignupCredits !== false,
+          siteSettings.freeSignupCreditsAmount ?? 5,
+          authPhone.trim().slice(0, 30),
+          tempUid,
+          allUsers
+        );
+
+        let createdUid = tempUid;
         try {
           const userCred = await createUserWithEmailAndPassword(auth, emailClean, authPassword);
           createdUid = userCred.user.uid;
           await updateProfile(userCred.user, {
             displayName: authFullName.trim().slice(0, 100),
           });
-        } catch {
+        } catch (firebaseErr: any) {
+          if (firebaseErr?.code === 'auth/email-already-in-use') {
+            setAuthError(
+              'This email is already registered! Duplicate signup for free credits is blocked — please switch to Login.'
+            );
+            return;
+          }
           // Seamless Hybrid Studio Auth Fallback when external Firebase project restricts signup
         }
 
-        const signupGrant = allocateNewUserSignupCredits(
-          authFullName.trim().slice(0, 100),
-          emailClean.slice(0, 150),
-          siteSettings.enableFreeSignupCredits !== false,
-          siteSettings.freeSignupCreditsAmount ?? 5
-        );
         setAdminCreditPool(signupGrant.remainingAdminPool);
         handleUpdateAdminCreditPool(signupGrant.remainingAdminPool);
 
@@ -2242,6 +2323,8 @@ export default function App() {
           role: isBootstrapAdmin ? 'admin' : 'user',
           status: 'approved',
           credits: signupGrant.grantedCredits,
+          freeCreditsClaimed: true,
+          deviceFingerprint: signupGrant.deviceFingerprint.slice(0, 128),
           createdAt: new Date().toISOString(),
         };
 
@@ -2262,7 +2345,11 @@ export default function App() {
         setActiveRoute('studio');
         if (signupGrant.grantedCredits > 0) {
           showToast(
-            `Account Created! +${signupGrant.grantedCredits} Free Photo Credits Added (Deducted from Admin Pool).`
+            `Account Created! +${signupGrant.grantedCredits} Free Photo Credits Added (One-Time New User Signup Bonus).`
+          );
+        } else if (signupGrant.duplicateBlocked) {
+          showToast(
+            `Duplicate Free Credit Blocked: This device/user has already used the one-time free signup credit. Account created with 0 credits.`
           );
         } else {
           showToast(
@@ -2270,41 +2357,27 @@ export default function App() {
           );
         }
       } else {
+        // LOGIN MODE: Never grants free signup credits; only restores existing account balance
+        const normLoginEmail = normalizeIdentityEmail(emailClean);
+        const existingLocal = allUsers.find(
+          (u) => normalizeIdentityEmail(u.email) === normLoginEmail
+        );
         try {
           await signInWithEmailAndPassword(auth, emailClean, authPassword);
         } catch {
-          // Seamless Hybrid Studio Auth Fallback
-          const existingLocal = allUsers.find(
-            (u) => u.email.toLowerCase() === emailClean.toLowerCase()
-          );
-          let sessionProfile: UserProfile;
           if (existingLocal) {
-            sessionProfile = {
+            const sessionProfile: UserProfile = {
               ...existingLocal,
               credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 0,
             };
+            persistActiveUserSession(sessionProfile);
+            upsertUserInLocalState(sessionProfile);
           } else {
-            const firstLoginGrant = allocateNewUserSignupCredits(
-              emailClean.split('@')[0] || 'Studio User',
-              emailClean,
-              siteSettings.enableFreeSignupCredits !== false,
-              siteSettings.freeSignupCreditsAmount ?? 5
+            setAuthError(
+              'No account found with this email address. Please switch to "Register Account" to sign up as a new user.'
             );
-            setAdminCreditPool(firstLoginGrant.remainingAdminPool);
-            handleUpdateAdminCreditPool(firstLoginGrant.remainingAdminPool);
-            sessionProfile = {
-              uid: `user-${Date.now()}`,
-              displayName: emailClean.split('@')[0] || 'Studio User',
-              email: emailClean,
-              phone: '+91 98450 11223',
-              role: isBootstrapAdmin ? 'admin' : 'user',
-              status: 'approved',
-              credits: firstLoginGrant.grantedCredits,
-              createdAt: new Date().toISOString(),
-            };
+            return;
           }
-          persistActiveUserSession(sessionProfile);
-          upsertUserInLocalState(sessionProfile);
         }
         setShowAuthModal(false);
         setAuthPassword('');
@@ -2325,19 +2398,10 @@ export default function App() {
       setShowAuthModal(false);
       setActiveRoute('studio');
       showToast('Signed in with Google!');
-    } catch {
-      // Seamless Hybrid Google Studio Session Fallback if popup/domain is restricted in iframe
-      const existingGoogleUser =
-        allUsers.find((u) => u.status === 'approved' && u.role === 'user') || DEFAULT_DEMO_USERS[1];
-      const googleDemoProfile: UserProfile = {
-        ...existingGoogleUser,
-        credits: typeof existingGoogleUser.credits === 'number' ? existingGoogleUser.credits : 5,
-      };
-      persistActiveUserSession(googleDemoProfile);
-      upsertUserInLocalState(googleDemoProfile);
-      setShowAuthModal(false);
-      setActiveRoute('studio');
-      showToast(`Signed in as ${googleDemoProfile.displayName} (${googleDemoProfile.credits} Credits)!`);
+    } catch (err: any) {
+      setAuthError(
+        err?.message || 'Google Sign-In popup was closed or blocked. Please sign up or login with your Email & Password above.'
+      );
     }
   };
 
@@ -5488,6 +5552,45 @@ export default function App() {
             <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
               {authMode === 'signup' && (
                 <>
+                  {(() => {
+                    const dupCheck = checkDuplicateSignupIdentity(authEmail, authPhone, allUsers);
+                    if (siteSettings.enableFreeSignupCredits === false) {
+                      return (
+                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-semibold flex items-start gap-2">
+                          <i className="fa-solid fa-circle-info text-slate-500 mt-0.5"></i>
+                          <span>
+                            Free signup credits are currently disabled by the Admin. New accounts start with 0 credits.
+                          </span>
+                        </div>
+                      );
+                    }
+                    if (dupCheck.deviceAlreadyClaimed || dupCheck.emailAlreadyRegistered || dupCheck.phoneAlreadyRegistered) {
+                      return (
+                        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold flex items-start gap-2">
+                          <i className="fa-solid fa-shield-halved text-amber-600 mt-0.5"></i>
+                          <div>
+                            <div>Anti-Abuse Detection Active ({dupCheck.deviceFingerprint})</div>
+                            <div className="font-normal text-amber-800 mt-0.5">
+                              One-time free signup credits have already been claimed on this device/account. Repeat accounts receive 0 free credits.
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11px] font-bold flex items-start gap-2">
+                        <i className="fa-solid fa-gift text-emerald-600 mt-0.5"></i>
+                        <div>
+                          <div>
+                            One-Time New User Bonus: +{siteSettings.freeSignupCreditsAmount ?? 5} Free Photo Credits
+                          </div>
+                          <div className="font-normal text-emerald-800 mt-0.5">
+                            Granted once per new user & device ({dupCheck.deviceFingerprint}).
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
                       Full Name
@@ -5507,6 +5610,7 @@ export default function App() {
                     </label>
                     <input
                       type="tel"
+                      required
                       value={authPhone}
                       onChange={(e) => setAuthPhone(e.target.value)}
                       placeholder="+91 98765 43210"
@@ -5610,18 +5714,6 @@ export default function App() {
                   <i className="fa-brands fa-google text-cyan-400"></i>
                   <span>Continue with Google</span>
                 </button>
-
-                {/* Instant 1-Click Demo User Login Strip */}
-                <div className="pt-2 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin(false)}
-                    className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-900 text-[11px] font-extrabold transition flex items-center justify-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-bolt text-cyan-600"></i>
-                    <span>1-Click Demo Studio User Login</span>
-                  </button>
-                </div>
               </>
             )}
           </div>

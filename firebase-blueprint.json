@@ -47,6 +47,16 @@
           "maximum": 1000000,
           "description": "Available studio photo credits for the user"
         },
+        "freeCreditsClaimed": {
+          "type": "boolean",
+          "description": "Whether the user/device has already claimed the one-time free signup credit"
+        },
+        "deviceFingerprint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "Hardware/browser fingerprint recorded at signup for duplicate free-credit detection"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

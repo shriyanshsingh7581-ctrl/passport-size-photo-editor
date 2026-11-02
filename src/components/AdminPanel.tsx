@@ -35,6 +35,8 @@ import {
   loadCreditRechargeLogs,
   appendCreditRechargeLog,
   CreditRechargeLog,
+  loadFreeCreditGuardState,
+  FreeCreditGuardState,
 } from '../creditWallet';
 
 export type AdminTab =
@@ -128,6 +130,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [unlockedPasswordCache, setUnlockedPasswordCache] = useState('');
   const [customCreditAddInput, setCustomCreditAddInput] = useState('100');
   const [exactCreditSetInput, setExactCreditSetInput] = useState(String(availableCredits));
+  const [freeCreditGuard, setFreeCreditGuard] = useState<FreeCreditGuardState>(() =>
+    loadFreeCreditGuardState()
+  );
+
+  useEffect(() => {
+    const syncGuard = () => setFreeCreditGuard(loadFreeCreditGuardState());
+    window.addEventListener('malnadu-free-credit-guard-updated', syncGuard);
+    return () => window.removeEventListener('malnadu-free-credit-guard-updated', syncGuard);
+  }, []);
   const [creditLogs, setCreditLogs] = useState<CreditRechargeLog[]>(() => loadCreditRechargeLogs());
   const [userCustomCreditInputs, setUserCustomCreditInputs] = useState<Record<string, string>>({});
   const [poolActionNotice, setPoolActionNotice] = useState<{
@@ -1196,9 +1207,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <p className="text-xs text-slate-700 mt-1 max-w-2xl leading-relaxed">
                   {siteSettings.enableFreeSignupCredits !== false ? (
                     <>
-                      Every new user who signs up receives{' '}
+                      Every genuinely new user who signs up receives{' '}
                       <strong>{siteSettings.freeSignupCreditsAmount ?? 5} free photo credits</strong>, which are{' '}
-                      <strong>automatically deducted from your Website Admin Credit Pool ({adminCreditPool} Credits left)</strong>. Disable this anytime to stop automatic pool deductions.
+                      <strong>automatically deducted from your Website Admin Credit Pool ({adminCreditPool} Credits left)</strong>.
                     </>
                   ) : (
                     <>
@@ -1207,6 +1218,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </>
                   )}
                 </p>
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] font-extrabold">
+                  <span className="px-2.5 py-1 rounded-xl bg-slate-900 text-cyan-300 flex items-center gap-1.5">
+                    <i className="fa-solid fa-shield-halved"></i>
+                    <span>Anti-Abuse Device & Email Guard: ACTIVE</span>
+                  </span>
+                  <span className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-slate-700">
+                    Claimed Devices/Accounts: {Math.max(freeCreditGuard.claimedEmails.length, freeCreditGuard.claimedFingerprints.length)}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-xl bg-rose-100 border border-rose-200 text-rose-800">
+                    Blocked Repeat Attempts: {freeCreditGuard.blockedAttempts.length}
+                  </span>
+                </div>
+                {freeCreditGuard.blockedAttempts.length > 0 && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-white/90 border border-rose-200 space-y-1 max-w-2xl">
+                    <div className="text-[10px] font-extrabold uppercase text-rose-700">
+                      Recent Blocked Repeat Free-Credit Signup Attempts:
+                    </div>
+                    {freeCreditGuard.blockedAttempts.slice(0, 3).map((blk) => (
+                      <div key={blk.id} className="text-[11px] text-slate-700 font-mono flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-rose-700">BLOCKED (0 Cr)</span>
+                        <span>{blk.attemptedEmail}</span>
+                        <span className="text-slate-400">·</span>
+                        <span className="text-slate-500">{blk.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

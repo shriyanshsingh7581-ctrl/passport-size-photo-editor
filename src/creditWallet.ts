@@ -200,7 +200,8 @@ export function loadWalletCredits(): number {
   try {
     const raw = localStorage.getItem(WALLET_STORAGE_KEY);
     if (!raw) {
-      return saveWalletCredits(DEFAULT_INITIAL_CREDITS);
+      // Unauthenticated guests start with 0 credits; free credits are granted ONLY upon new user signup
+      return saveWalletCredits(0);
     }
 
     const envelope = JSON.parse(raw) as SignedWalletEnvelope;
@@ -970,21 +971,462 @@ export function redeemSignedRechargeCode(rawCode: string): {
 }
 
 /**
- * Allocates free signup credits to a brand-new user account by deducting them directly
- * from the Website Admin's Distributable Credit Pool (`adminCreditPool`).
- * If the Website Admin has disabled Free Signup Credits (`enableFreeSignupCredits === false`)
- * or if `adminCreditPool` is 0, the new user starts with 0 credits and nothing is deducted.
+ * ============================================================================
+ * MULTI-LAYER ANTI-ABUSE FREE SIGNUP CREDIT DETECTION SYSTEM
+ * ============================================================================
+ * Ensures that:
+ * 1. Free credits are ONLY granted when a genuinely new user signs up.
+ * 2. A user who has already signed up and used their free credits CANNOT claim
+ *    free credits again by:
+ *    - Signing up again with the same email or a Gmail dot/plus alias (e.g. a.b+2@gmail.com)
+ *    - Signing up again with the same phone number
+ *    - Creating a second account on the same device / browser hardware fingerprint
+ *    - Clearing LocalStorage (persisted across Encrypted LocalStorage, SessionStorage,
+ *      Browser Cookie, IndexedDB, and Cloud Firestore User Records).
+ */
+const FREE_CREDIT_GUARD_VAULT_KEY = 'malnadu_free_credit_guard_vault_v1';
+const FREE_CREDIT_GUARD_SESSION_KEY = 'malnadu_free_credit_guard_session_v1';
+const FREE_CREDIT_COOKIE_NAME = 'mm_fc_device_claimed';
+const FREE_CREDIT_IDB_NAME = 'MalnaduAntiAbuseVaultDB';
+const FREE_CREDIT_IDB_STORE = 'signup_claims';
+
+export interface BlockedFreeCreditAttempt {
+  id: string;
+  timestamp: string;
+  attemptedName: string;
+  attemptedEmail: string;
+  attemptedPhone: string;
+  deviceFingerprint: string;
+  reason: string;
+}
+
+export interface FreeCreditGuardState {
+  claimedEmails: string[]; // normalized emails
+  claimedPhones: string[]; // normalized 10-digit phones
+  claimedUids: string[];
+  claimedFingerprints: string[];
+  deviceHasClaimed: boolean;
+  blockedAttempts: BlockedFreeCreditAttempt[];
+}
+
+let cachedDeviceFingerprint: string | null = null;
+let idbDeviceClaimedMemoryFlag = false;
+
+/**
+ * Normalizes an email address to prevent Gmail dot (.) and sub-address (+tag) bypasses.
+ */
+export function normalizeIdentityEmail(rawEmail: string): string {
+  const clean = (rawEmail || '').trim().toLowerCase();
+  if (!clean || !clean.includes('@')) return clean;
+  const [localPart, domainPart] = clean.split('@');
+  if (!localPart || !domainPart) return clean;
+
+  // Strip +alias on all email providers
+  const baseLocal = localPart.split('+')[0];
+
+  // Strip dots on Gmail / Googlemail accounts
+  if (domainPart === 'gmail.com' || domainPart === 'googlemail.com') {
+    return `${baseLocal.replace(/\./g, '')}@gmail.com`;
+  }
+  return `${baseLocal}@${domainPart}`;
+}
+
+/**
+ * Normalizes a phone number to its last 10 digits so +91 / spaces / dashes cannot bypass detection.
+ */
+export function normalizeIdentityPhone(rawPhone: string): string {
+  const digits = (rawPhone || '').replace(/\D+/g, '');
+  if (digits.length < 7) return '';
+  return digits.slice(-10);
+}
+
+/**
+ * Generates a deterministic Hardware + Browser Device Fingerprint (`FP-...`)
+ * combining screen metrics, CPU cores, memory, timezone, WebGL GPU renderer, and Canvas 2D signature.
+ */
+export function getDeviceHardwareFingerprint(): string {
+  if (cachedDeviceFingerprint) return cachedDeviceFingerprint;
+  if (typeof window === 'undefined') return 'FP-SERVER-NODE';
+
+  try {
+    const nav = window.navigator as any;
+    const scr = window.screen;
+    const parts: string[] = [
+      nav.userAgent || '',
+      nav.language || '',
+      nav.platform || '',
+      String(nav.hardwareConcurrency || 0),
+      String(nav.deviceMemory || 0),
+      String(nav.maxTouchPoints || 0),
+      `${scr?.width || 0}x${scr?.height || 0}x${scr?.colorDepth || 0}`,
+      String(window.devicePixelRatio || 1),
+      Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    ];
+
+    // Canvas 2D hardware raster signature
+    try {
+      const c = document.createElement('canvas');
+      c.width = 160;
+      c.height = 36;
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        ctx.textBaseline = 'top';
+        ctx.font = '13px Arial';
+        ctx.fillStyle = '#06b6d4';
+        ctx.fillRect(10, 4, 80, 20);
+        ctx.fillStyle = '#070a14';
+        ctx.fillText('MalnaduGuard#2026', 6, 8);
+        parts.push(c.toDataURL().slice(-64));
+      }
+    } catch {
+      // ignore canvas fingerprint error
+    }
+
+    // WebGL hardware renderer / vendor
+    try {
+      const glCanvas = document.createElement('canvas');
+      const gl: any =
+        glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        if (dbg) {
+          parts.push(String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || ''));
+          parts.push(String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || ''));
+        }
+      }
+    } catch {
+      // ignore webgl error
+    }
+
+    const sig = computeVaultSignature(`DEVICE_FP::${parts.join('||')}`).toUpperCase();
+    cachedDeviceFingerprint = `FP-${sig}`;
+    return cachedDeviceFingerprint;
+  } catch {
+    cachedDeviceFingerprint = 'FP-DEFAULT-BROWSER';
+    return cachedDeviceFingerprint;
+  }
+}
+
+function hasDeviceClaimCookie(): boolean {
+  if (typeof document === 'undefined') return false;
+  try {
+    return document.cookie.split(';').some((c) => c.trim().startsWith(`${FREE_CREDIT_COOKIE_NAME}=`));
+  } catch {
+    return false;
+  }
+}
+
+function setDeviceClaimCookie(fp: string): void {
+  if (typeof document === 'undefined') return;
+  try {
+    document.cookie = `${FREE_CREDIT_COOKIE_NAME}=${encodeURIComponent(fp)}; max-age=31536000; path=/; SameSite=Lax`;
+  } catch {
+    // ignore
+  }
+}
+
+function persistClaimToIndexedDb(state: FreeCreditGuardState): void {
+  if (typeof window === 'undefined' || !('indexedDB' in window)) return;
+  try {
+    const req = window.indexedDB.open(FREE_CREDIT_IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(FREE_CREDIT_IDB_STORE)) {
+        db.createObjectStore(FREE_CREDIT_IDB_STORE);
+      }
+    };
+    req.onsuccess = () => {
+      try {
+        const db = req.result;
+        const tx = db.transaction(FREE_CREDIT_IDB_STORE, 'readwrite');
+        tx.objectStore(FREE_CREDIT_IDB_STORE).put(state, 'guard_state');
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
+  }
+}
+
+function hydrateClaimFromIndexedDb(): void {
+  if (typeof window === 'undefined' || !('indexedDB' in window)) return;
+  try {
+    const req = window.indexedDB.open(FREE_CREDIT_IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(FREE_CREDIT_IDB_STORE)) {
+        db.createObjectStore(FREE_CREDIT_IDB_STORE);
+      }
+    };
+    req.onsuccess = () => {
+      try {
+        const db = req.result;
+        const tx = db.transaction(FREE_CREDIT_IDB_STORE, 'readonly');
+        const getReq = tx.objectStore(FREE_CREDIT_IDB_STORE).get('guard_state');
+        getReq.onsuccess = () => {
+          const idbState = getReq.result as FreeCreditGuardState | undefined;
+          if (idbState && idbState.deviceHasClaimed) {
+            idbDeviceClaimedMemoryFlag = true;
+            // Re-hydrate LocalStorage & Cookie if the user tried to clear them
+            const current = loadFreeCreditGuardState();
+            const merged: FreeCreditGuardState = {
+              claimedEmails: Array.from(
+                new Set([...current.claimedEmails, ...(idbState.claimedEmails || [])])
+              ),
+              claimedPhones: Array.from(
+                new Set([...current.claimedPhones, ...(idbState.claimedPhones || [])])
+              ),
+              claimedUids: Array.from(
+                new Set([...current.claimedUids, ...(idbState.claimedUids || [])])
+              ),
+              claimedFingerprints: Array.from(
+                new Set([...current.claimedFingerprints, ...(idbState.claimedFingerprints || [])])
+              ),
+              deviceHasClaimed: true,
+              blockedAttempts:
+                current.blockedAttempts.length >= (idbState.blockedAttempts || []).length
+                  ? current.blockedAttempts
+                  : idbState.blockedAttempts || [],
+            };
+            saveFreeCreditGuardState(merged);
+          }
+        };
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
+  }
+}
+
+// Automatically hydrate from IndexedDB on module load
+if (typeof window !== 'undefined') {
+  hydrateClaimFromIndexedDb();
+}
+
+export function loadFreeCreditGuardState(): FreeCreditGuardState {
+  const defaultFp = getDeviceHardwareFingerprint();
+  const cookieClaimed = hasDeviceClaimCookie();
+  const emptyState: FreeCreditGuardState = {
+    claimedEmails: [],
+    claimedPhones: [],
+    claimedUids: [],
+    claimedFingerprints: cookieClaimed || idbDeviceClaimedMemoryFlag ? [defaultFp] : [],
+    deviceHasClaimed: cookieClaimed || idbDeviceClaimedMemoryFlag,
+    blockedAttempts: [],
+  };
+
+  try {
+    const raw =
+      localStorage.getItem(FREE_CREDIT_GUARD_VAULT_KEY) ||
+      sessionStorage.getItem(FREE_CREDIT_GUARD_SESSION_KEY);
+    if (!raw) {
+      return emptyState;
+    }
+
+    const envelope = JSON.parse(raw) as SignedWalletEnvelope;
+    if (!envelope || typeof envelope.p !== 'string' || typeof envelope.s !== 'string') {
+      // Tampering with guard vault automatically locks device as claimed
+      return {
+        ...emptyState,
+        claimedFingerprints: [defaultFp],
+        deviceHasClaimed: true,
+      };
+    }
+
+    const expectedSig = computeVaultSignature(`FC_GUARD::${envelope.p}`);
+    if (expectedSig !== envelope.s) {
+      // Signature tampering detected — lock free credits on this device
+      return {
+        ...emptyState,
+        claimedFingerprints: [defaultFp],
+        deviceHasClaimed: true,
+      };
+    }
+
+    const parsed = JSON.parse(decryptPayloadString(envelope.p)) as Partial<FreeCreditGuardState>;
+    const claimedFps = Array.isArray(parsed.claimedFingerprints) ? parsed.claimedFingerprints : [];
+    const isDeviceClaimed =
+      Boolean(parsed.deviceHasClaimed) ||
+      cookieClaimed ||
+      idbDeviceClaimedMemoryFlag ||
+      claimedFps.includes(defaultFp);
+
+    return {
+      claimedEmails: Array.isArray(parsed.claimedEmails) ? parsed.claimedEmails : [],
+      claimedPhones: Array.isArray(parsed.claimedPhones) ? parsed.claimedPhones : [],
+      claimedUids: Array.isArray(parsed.claimedUids) ? parsed.claimedUids : [],
+      claimedFingerprints: isDeviceClaimed
+        ? Array.from(new Set([...claimedFps, defaultFp]))
+        : claimedFps,
+      deviceHasClaimed: isDeviceClaimed,
+      blockedAttempts: Array.isArray(parsed.blockedAttempts) ? parsed.blockedAttempts : [],
+    };
+  } catch {
+    return emptyState;
+  }
+}
+
+export function saveFreeCreditGuardState(state: FreeCreditGuardState): void {
+  try {
+    const rawJson = JSON.stringify(state);
+    const p = encryptPayloadString(rawJson);
+    const s = computeVaultSignature(`FC_GUARD::${p}`);
+    const serialized = JSON.stringify({ p, s });
+    localStorage.setItem(FREE_CREDIT_GUARD_VAULT_KEY, serialized);
+    sessionStorage.setItem(FREE_CREDIT_GUARD_SESSION_KEY, serialized);
+    if (state.deviceHasClaimed) {
+      idbDeviceClaimedMemoryFlag = true;
+      setDeviceClaimCookie(getDeviceHardwareFingerprint());
+    }
+    persistClaimToIndexedDb(state);
+    window.dispatchEvent(new CustomEvent('malnadu-free-credit-guard-updated', { detail: state }));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Synchronizes existing user profiles from Firestore / LocalStorage into the Free Credit Guard
+ * so any previously registered email, phone, UID, or hardware fingerprint is recognized across sessions.
+ */
+export function syncExistingUsersIntoFreeCreditGuard(
+  users: Array<{
+    uid?: string;
+    email?: string;
+    phone?: string;
+    freeCreditsClaimed?: boolean;
+    deviceFingerprint?: string;
+  }>
+): FreeCreditGuardState {
+  const current = loadFreeCreditGuardState();
+  const currentFp = getDeviceHardwareFingerprint();
+
+  const emailSet = new Set(current.claimedEmails);
+  const phoneSet = new Set(current.claimedPhones);
+  const uidSet = new Set(current.claimedUids);
+  const fpSet = new Set(current.claimedFingerprints);
+  let deviceClaimed = current.deviceHasClaimed;
+
+  for (const u of users) {
+    // Skip built-in static demo seed accounts so a real first-time user can still sign up once
+    if (u.uid === 'admin-demo-01' || u.uid === 'user-arjun-02' || u.uid === 'user-meera-03') {
+      continue;
+    }
+    if (u.email) {
+      const normEmail = normalizeIdentityEmail(u.email);
+      if (normEmail) emailSet.add(normEmail);
+    }
+    if (u.phone) {
+      const normPhone = normalizeIdentityPhone(u.phone);
+      if (normPhone) phoneSet.add(normPhone);
+    }
+    if (u.uid) {
+      uidSet.add(u.uid);
+    }
+    if (u.deviceFingerprint) {
+      fpSet.add(u.deviceFingerprint);
+      if (u.deviceFingerprint === currentFp) {
+        deviceClaimed = true;
+      }
+    }
+  }
+
+  const updated: FreeCreditGuardState = {
+    claimedEmails: Array.from(emailSet),
+    claimedPhones: Array.from(phoneSet),
+    claimedUids: Array.from(uidSet),
+    claimedFingerprints: Array.from(fpSet),
+    deviceHasClaimed: deviceClaimed,
+    blockedAttempts: current.blockedAttempts,
+  };
+
+  saveFreeCreditGuardState(updated);
+  return updated;
+}
+
+/**
+ * Checks whether an email or phone number is already registered (including Gmail dot/plus aliases).
+ */
+export function checkDuplicateSignupIdentity(
+  email: string,
+  phone: string,
+  existingUsers: Array<{ uid?: string; email?: string; phone?: string; deviceFingerprint?: string }> = []
+): {
+  emailAlreadyRegistered: boolean;
+  phoneAlreadyRegistered: boolean;
+  deviceAlreadyClaimed: boolean;
+  deviceFingerprint: string;
+} {
+  const guard = syncExistingUsersIntoFreeCreditGuard(existingUsers);
+  const normEmail = normalizeIdentityEmail(email);
+  const normPhone = normalizeIdentityPhone(phone);
+  const currentFp = getDeviceHardwareFingerprint();
+
+  const emailInUsers = existingUsers.some(
+    (u) => u.email && normalizeIdentityEmail(u.email) === normEmail
+  );
+  const phoneInUsers =
+    Boolean(normPhone) &&
+    existingUsers.some(
+      (u) =>
+        u.uid !== 'admin-demo-01' &&
+        u.uid !== 'user-arjun-02' &&
+        u.uid !== 'user-meera-03' &&
+        u.phone &&
+        normalizeIdentityPhone(u.phone) === normPhone
+    );
+  const fpInUsers = existingUsers.some(
+    (u) => u.deviceFingerprint && u.deviceFingerprint === currentFp
+  );
+
+  return {
+    emailAlreadyRegistered: Boolean(normEmail) && (emailInUsers || guard.claimedEmails.includes(normEmail)),
+    phoneAlreadyRegistered: Boolean(normPhone) && (phoneInUsers || guard.claimedPhones.includes(normPhone)),
+    deviceAlreadyClaimed:
+      guard.deviceHasClaimed || guard.claimedFingerprints.includes(currentFp) || fpInUsers,
+    deviceFingerprint: currentFp,
+  };
+}
+
+/**
+ * Allocates free signup credits to a brand-new user account ONLY on genuine first-time signup,
+ * deducting them directly from the Website Admin's Distributable Credit Pool (`adminCreditPool`).
+ *
+ * Multi-Layer Anti-Abuse Protection:
+ * - If the user's email (or Gmail alias), phone number, UID, or hardware device fingerprint
+ *   has EVER claimed free signup credits before, `duplicateBlocked` is set to `true`,
+ *   `grantedCredits` is `0`, nothing is deducted from `adminCreditPool`, and the attempt is logged.
  */
 export function allocateNewUserSignupCredits(
   userDisplayName: string,
   userEmail: string,
   enableFreeCredits?: boolean,
-  requestedAmount?: number
+  requestedAmount?: number,
+  userPhone?: string,
+  userUid?: string,
+  existingUsers: Array<{
+    uid?: string;
+    email?: string;
+    phone?: string;
+    freeCreditsClaimed?: boolean;
+    deviceFingerprint?: string;
+  }> = []
 ): {
   grantedCredits: number;
   remainingAdminPool: number;
   wasEnabled: boolean;
+  duplicateBlocked: boolean;
+  blockReason?: string;
+  deviceFingerprint: string;
 } {
+  const guard = syncExistingUsersIntoFreeCreditGuard(existingUsers);
+  const deviceFp = getDeviceHardwareFingerprint();
+  const normEmail = normalizeIdentityEmail(userEmail);
+  const normPhone = normalizeIdentityPhone(userPhone || '');
+
   let isEnabled = typeof enableFreeCredits === 'boolean' ? enableFreeCredits : true;
   let targetBonus =
     typeof requestedAmount === 'number' && !isNaN(requestedAmount)
@@ -999,7 +1441,10 @@ export function allocateNewUserSignupCredits(
         localStorage.getItem('malnadu_studio_settings_v1');
       if (rawSettings) {
         const parsed = JSON.parse(rawSettings);
-        if (typeof enableFreeCredits !== 'boolean' && typeof parsed.enableFreeSignupCredits === 'boolean') {
+        if (
+          typeof enableFreeCredits !== 'boolean' &&
+          typeof parsed.enableFreeSignupCredits === 'boolean'
+        ) {
           isEnabled = parsed.enableFreeSignupCredits;
         }
         if (
@@ -1015,27 +1460,115 @@ export function allocateNewUserSignupCredits(
   }
 
   const currentPool = loadAdminCreditPool();
+
+  // 1. Check Anti-Abuse Duplicate Detection Layers
+  const emailAlreadyClaimed = Boolean(normEmail) && guard.claimedEmails.includes(normEmail);
+  const phoneAlreadyClaimed = Boolean(normPhone) && guard.claimedPhones.includes(normPhone);
+  const uidAlreadyClaimed = Boolean(userUid) && guard.claimedUids.includes(userUid!);
+  const deviceAlreadyClaimed =
+    guard.deviceHasClaimed || guard.claimedFingerprints.includes(deviceFp);
+
+  if (emailAlreadyClaimed || phoneAlreadyClaimed || uidAlreadyClaimed || deviceAlreadyClaimed) {
+    const reasons: string[] = [];
+    if (emailAlreadyClaimed) reasons.push('Email/Alias already claimed free credits');
+    if (phoneAlreadyClaimed) reasons.push('Phone number already claimed free credits');
+    if (deviceAlreadyClaimed) reasons.push(`Device (${deviceFp}) already claimed free signup credits`);
+    if (uidAlreadyClaimed && reasons.length === 0) reasons.push('Account UID already initialized');
+
+    const blockReason = reasons.join(' + ');
+
+    // Only log as a blocked attempt if it wasn't just the same UID re-checking within milliseconds
+    if (!uidAlreadyClaimed || emailAlreadyClaimed || deviceAlreadyClaimed) {
+      const blockedEntry: BlockedFreeCreditAttempt = {
+        id: `blk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        attemptedName: userDisplayName || 'User',
+        attemptedEmail: userEmail || 'unknown',
+        attemptedPhone: userPhone || '',
+        deviceFingerprint: deviceFp,
+        reason: blockReason,
+      };
+      const updatedGuard: FreeCreditGuardState = {
+        ...guard,
+        claimedEmails: normEmail
+          ? Array.from(new Set([...guard.claimedEmails, normEmail]))
+          : guard.claimedEmails,
+        claimedPhones: normPhone
+          ? Array.from(new Set([...guard.claimedPhones, normPhone]))
+          : guard.claimedPhones,
+        claimedUids: userUid
+          ? Array.from(new Set([...guard.claimedUids, userUid]))
+          : guard.claimedUids,
+        claimedFingerprints: Array.from(new Set([...guard.claimedFingerprints, deviceFp])),
+        deviceHasClaimed: true,
+        blockedAttempts: [blockedEntry, ...guard.blockedAttempts].slice(0, 50),
+      };
+      saveFreeCreditGuardState(updatedGuard);
+
+      appendCreditRechargeLog({
+        targetName: `BLOCKED Repeat Free Credit → ${userDisplayName || 'User'}`,
+        targetEmail: `${userEmail} · ${blockReason} (0 Cr Granted)`,
+        action: 'set',
+        amount: 0,
+        balanceAfter: 0,
+      });
+    }
+
+    return {
+      grantedCredits: 0,
+      remainingAdminPool: currentPool,
+      wasEnabled: isEnabled,
+      duplicateBlocked: true,
+      blockReason,
+      deviceFingerprint: deviceFp,
+    };
+  }
+
+  // 2. If Admin has disabled Free Signup Credits, grant 0
   if (!isEnabled || targetBonus <= 0) {
     return {
       grantedCredits: 0,
       remainingAdminPool: currentPool,
       wasEnabled: false,
+      duplicateBlocked: false,
+      deviceFingerprint: deviceFp,
     };
   }
 
+  // 3. Check if Admin Pool has sufficient credits
   const actualGranted = Math.max(0, Math.min(targetBonus, currentPool));
   if (actualGranted <= 0) {
     return {
       grantedCredits: 0,
       remainingAdminPool: currentPool,
       wasEnabled: true,
+      duplicateBlocked: false,
+      deviceFingerprint: deviceFp,
     };
   }
 
+  // 4. Permanently lock this Email, Phone, UID, and Hardware Device Fingerprint in the Guard Vault
+  const nextGuard: FreeCreditGuardState = {
+    claimedEmails: normEmail
+      ? Array.from(new Set([...guard.claimedEmails, normEmail]))
+      : guard.claimedEmails,
+    claimedPhones: normPhone
+      ? Array.from(new Set([...guard.claimedPhones, normPhone]))
+      : guard.claimedPhones,
+    claimedUids: userUid
+      ? Array.from(new Set([...guard.claimedUids, userUid]))
+      : guard.claimedUids,
+    claimedFingerprints: Array.from(new Set([...guard.claimedFingerprints, deviceFp])),
+    deviceHasClaimed: true,
+    blockedAttempts: guard.blockedAttempts,
+  };
+  saveFreeCreditGuardState(nextGuard);
+
+  // 5. Deduct from Website Admin Credit Pool and log
   const nextPool = saveAdminCreditPool(currentPool - actualGranted);
   appendCreditRechargeLog({
     targetName: `Free Signup Credit → ${userDisplayName || 'New User'}`,
-    targetEmail: `${userEmail || 'new-user'} (Auto-Deducted -${actualGranted} Cr from Admin Pool | Pool Left: ${nextPool} Cr)`,
+    targetEmail: `${userEmail || 'new-user'} · Device ${deviceFp} (-${actualGranted} Cr from Admin Pool | Pool Left: ${nextPool} Cr)`,
     action: 'deduct',
     amount: actualGranted,
     balanceAfter: actualGranted,
@@ -1045,6 +1578,9 @@ export function allocateNewUserSignupCredits(
     grantedCredits: actualGranted,
     remainingAdminPool: nextPool,
     wasEnabled: true,
+    duplicateBlocked: false,
+    deviceFingerprint: deviceFp,
   };
 }
+
 

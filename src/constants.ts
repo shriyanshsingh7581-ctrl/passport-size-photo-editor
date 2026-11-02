@@ -614,6 +614,8 @@ export interface UserProfile {
   role: 'user' | 'admin';
   status: AccountStatus;
   credits?: number;
+  freeCreditsClaimed?: boolean;
+  deviceFingerprint?: string;
   createdAt?: any;
   updatedAt?: any;
 }
