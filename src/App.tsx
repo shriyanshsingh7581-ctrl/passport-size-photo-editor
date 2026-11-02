@@ -150,7 +150,8 @@ const DEFAULT_DEMO_SHORT_LINKS: ShortLinkRecord[] = [
   {
     id: 'photo-edit',
     slug: 'photo-edit',
-    originalUrl: 'https://passportstudiopro.netlify.app',
+    originalUrl:
+      typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com',
     createdBy: 'admin',
     creatorEmail: 'admin@malnadumedia.com',
     active: true,
@@ -265,7 +266,21 @@ export default function App() {
   const [shortLinks, setShortLinks] = useState<ShortLinkRecord[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_SHORTLINKS_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: ShortLinkRecord[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const fallbackOrigin =
+            typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
+          return parsed.map((item) => ({
+            ...item,
+            originalUrl:
+              item.originalUrl?.includes('passportstudiopro') ||
+              item.originalUrl?.includes('studiopassport')
+                ? fallbackOrigin
+                : item.originalUrl,
+          }));
+        }
+      }
     } catch {
       // ignore
     }

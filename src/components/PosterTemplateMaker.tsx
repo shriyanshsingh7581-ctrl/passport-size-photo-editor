@@ -4252,7 +4252,7 @@ export const POSTER_TEMPLATES: PosterTemplateSpec[] = [
       {
         id: 'venue',
         label: 'Contact / Address',
-        defaultValue: 'Main Road, Chikmagalur · www.studiopassport.online',
+        defaultValue: 'Main Road, Chikmagalur · MALNADU MEDIA',
         x: 540,
         y: 1120,
         maxWidth: 880,

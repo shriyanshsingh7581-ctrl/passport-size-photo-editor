@@ -99,17 +99,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   const claritySourceImgRef = useRef<HTMLImageElement | null>(null);
 
   const baseOrigin =
-    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online';
+    typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
 
   // =========================================================================
   // 3. QR CODE GENERATOR STATE
   // =========================================================================
-  const [qrInputUrl, setQrInputUrl] = useState<string>(() =>
-    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online'
-  );
-  const [qrWebsiteFooterUrl, setQrWebsiteFooterUrl] = useState<string>(() =>
-    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online'
-  );
+  const [qrInputUrl, setQrInputUrl] = useState<string>('');
+  const [qrWebsiteFooterUrl, setQrWebsiteFooterUrl] = useState<string>('');
   const [qrSize, setQrSize] = useState<number>(360);
   const [qrFgColor, setQrFgColor] = useState<string>('#070a14');
   const [qrBgColor, setQrBgColor] = useState<string>('#ffffff');
@@ -619,8 +615,8 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             errorCorrectionLevel: errLvl,
           });
 
-          // Render the QR code onto an HTML5 Canvas with the Website URL written clearly at the bottom
-          const bottomUrlText = (footerWebsiteUrl || cleaned || baseOrigin).trim();
+          // Render the QR code onto an HTML5 Canvas with the user-entered Website URL written clearly at the bottom
+          const bottomUrlText = (footerWebsiteUrl || cleaned).trim();
           const img = new Image();
           img.onload = () => {
             const footerHeight = Math.max(38, Math.round(sizePx * 0.13));
@@ -736,12 +732,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
     showToast(label);
   };
 
-  // Initialize default sample images and QR code on mount
+  // Initialize default sample images on mount
   useEffect(() => {
     const samplePortrait = generateSamplePortraitDataUrl(0, false);
     loadBgSampleOrDataUrl(samplePortrait);
     loadClarityImage(samplePortrait, true);
-    handleGenerateQrCode('https://passportstudiopro.netlify.app', 360, '#070a14', '#ffffff', 'H');
   }, []);
 
   return (
@@ -1868,9 +1863,25 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Website URL or Text Content (QR Target)
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Website URL or Text Content (QR Target)
+                  </label>
+                  {(qrInputUrl || qrWebsiteFooterUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQrInputUrl('');
+                        setQrWebsiteFooterUrl('');
+                        setQrDataUrl('');
+                        setQrErrorMsg(null);
+                      }}
+                      className="text-[11px] font-bold text-rose-600 hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={qrInputUrl}
@@ -1880,9 +1891,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     setQrWebsiteFooterUrl(val);
                     if (val.trim()) {
                       handleGenerateQrCode(val, qrSize, qrFgColor, qrBgColor, qrErrorLevel, val);
+                    } else {
+                      setQrDataUrl('');
                     }
                   }}
-                  placeholder="https://studiopassport.online"
+                  placeholder="Enter website URL or text..."
                   className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
@@ -1892,16 +1905,6 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   <label className="block text-xs font-bold text-slate-700">
                     Website URL Printed Below QR Code
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQrWebsiteFooterUrl(baseOrigin);
-                      handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, baseOrigin);
-                    }}
-                    className="text-[11px] font-bold text-cyan-700 hover:underline"
-                  >
-                    Use {baseOrigin.replace(/^https?:\/\//, '')}
-                  </button>
                 </div>
                 <input
                   type="text"
@@ -1909,9 +1912,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   onChange={(e) => {
                     const footerVal = e.target.value;
                     setQrWebsiteFooterUrl(footerVal);
-                    handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, footerVal);
+                    if (qrInputUrl.trim()) {
+                      handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, footerVal);
+                    }
                   }}
-                  placeholder={baseOrigin}
+                  placeholder="Enter text or URL to print below QR..."
                   className="w-full min-h-[44px] px-4 py-2 text-xs font-mono font-bold bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
@@ -2032,9 +2037,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   Enter a URL to generate QR Code
                 </div>
               )}
-              <div className="mt-3 text-xs font-mono font-bold text-cyan-800 max-w-xs truncate">
-                {qrWebsiteFooterUrl || qrInputUrl || baseOrigin}
-              </div>
+              {(qrWebsiteFooterUrl || qrInputUrl) && (
+                <div className="mt-3 text-xs font-mono font-bold text-cyan-800 max-w-xs truncate">
+                  {qrWebsiteFooterUrl || qrInputUrl}
+                </div>
+              )}
             </div>
 
             <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3">

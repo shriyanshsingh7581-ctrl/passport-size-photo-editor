@@ -225,7 +225,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
   // =========================================================================
   // 10. QR CODE BROADCAST OVERLAY STATE
   // =========================================================================
-  const [qrOverlayUrl, setQrOverlayUrl] = useState<string>('https://passportstudiopro.netlify.app');
+  const [qrOverlayUrl, setQrOverlayUrl] = useState<string>('');
   const [qrOverlayTitle, setQrOverlayTitle] = useState<string>('SCAN TO WATCH ON MOBILE');
   const [qrOverlayCta, setQrOverlayCta] = useState<string>('Share Live Stream with Family');
   const [qrOverlayCorner, setQrOverlayCorner] = useState<'bottom-right' | 'bottom-left' | 'top-right'>(
@@ -354,11 +354,15 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
 
   useEffect(() => {
     const updateQrImg = async () => {
+      if (!qrOverlayUrl.trim()) {
+        setQrGeneratedImg(null);
+        return;
+      }
       try {
         const QRCodeMod: any = await import('qrcode');
         const toDataURL = QRCodeMod.toDataURL || QRCodeMod.default?.toDataURL;
         if (toDataURL) {
-          const dataUrl = await toDataURL(qrOverlayUrl || 'https://malnadumedia.com', {
+          const dataUrl = await toDataURL(qrOverlayUrl.trim(), {
             width: 300,
             margin: 1,
             color: { dark: '#070a14', light: '#FFFFFF' },
