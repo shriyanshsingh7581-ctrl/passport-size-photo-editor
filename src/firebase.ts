@@ -1,21 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import firebaseAppletConfig from '../firebase-applet-config.json';
 
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-export const firebaseConfig = {
-  apiKey: "AIzaSyCQQRHkuRFQeBexgJE6V7z0xCumF_6bfxY",
-  authDomain: "bharatchats-e963f.firebaseapp.com",
-  databaseURL: "https://bharatchats-e963f-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "bharatchats-e963f",
-  storageBucket: "bharatchats-e963f.firebasestorage.app",
-  messagingSenderId: "103115476084",
-  appId: "1:103115476084:web:f89e200dce484a0a8e1521",
-  measurementId: "G-V465T2PMKV"
-};
+export const firebaseConfig = firebaseAppletConfig;
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 

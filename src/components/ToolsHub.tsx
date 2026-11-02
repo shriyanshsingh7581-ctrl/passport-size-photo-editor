@@ -117,6 +117,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   // 4. CUSTOM LINK SHORTENER STATE
   // =========================================================================
   const [longUrlInput, setLongUrlInput] = useState<string>('');
+  const [shortLinkCustomBoxUrl, setShortLinkCustomBoxUrl] = useState<string>('');
   const [linkErrorMsg, setLinkErrorMsg] = useState<string | null>(null);
   const [isCreatingLink, setIsCreatingLink] = useState<boolean>(false);
   const [latestCreatedLink, setLatestCreatedLink] = useState<ShortLinkRecord | null>(null);
@@ -719,6 +720,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
         setLinkErrorMsg(result.error || 'Could not create short link.');
       } else if (result.link) {
         setLatestCreatedLink(result.link);
+        setShortLinkCustomBoxUrl('');
         setLongUrlInput('');
         showToast('Short Link Created!');
       }
@@ -1895,7 +1897,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       setQrDataUrl('');
                     }
                   }}
-                  placeholder="Enter website URL or text..."
+                  placeholder="Add URL"
                   className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
@@ -1916,7 +1918,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, footerVal);
                     }
                   }}
-                  placeholder="Enter text or URL to print below QR..."
+                  placeholder="Add URL"
                   className="w-full min-h-[44px] px-4 py-2 text-xs font-mono font-bold bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
@@ -2081,7 +2083,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 Link Shortener
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Create memorable custom short links (e.g. <span className="font-mono text-slate-700">{baseOrigin}/photo-edit</span>) that automatically redirect visitors to your target URL.
+                Create custom short links that automatically redirect visitors to your target URL.
               </p>
             </div>
 
@@ -2101,7 +2103,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   required
                   value={longUrlInput}
                   onChange={(e) => setLongUrlInput(e.target.value)}
-                  placeholder="https://example.com/very-long-url-path"
+                  placeholder="Add URL"
                   className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
@@ -2116,47 +2118,58 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               </button>
             </form>
 
-            {latestCreatedLink && (
-              <div className="p-4 rounded-2xl bg-cyan-50 border border-cyan-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-cyan-950">
-                    Short Link Ready!
-                  </span>
-                  <span className="text-[11px] font-bold text-emerald-700">Active</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-white border border-cyan-200 font-mono text-xs font-bold text-slate-900 break-all">
-                  {`${baseOrigin}/${latestCreatedLink.slug}`}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyText(
-                        `${baseOrigin}/${latestCreatedLink.slug}`,
-                        'Short link copied to clipboard!'
-                      )
-                    }
-                    className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-copy"></i>
-                    <span>Copy Short Link</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const qrUrl = `${baseOrigin}/${latestCreatedLink.slug}`;
-                      setQrInputUrl(qrUrl);
-                      handleGenerateQrCode(qrUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel);
-                      onSelectTool('qr-generator');
-                    }}
-                    className="min-h-[40px] px-3 py-2 rounded-xl bg-white border border-cyan-300 text-cyan-800 text-xs font-bold flex items-center justify-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-qrcode"></i>
-                    <span>QR</span>
-                  </button>
-                </div>
+            <div className="p-4 rounded-2xl bg-cyan-50 border border-cyan-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-cyan-950">
+                  Short Link Ready!
+                </span>
+                <span className="text-[11px] font-bold text-emerald-700">Active</span>
               </div>
-            )}
+              <input
+                type="text"
+                value={shortLinkCustomBoxUrl}
+                onChange={(e) => setShortLinkCustomBoxUrl(e.target.value)}
+                placeholder="Add URL"
+                className="w-full p-2.5 rounded-xl bg-white border border-cyan-200 font-mono text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetToCopy =
+                      shortLinkCustomBoxUrl.trim() ||
+                      (latestCreatedLink ? latestCreatedLink.originalUrl : '');
+                    if (!targetToCopy) {
+                      showToast('Please add a URL in the box first!');
+                      return;
+                    }
+                    handleCopyText(targetToCopy, 'Short link copied to clipboard!');
+                  }}
+                  className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-copy"></i>
+                  <span>Copy Short Link</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const qrUrl =
+                      shortLinkCustomBoxUrl.trim() ||
+                      (latestCreatedLink ? latestCreatedLink.originalUrl : '');
+                    setQrInputUrl(qrUrl);
+                    setQrWebsiteFooterUrl(qrUrl);
+                    if (qrUrl) {
+                      handleGenerateQrCode(qrUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, qrUrl);
+                    }
+                    onSelectTool('qr-generator');
+                  }}
+                  className="min-h-[40px] px-3 py-2 rounded-xl bg-white border border-cyan-300 text-cyan-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-qrcode"></i>
+                  <span>QR</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Existing Short Links List */}
@@ -2167,7 +2180,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   Active Short Links ({shortLinks.length})
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Visiting <span className="font-mono">{baseOrigin}/&lt;slug&gt;</span> immediately redirects to the original URL
+                  Visiting your short link slug immediately redirects to the original URL
                 </p>
               </div>
             </div>

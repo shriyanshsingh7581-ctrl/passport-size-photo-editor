@@ -715,7 +715,7 @@ export default function App() {
   // 2. SYNC SITE SETTINGS, SHORT LINKS & USERS WITH FIRESTORE + LOCAL STORAGE
   // =========================================================================
   useEffect(() => {
-    // Listen to global siteSettings
+    // Listen to global siteSettings (publicly readable)
     const unsubSettings = onSnapshot(
       doc(db, 'siteSettings', 'global'),
       (snap) => {
@@ -738,9 +738,26 @@ export default function App() {
       }
     );
 
-    // Listen to shortLinks collection
+    return () => {
+      unsubSettings();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady || !currentUser) {
+      return;
+    }
+
+    const isBootstrapAdmin =
+      currentUser.email?.toLowerCase() === 'shriyanshsingh7581@gmail.com';
+
+    // Listen to shortLinks collection (admin gets all, regular user gets their own)
+    const linksQuery = isBootstrapAdmin
+      ? collection(db, 'shortLinks')
+      : query(collection(db, 'shortLinks'), where('createdBy', '==', currentUser.uid));
+
     const unsubLinks = onSnapshot(
-      collection(db, 'shortLinks'),
+      linksQuery,
       (snap) => {
         if (!snap.empty) {
           const list: ShortLinkRecord[] = snap.docs.map((d) => ({
@@ -758,9 +775,13 @@ export default function App() {
       () => {}
     );
 
-    // Listen to users collection
+    // Listen to users collection (bootstrap admin can list all, regular user queries their own UID)
+    const usersQuery = isBootstrapAdmin
+      ? collection(db, 'users')
+      : query(collection(db, 'users'), where('uid', '==', currentUser.uid));
+
     const unsubUsers = onSnapshot(
-      collection(db, 'users'),
+      usersQuery,
       (snap) => {
         if (!snap.empty) {
           const firestoreUsers: UserProfile[] = snap.docs.map((d) => ({
@@ -786,11 +807,10 @@ export default function App() {
     );
 
     return () => {
-      unsubSettings();
       unsubLinks();
       unsubUsers();
     };
-  }, []);
+  }, [isAuthReady, currentUser]);
 
   // =========================================================================
   // 3. FIREBASE AUTHENTICATION & USER PROFILE BOOTSTRAP (5 FREE CREDITS PER NEW ACCOUNT)
