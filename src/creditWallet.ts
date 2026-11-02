@@ -968,3 +968,83 @@ export function redeemSignedRechargeCode(rawCode: string): {
     newBalance: next,
   };
 }
+
+/**
+ * Allocates free signup credits to a brand-new user account by deducting them directly
+ * from the Website Admin's Distributable Credit Pool (`adminCreditPool`).
+ * If the Website Admin has disabled Free Signup Credits (`enableFreeSignupCredits === false`)
+ * or if `adminCreditPool` is 0, the new user starts with 0 credits and nothing is deducted.
+ */
+export function allocateNewUserSignupCredits(
+  userDisplayName: string,
+  userEmail: string,
+  enableFreeCredits?: boolean,
+  requestedAmount?: number
+): {
+  grantedCredits: number;
+  remainingAdminPool: number;
+  wasEnabled: boolean;
+} {
+  let isEnabled = typeof enableFreeCredits === 'boolean' ? enableFreeCredits : true;
+  let targetBonus =
+    typeof requestedAmount === 'number' && !isNaN(requestedAmount)
+      ? Math.max(0, Math.floor(requestedAmount))
+      : DEFAULT_INITIAL_CREDITS;
+
+  // Read latest persisted site settings if not explicitly provided
+  if (typeof enableFreeCredits !== 'boolean' || typeof requestedAmount !== 'number') {
+    try {
+      const rawSettings =
+        localStorage.getItem('malnadu_media_site_settings_v2') ||
+        localStorage.getItem('malnadu_studio_settings_v1');
+      if (rawSettings) {
+        const parsed = JSON.parse(rawSettings);
+        if (typeof enableFreeCredits !== 'boolean' && typeof parsed.enableFreeSignupCredits === 'boolean') {
+          isEnabled = parsed.enableFreeSignupCredits;
+        }
+        if (
+          typeof requestedAmount !== 'number' &&
+          typeof parsed.freeSignupCreditsAmount === 'number'
+        ) {
+          targetBonus = Math.max(0, Math.floor(parsed.freeSignupCreditsAmount));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const currentPool = loadAdminCreditPool();
+  if (!isEnabled || targetBonus <= 0) {
+    return {
+      grantedCredits: 0,
+      remainingAdminPool: currentPool,
+      wasEnabled: false,
+    };
+  }
+
+  const actualGranted = Math.max(0, Math.min(targetBonus, currentPool));
+  if (actualGranted <= 0) {
+    return {
+      grantedCredits: 0,
+      remainingAdminPool: currentPool,
+      wasEnabled: true,
+    };
+  }
+
+  const nextPool = saveAdminCreditPool(currentPool - actualGranted);
+  appendCreditRechargeLog({
+    targetName: `Free Signup Credit → ${userDisplayName || 'New User'}`,
+    targetEmail: `${userEmail || 'new-user'} (Auto-Deducted -${actualGranted} Cr from Admin Pool | Pool Left: ${nextPool} Cr)`,
+    action: 'deduct',
+    amount: actualGranted,
+    balanceAfter: actualGranted,
+  });
+
+  return {
+    grantedCredits: actualGranted,
+    remainingAdminPool: nextPool,
+    wasEnabled: true,
+  };
+}
+

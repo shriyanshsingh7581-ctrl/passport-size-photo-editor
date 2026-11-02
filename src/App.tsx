@@ -68,6 +68,7 @@ import {
   deductWalletCredit,
   rechargeWalletWithPin,
   loadPaymentCreditRequests,
+  allocateNewUserSignupCredits,
   DEFAULT_ADMIN_WHATSAPP,
 } from './creditWallet';
 import { UserDashboard } from './components/UserDashboard';
@@ -199,11 +200,23 @@ export default function App() {
       const saved = localStorage.getItem(LOCAL_SETTINGS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
+        const resolvedLogo =
+          !parsed.logoUrl || parsed.logoUrl.includes('IMG-20261029-WA0055')
+            ? DEFAULT_SITE_SETTINGS.logoUrl
+            : parsed.logoUrl;
         return {
           ...DEFAULT_SITE_SETTINGS,
           ...parsed,
-          logoType: parsed.logoUrl ? parsed.logoType : DEFAULT_SITE_SETTINGS.logoType,
-          logoUrl: parsed.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+          logoType: resolvedLogo ? parsed.logoType || 'url' : DEFAULT_SITE_SETTINGS.logoType,
+          logoUrl: resolvedLogo,
+          enableFreeSignupCredits:
+            typeof parsed.enableFreeSignupCredits === 'boolean'
+              ? parsed.enableFreeSignupCredits
+              : true,
+          freeSignupCreditsAmount:
+            typeof parsed.freeSignupCreditsAmount === 'number'
+              ? parsed.freeSignupCreditsAmount
+              : 5,
           toolCatalog: parsed.toolCatalog?.length
             ? parsed.toolCatalog
             : DEFAULT_TOOL_CATALOG,
@@ -751,7 +764,7 @@ export default function App() {
   // =========================================================================
   const persistActiveUserSession = (profile: UserProfile | null) => {
     if (profile) {
-      const accountCredits = typeof profile.credits === 'number' ? profile.credits : 5;
+      const accountCredits = typeof profile.credits === 'number' ? profile.credits : 0;
       const resolvedProfile: UserProfile = {
         ...profile,
         credits: accountCredits,
@@ -858,21 +871,46 @@ export default function App() {
           user.email?.toLowerCase() === 'shriyanshsingh7581@gmail.com' ||
           user.email?.toLowerCase() === 'admin@malnadumedia.com';
 
-        const defaultProfile: UserProfile = {
-          uid: user.uid,
-          displayName: (user.displayName || user.email?.split('@')[0] || 'Studio User').slice(0, 100),
-          email: (user.email || 'user@malnadumedia.com').slice(0, 150),
-          phone: (user.phoneNumber || '').slice(0, 30),
-          role: isBootstrapAdmin ? 'admin' : 'user',
-          status: 'approved',
-          credits: 5,
-          createdAt: new Date().toISOString(),
-        };
+        const baseDisplayName = (
+          user.displayName ||
+          user.email?.split('@')[0] ||
+          'Studio User'
+        ).slice(0, 100);
+        const baseEmail = (user.email || 'user@malnadumedia.com').slice(0, 150);
 
         const userRef = doc(db, 'users', user.uid);
         try {
           const snap = await getDoc(userRef);
           if (!snap.exists()) {
+            const localMatch = allUsers.find(
+              (u) => u.uid === user.uid || u.email.toLowerCase() === baseEmail.toLowerCase()
+            );
+            let initialCredits = 0;
+            if (localMatch && typeof localMatch.credits === 'number') {
+              initialCredits = localMatch.credits;
+            } else {
+              const grant = allocateNewUserSignupCredits(baseDisplayName, baseEmail);
+              initialCredits = grant.grantedCredits;
+              setAdminCreditPool(grant.remainingAdminPool);
+              try {
+                updateDoc(doc(db, 'siteSettings', 'global'), {
+                  adminCreditPool: grant.remainingAdminPool,
+                  updatedAt: serverTimestamp(),
+                }).catch(() => {});
+              } catch {}
+            }
+
+            const defaultProfile: UserProfile = {
+              uid: user.uid,
+              displayName: baseDisplayName,
+              email: baseEmail,
+              phone: (user.phoneNumber || '').slice(0, 30),
+              role: isBootstrapAdmin ? 'admin' : 'user',
+              status: 'approved',
+              credits: initialCredits,
+              createdAt: new Date().toISOString(),
+            };
+
             await setDoc(userRef, {
               ...defaultProfile,
               createdAt: serverTimestamp(),
@@ -884,18 +922,38 @@ export default function App() {
             const existingData = snap.data() as UserProfile;
             const withCredits: UserProfile = {
               ...existingData,
-              credits: typeof existingData.credits === 'number' ? existingData.credits : 5,
+              credits: typeof existingData.credits === 'number' ? existingData.credits : 0,
             };
             persistActiveUserSession(withCredits);
             upsertUserInLocalState(withCredits);
           }
         } catch {
-          const localMatch = allUsers.find((u) => u.uid === user.uid || u.email === user.email);
-          const resolved: UserProfile = localMatch
-            ? { ...localMatch, credits: typeof localMatch.credits === 'number' ? localMatch.credits : 5 }
-            : defaultProfile;
-          persistActiveUserSession(resolved);
-          upsertUserInLocalState(resolved);
+          const localMatch = allUsers.find(
+            (u) => u.uid === user.uid || u.email.toLowerCase() === baseEmail.toLowerCase()
+          );
+          if (localMatch) {
+            const resolved: UserProfile = {
+              ...localMatch,
+              credits: typeof localMatch.credits === 'number' ? localMatch.credits : 0,
+            };
+            persistActiveUserSession(resolved);
+            upsertUserInLocalState(resolved);
+          } else {
+            const grant = allocateNewUserSignupCredits(baseDisplayName, baseEmail);
+            setAdminCreditPool(grant.remainingAdminPool);
+            const defaultProfile: UserProfile = {
+              uid: user.uid,
+              displayName: baseDisplayName,
+              email: baseEmail,
+              phone: (user.phoneNumber || '').slice(0, 30),
+              role: isBootstrapAdmin ? 'admin' : 'user',
+              status: 'approved',
+              credits: grant.grantedCredits,
+              createdAt: new Date().toISOString(),
+            };
+            persistActiveUserSession(defaultProfile);
+            upsertUserInLocalState(defaultProfile);
+          }
         }
       }
       setIsAuthReady(true);
@@ -2152,6 +2210,15 @@ export default function App() {
           // Seamless Hybrid Studio Auth Fallback when external Firebase project restricts signup
         }
 
+        const signupGrant = allocateNewUserSignupCredits(
+          authFullName.trim().slice(0, 100),
+          emailClean.slice(0, 150),
+          siteSettings.enableFreeSignupCredits !== false,
+          siteSettings.freeSignupCreditsAmount ?? 5
+        );
+        setAdminCreditPool(signupGrant.remainingAdminPool);
+        handleUpdateAdminCreditPool(signupGrant.remainingAdminPool);
+
         const newProfile: UserProfile = {
           uid: createdUid,
           displayName: authFullName.trim().slice(0, 100),
@@ -2159,7 +2226,7 @@ export default function App() {
           phone: authPhone.trim().slice(0, 30),
           role: isBootstrapAdmin ? 'admin' : 'user',
           status: 'approved',
-          credits: 5,
+          credits: signupGrant.grantedCredits,
           createdAt: new Date().toISOString(),
         };
 
@@ -2178,9 +2245,15 @@ export default function App() {
         setShowAuthModal(false);
         setAuthPassword('');
         setActiveRoute('studio');
-        showToast(
-          `Account Created! 5 Free Photo Credits Added to Your Account.`
-        );
+        if (signupGrant.grantedCredits > 0) {
+          showToast(
+            `Account Created! +${signupGrant.grantedCredits} Free Photo Credits Added (Deducted from Admin Pool).`
+          );
+        } else {
+          showToast(
+            `Account Created! Free signup credits are currently disabled or exhausted — please add credits via UPI QR.`
+          );
+        }
       } else {
         try {
           await signInWithEmailAndPassword(auth, emailClean, authPassword);
@@ -2189,21 +2262,32 @@ export default function App() {
           const existingLocal = allUsers.find(
             (u) => u.email.toLowerCase() === emailClean.toLowerCase()
           );
-          const sessionProfile: UserProfile = existingLocal
-            ? {
-                ...existingLocal,
-                credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 5,
-              }
-            : {
-                uid: `user-${Date.now()}`,
-                displayName: emailClean.split('@')[0] || 'Studio User',
-                email: emailClean,
-                phone: '+91 98450 11223',
-                role: isBootstrapAdmin ? 'admin' : 'user',
-                status: 'approved',
-                credits: 5,
-                createdAt: new Date().toISOString(),
-              };
+          let sessionProfile: UserProfile;
+          if (existingLocal) {
+            sessionProfile = {
+              ...existingLocal,
+              credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 0,
+            };
+          } else {
+            const firstLoginGrant = allocateNewUserSignupCredits(
+              emailClean.split('@')[0] || 'Studio User',
+              emailClean,
+              siteSettings.enableFreeSignupCredits !== false,
+              siteSettings.freeSignupCreditsAmount ?? 5
+            );
+            setAdminCreditPool(firstLoginGrant.remainingAdminPool);
+            handleUpdateAdminCreditPool(firstLoginGrant.remainingAdminPool);
+            sessionProfile = {
+              uid: `user-${Date.now()}`,
+              displayName: emailClean.split('@')[0] || 'Studio User',
+              email: emailClean,
+              phone: '+91 98450 11223',
+              role: isBootstrapAdmin ? 'admin' : 'user',
+              status: 'approved',
+              credits: firstLoginGrant.grantedCredits,
+              createdAt: new Date().toISOString(),
+            };
+          }
           persistActiveUserSession(sessionProfile);
           upsertUserInLocalState(sessionProfile);
         }
@@ -3062,15 +3146,28 @@ export default function App() {
           <div className="max-w-md w-full bg-slate-900/95 text-white rounded-3xl border border-cyan-500/40 p-6 sm:p-8 shadow-2xl space-y-5">
             <div className="flex flex-col items-center text-center space-y-2.5">
               {renderBrandLogo(false)}
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold">
-                <i className="fa-solid fa-gift text-amber-300"></i>
-                <span>New Login Bonus: 5 Free Photo Credits</span>
-              </div>
+              {siteSettings.enableFreeSignupCredits !== false && adminCreditPool > 0 ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-extrabold">
+                  <i className="fa-solid fa-gift text-amber-300"></i>
+                  <span>
+                    New Login Bonus:{' '}
+                    {Math.min(siteSettings.freeSignupCreditsAmount ?? 5, adminCreditPool)} Free
+                    Photo Credits
+                  </span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[11px] font-extrabold">
+                  <i className="fa-solid fa-shield-halved text-cyan-300"></i>
+                  <span>Verified Studio Account Access</span>
+                </div>
+              )}
               <h1 className="text-lg sm:text-xl font-extrabold text-white">
                 {authMode === 'login'
                   ? `Login Required to Use ${siteSettings.brandName}`
                   : authMode === 'signup'
-                  ? 'Create Your Account (Get 5 Free Credits)'
+                  ? siteSettings.enableFreeSignupCredits !== false && adminCreditPool > 0
+                    ? `Create Your Account (Get ${Math.min(siteSettings.freeSignupCreditsAmount ?? 5, adminCreditPool)} Free Credits)`
+                    : 'Create Your Studio Account'
                   : 'Reset Your Account Password'}
               </h1>
               <p className="text-xs text-slate-400 leading-relaxed">
@@ -3106,7 +3203,9 @@ export default function App() {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  New Account (+5 Free)
+                  {siteSettings.enableFreeSignupCredits !== false && adminCreditPool > 0
+                    ? `New Account (+${Math.min(siteSettings.freeSignupCreditsAmount ?? 5, adminCreditPool)} Free)`
+                    : 'Register Account'}
                 </button>
               </div>
             )}
@@ -3206,7 +3305,9 @@ export default function App() {
                     : authMode === 'login'
                     ? 'Sign In & Unlock Studio'
                     : authMode === 'signup'
-                    ? 'Create Account & Claim 5 Free Credits'
+                    ? siteSettings.enableFreeSignupCredits !== false && adminCreditPool > 0
+                      ? `Create Account & Claim ${Math.min(siteSettings.freeSignupCreditsAmount ?? 5, adminCreditPool)} Free Credits`
+                      : 'Create Studio Account'
                     : 'Send Password Reset Link'}
                 </span>
               </button>

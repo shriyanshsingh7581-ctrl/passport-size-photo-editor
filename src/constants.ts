@@ -388,6 +388,8 @@ export interface SiteSettings {
   enableMediaLiveToolsCategory: boolean;
   contactPhone?: string;
   adminCreditPool?: number;
+  enableFreeSignupCredits?: boolean;
+  freeSignupCreditsAmount?: number;
   toolCatalog?: ToolCatalogItem[];
   customPosterTemplates?: CustomPosterTemplate[];
   updatedAt?: any;
@@ -398,8 +400,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   brandTagline: 'CAPTURING | CREATING | CONNECTING',
   logoType: 'url',
   logoText: 'MM',
-  logoUrl: '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg',
-  faviconUrl: '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg',
+  logoUrl: '/assets/aistudio/malnadu-logo.svg',
+  faviconUrl: '/assets/aistudio/malnadu-logo.svg',
   primaryColor: '#06b6d4',
   secondaryColor: '#070a14',
   footerCredit: '© 2026 MALNADU MEDIA SOLUTIONS. All rights reserved.',
@@ -416,6 +418,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   enableMediaLiveToolsCategory: true,
   contactPhone: '+91 98450 11223',
   adminCreditPool: 500,
+  enableFreeSignupCredits: true,
+  freeSignupCreditsAmount: 5,
   toolCatalog: DEFAULT_TOOL_CATALOG,
   customPosterTemplates: [],
 };

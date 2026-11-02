@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160">
+  <rect width="240" height="160" rx="22" fill="#05070f"/>
+  <defs>
+    <linearGradient id="wingLeftTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="55%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="wingRightTop" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ec4899"/>
+      <stop offset="55%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  <!-- Colorful Butterfly Emblem -->
+  <g transform="translate(120, 46)">
+    <path d="M-4,4 C-22,-28 -54,-26 -48,-2 C-44,12 -20,14 -4,8 Z" fill="url(#wingLeftTop)"/>
+    <path d="M4,4 C22,-28 54,-26 48,-2 C44,12 20,14 4,8 Z" fill="url(#wingRightTop)"/>
+    <path d="M-4,10 C-24,12 -38,28 -24,36 C-14,40 -6,26 -3,14 Z" fill="#f59e0b"/>
+    <path d="M4,10 C24,12 38,28 24,36 C14,40 6,26 3,14 Z" fill="#06b6d4"/>
+    <rect x="-2.2" y="-10" width="4.4" height="32" rx="2.2" fill="#ffffff"/>
+  </g>
+  <!-- Brand Typography -->
+  <text x="120" y="108" text-anchor="middle" fill="#ffffff" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="24" font-weight="900" letter-spacing="1.5">MALANADU</text>
+  <text x="120" y="128" text-anchor="middle" fill="#38bdf8" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="16" font-weight="800" letter-spacing="3">MEDIA</text>
+  <text x="120" y="144" text-anchor="middle" fill="#f43f5e" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="10" font-weight="700" letter-spacing="4">SOLUTIONS</text>
+</svg>

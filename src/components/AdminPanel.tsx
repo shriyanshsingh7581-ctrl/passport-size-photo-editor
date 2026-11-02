@@ -866,7 +866,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         <div className="flex items-center gap-3.5">
           <div className="h-12 px-2 py-1 rounded-2xl bg-[#070a14] border border-cyan-400/40 flex items-center justify-center shrink-0 shadow-md overflow-hidden">
             <img
-              src={siteSettings.logoUrl || '/assets/aistudio/IMG-20261029-WA0055_86fec676.jpg'}
+              src={siteSettings.logoUrl || '/assets/aistudio/malnadu-logo.svg'}
               alt={siteSettings.brandName}
               className="h-full w-auto max-w-[110px] object-contain"
             />
@@ -887,6 +887,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* 1-Click Free Signup Credit Enable / Disable Toggle right on Admin Banner */}
+          <button
+            type="button"
+            onClick={async () => {
+              const nextEnabled = siteSettings.enableFreeSignupCredits === false;
+              const updatedSettings: SiteSettings = {
+                ...siteSettings,
+                enableFreeSignupCredits: nextEnabled,
+                freeSignupCreditsAmount: siteSettings.freeSignupCreditsAmount ?? 5,
+              };
+              setFormSettings(updatedSettings);
+              await onSaveSiteSettings(updatedSettings);
+              showToast(
+                nextEnabled
+                  ? `Free Signup Credits ENABLED (${updatedSettings.freeSignupCreditsAmount} Cr per new user — deducted from Admin Pool)`
+                  : 'Free Signup Credits DISABLED (New users start with 0 credits)'
+              );
+            }}
+            className={`min-h-[42px] px-3.5 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 border shadow-sm ${
+              siteSettings.enableFreeSignupCredits !== false
+                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/50'
+                : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-400/50'
+            }`}
+            title="Toggle whether new user accounts get free signup credits (deducted from your Admin Credit Pool)"
+          >
+            <i
+              className={`fa-solid ${
+                siteSettings.enableFreeSignupCredits !== false ? 'fa-toggle-on text-emerald-400 text-base' : 'fa-toggle-off text-rose-400 text-base'
+              }`}
+            ></i>
+            <span>
+              {siteSettings.enableFreeSignupCredits !== false
+                ? `Free Signup Credit: ON (${siteSettings.freeSignupCreditsAmount ?? 5} Cr from Pool)`
+                : 'Free Signup Credit: OFF (Disabled)'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={handleLockCreditVault}
@@ -1113,6 +1150,133 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <i className="fa-solid fa-key"></i>
                 <span>Change Password</span>
+              </button>
+            </div>
+          </div>
+
+          {/* NEW USER FREE SIGNUP CREDITS CONTROL BANNER (DEDUCTS FROM ADMIN POOL) */}
+          <div
+            className={`rounded-3xl p-4 sm:p-5 border flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xs transition ${
+              siteSettings.enableFreeSignupCredits !== false
+                ? 'bg-emerald-50/90 border-emerald-300'
+                : 'bg-slate-100 border-slate-300'
+            }`}
+          >
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div
+                className={`w-11 h-11 rounded-2xl flex items-center justify-center text-lg shrink-0 font-bold ${
+                  siteSettings.enableFreeSignupCredits !== false
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-400 text-white'
+                }`}
+              >
+                <i
+                  className={`fa-solid ${
+                    siteSettings.enableFreeSignupCredits !== false ? 'fa-gift' : 'fa-ban'
+                  }`}
+                ></i>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                    New Account Free Signup Credit Control
+                  </h3>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase ${
+                      siteSettings.enableFreeSignupCredits !== false
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-rose-600 text-white'
+                    }`}
+                  >
+                    {siteSettings.enableFreeSignupCredits !== false
+                      ? `ACTIVE (${siteSettings.freeSignupCreditsAmount ?? 5} Free Credits / New User)`
+                      : 'DISABLED (0 Free Credits)'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-700 mt-1 max-w-2xl leading-relaxed">
+                  {siteSettings.enableFreeSignupCredits !== false ? (
+                    <>
+                      Every new user who signs up receives{' '}
+                      <strong>{siteSettings.freeSignupCreditsAmount ?? 5} free photo credits</strong>, which are{' '}
+                      <strong>automatically deducted from your Website Admin Credit Pool ({adminCreditPool} Credits left)</strong>. Disable this anytime to stop automatic pool deductions.
+                    </>
+                  ) : (
+                    <>
+                      Free signup credits are currently <strong>DISABLED</strong>. New accounts start with{' '}
+                      <strong>0 credits</strong> and must pay via your QR code or receive credits manually from your Admin Pool.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+              <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200">
+                {[5, 3, 2, 1].map((amt) => {
+                  const isActive =
+                    siteSettings.enableFreeSignupCredits !== false &&
+                    (siteSettings.freeSignupCreditsAmount ?? 5) === amt;
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={async () => {
+                        const updated: SiteSettings = {
+                          ...siteSettings,
+                          enableFreeSignupCredits: true,
+                          freeSignupCreditsAmount: amt,
+                        };
+                        setFormSettings(updated);
+                        await onSaveSiteSettings(updated);
+                        showToast(
+                          `New User Free Signup Credit set to ${amt} Credits (deducted from Admin Pool)`
+                        );
+                      }}
+                      className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-extrabold transition ${
+                        isActive
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      +{amt} Free
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextEnabled = siteSettings.enableFreeSignupCredits === false;
+                  const updated: SiteSettings = {
+                    ...siteSettings,
+                    enableFreeSignupCredits: nextEnabled,
+                    freeSignupCreditsAmount: siteSettings.freeSignupCreditsAmount ?? 5,
+                  };
+                  setFormSettings(updated);
+                  await onSaveSiteSettings(updated);
+                  showToast(
+                    nextEnabled
+                      ? `Enabled Free Signup Credits (${updated.freeSignupCreditsAmount} Cr per new user from Admin Pool)`
+                      : 'Disabled Free Signup Credits (New accounts start with 0 credits)'
+                  );
+                }}
+                className={`min-h-[40px] px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 shadow-xs ${
+                  siteSettings.enableFreeSignupCredits !== false
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                <i
+                  className={`fa-solid ${
+                    siteSettings.enableFreeSignupCredits !== false ? 'fa-power-off' : 'fa-check'
+                  }`}
+                ></i>
+                <span>
+                  {siteSettings.enableFreeSignupCredits !== false
+                    ? 'Disable Free Credits'
+                    : 'Enable Free Credits'}
+                </span>
               </button>
             </div>
           </div>

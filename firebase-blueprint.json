@@ -87,6 +87,16 @@
           "maximum": 10000000,
           "description": "Distributable credit pool allocated by the Super Owner (/credit-admin) to the Website Admin (/website-admin) for user credit distribution"
         },
+        "enableFreeSignupCredits": {
+          "type": "boolean",
+          "description": "Whether new user accounts receive free signup credits deducted from the Website Admin Credit Pool"
+        },
+        "freeSignupCreditsAmount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Number of free credits granted to a new user account on first signup (deducted from adminCreditPool)"
+        },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
