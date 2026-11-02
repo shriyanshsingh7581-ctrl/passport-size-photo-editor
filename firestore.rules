@@ -110,11 +110,12 @@ service cloud.firestore {
                'active', 'clicks', 'createdAt', 'updatedAt'
              ]) &&
              data.keys().hasOnly([
-               'slug', 'originalUrl', 'createdBy', 'creatorEmail',
+               'slug', 'originalUrl', 'shortUrl', 'createdBy', 'creatorEmail',
                'active', 'clicks', 'createdAt', 'updatedAt'
              ]) &&
              data.slug is string && data.slug.size() >= 2 && data.slug.size() <= 60 && data.slug.matches('^[a-zA-Z0-9_\\-]+$') &&
              data.originalUrl is string && data.originalUrl.size() >= 4 && data.originalUrl.size() <= 2000 &&
+             (!('shortUrl' in data) || (data.shortUrl is string && data.shortUrl.size() >= 0 && data.shortUrl.size() <= 500)) &&
              data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
              data.creatorEmail is string && data.creatorEmail.size() >= 0 && data.creatorEmail.size() <= 150 &&
              data.active is bool &&

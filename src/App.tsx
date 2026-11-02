@@ -606,11 +606,15 @@ export default function App() {
   }, [siteSettings]);
 
   // =========================================================================
-  // 0.5 SHORT-LINK PATH REDIRECTION HANDLER (/:slug)
+  // 0.5 SHORT-LINK PATH REDIRECTION HANDLER (/:slug, ?s=slug, #slug)
   // =========================================================================
   useEffect(() => {
     const checkShortLinkRedirect = async () => {
-      const rawPath = window.location.pathname.replace(/^\/+|\/+$/g, '');
+      const searchParams = new URLSearchParams(window.location.search);
+      const querySlug = (searchParams.get('s') || searchParams.get('slug') || '').trim();
+      const rawHash = window.location.hash.replace(/^#+(\/)?/, '').trim();
+      const rawPath = window.location.pathname.replace(/^\/+|\/+$/g, '').trim();
+
       const systemPaths = [
         '',
         'index.html',
@@ -625,12 +629,22 @@ export default function App() {
         'credit-admin',
         'payment-admin',
       ];
-      if (systemPaths.includes(rawPath.toLowerCase())) {
+
+      let candidateSlug = '';
+      if (querySlug && !systemPaths.includes(querySlug.toLowerCase())) {
+        candidateSlug = querySlug.toLowerCase();
+      } else if (rawHash && !systemPaths.includes(rawHash.toLowerCase()) && rawHash.startsWith('mm-')) {
+        candidateSlug = rawHash.toLowerCase();
+      } else if (rawPath && !systemPaths.includes(rawPath.toLowerCase())) {
+        candidateSlug = rawPath.toLowerCase();
+      }
+
+      if (!candidateSlug) {
         setRedirectState({ checking: false, slug: null, status: 'none' });
         return;
       }
 
-      const slug = rawPath.toLowerCase();
+      const slug = candidateSlug;
       setRedirectState({ checking: true, slug, status: 'none' });
 
       // 1. Check Firestore shortLinks/{slug}
@@ -670,7 +684,24 @@ export default function App() {
         return;
       }
 
-      // Increment click counter in background
+      // Increment click counter in localStorage & Firestore
+      try {
+        const localRaw = localStorage.getItem(LOCAL_SHORTLINKS_KEY);
+        if (localRaw) {
+          const parsed: ShortLinkRecord[] = JSON.parse(localRaw);
+          if (Array.isArray(parsed)) {
+            const updatedList = parsed.map((item) =>
+              item.slug.toLowerCase() === slug
+                ? { ...item, clicks: (item.clicks || 0) + 1 }
+                : item
+            );
+            localStorage.setItem(LOCAL_SHORTLINKS_KEY, JSON.stringify(updatedList));
+          }
+        }
+      } catch {
+        // ignore
+      }
+
       try {
         updateDoc(doc(db, 'shortLinks', slug), {
           clicks: (matchedLink.clicks || 0) + 1,
@@ -907,12 +938,19 @@ export default function App() {
       }
     };
 
+    const handleOpenCreditModalEvent = () => {
+      setShowAdminRechargeModal(false);
+      setShowCreditExhaustedModal(true);
+    };
+
     window.addEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
     window.addEventListener('malnadu-admin-pool-updated', handlePoolAndCrossTabSync);
+    window.addEventListener('malnadu-open-credit-modal', handleOpenCreditModalEvent);
     window.addEventListener('storage', handlePoolAndCrossTabSync);
     return () => {
       window.removeEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
       window.removeEventListener('malnadu-admin-pool-updated', handlePoolAndCrossTabSync);
+      window.removeEventListener('malnadu-open-credit-modal', handleOpenCreditModalEvent);
       window.removeEventListener('storage', handlePoolAndCrossTabSync);
     };
   }, []);
@@ -2644,15 +2682,47 @@ export default function App() {
     if (duplicate) {
       return {
         ok: false,
-        error: `Short name "/${slug}" is already in use. Please choose another slug.`,
+        error: `Short name "/${slug}" is already in use. Please try again.`,
       };
+    }
+
+    // Generate a real globally working short URL via is.gd / v.gd API (CORS enabled) with domain fallback
+    const fallbackOrigin =
+      typeof window !== 'undefined' ? window.location.origin : '';
+    let generatedShortUrl = `${fallbackOrigin}/${slug}`;
+
+    try {
+      const resp = await fetch(
+        `https://is.gd/create.php?format=json&url=${encodeURIComponent(originalUrl)}`
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && typeof data.shorturl === 'string' && data.shorturl.startsWith('http')) {
+          generatedShortUrl = data.shorturl.trim();
+        }
+      }
+    } catch {
+      try {
+        const resp2 = await fetch(
+          `https://v.gd/create.php?format=json&url=${encodeURIComponent(originalUrl)}`
+        );
+        if (resp2.ok) {
+          const data2 = await resp2.json();
+          if (data2 && typeof data2.shorturl === 'string' && data2.shorturl.startsWith('http')) {
+            generatedShortUrl = data2.shorturl.trim();
+          }
+        }
+      } catch {
+        // Keep domain slug fallback if offline
+      }
     }
 
     const newLink: ShortLinkRecord = {
       id: slug,
       slug,
       originalUrl,
-      createdBy: currentUser?.uid || 'guest',
+      shortUrl: generatedShortUrl.slice(0, 500),
+      createdBy: currentUser?.uid || userProfile?.uid || 'guest',
       creatorEmail: userProfile?.email || currentUser?.email || 'studio@malnadumedia.com',
       active: true,
       clicks: 0,
@@ -2671,6 +2741,7 @@ export default function App() {
       await setDoc(doc(db, 'shortLinks', slug), {
         slug: newLink.slug,
         originalUrl: newLink.originalUrl,
+        shortUrl: newLink.shortUrl || '',
         createdBy: newLink.createdBy,
         creatorEmail: newLink.creatorEmail,
         active: true,

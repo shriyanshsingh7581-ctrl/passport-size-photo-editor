@@ -3,7 +3,15 @@ import {
   generateSamplePortraitDataUrl,
   CustomPosterTemplate,
   loadCustomPosterTemplates,
+  saveCustomPosterTemplates,
 } from '../constants';
+import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
+import {
+  AURA_AI_ENGINES,
+  AuraEngineId,
+  generatePosterDesignWithAuraAi,
+  warmUpAuraBackend,
+} from '../auraAiService';
 
 export type PosterCategory =
   | 'all'
@@ -6268,7 +6276,7 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           label: 'Venue / Location',
           defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
           x: 540,
-          y: 1185,
+          y: 1170,
           maxWidth: 880,
           fontSize: 24,
           fontFamily: 'sans',
@@ -6276,6 +6284,20 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           color: '#ffffff',
           align: 'center',
           maxLines: 2,
+        },
+        {
+          id: 'rsvp',
+          label: 'RSVP / Family Footer',
+          defaultValue: ct.footerMessageText || 'With Best Compliments From Family & Friends',
+          x: 540,
+          y: 1255,
+          maxWidth: 880,
+          fontSize: 20,
+          fontFamily: 'serif',
+          fontWeight: '700',
+          color: ct.primaryAccent || '#fbbf24',
+          align: 'center',
+          maxLines: 1,
         },
       ];
 
@@ -6288,11 +6310,11 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
     canvasWidth: 1080,
     canvasHeight: 1350,
     bgColors: ct.bgColors || ['#3b0764', '#4c0519', '#1e1b4b'],
-    bgPattern: 'mandala',
-    outerBorderStyle: 'royal-gold',
+    bgPattern: ct.bgPattern || 'mandala',
+    outerBorderStyle: ct.outerBorderStyle || 'royal-gold',
     primaryAccent: ct.primaryAccent || '#fbbf24',
     secondaryAccent: ct.secondaryAccent || '#fef3c7',
-    decorMotif: 'royal-mandala-arch',
+    decorMotif: ct.decorMotif || 'royal-mandala-arch',
     photoSlots,
     textFields,
     customBgImageUrl: ct.bgImageDataUrl || undefined,
@@ -6310,6 +6332,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   const [, setBgLoadTick] = useState(0);
 
   useEffect(() => {
+    warmUpAuraBackend();
     const syncCustom = () => {
       setCustomRawTemplates(loadCustomPosterTemplates());
     };
@@ -6321,10 +6344,42 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     };
   }, []);
 
+  const aiStarterCanvasSpec: PosterTemplateSpec = useMemo(
+    () =>
+      convertCustomTemplateToSpec({
+        id: 'aura-ai-blank-starter',
+        name: 'Aura AI Custom Poster Canvas',
+        category: 'wedding',
+        categoryLabel: 'Aura AI Studio',
+        badge: 'AI Poster Canvas',
+        bgColors: ['#0f172a', '#1e1b4b', '#070a14'],
+        primaryAccent: '#38bdf8',
+        secondaryAccent: '#e0f2fe',
+        bgPattern: 'mandala',
+        outerBorderStyle: 'royal-gold',
+        decorMotif: 'royal-mandala-arch',
+        slotShape: 'arch',
+        photoFrameStyle: 'gold-double',
+        layoutPreset: 'center-arch-photo',
+        slotX: 310,
+        slotY: 230,
+        slotWidth: 460,
+        slotHeight: 540,
+        headlineText: '✦ AURA AI STUDIO POSTER ✦',
+        namesText: 'Enter Prompt Above & Click Generate',
+        subText: 'Attach your photo and describe your event to create a custom AI poster',
+        dateTimeText: 'AURA AI + & AURA AI PRO',
+        venueText: 'Instant Custom Poster Design',
+        footerMessageText: 'Powered by Aura AI Engine',
+        createdAt: '',
+      }),
+    []
+  );
+
   const allTemplates = useMemo(() => {
     const converted = customRawTemplates.map(convertCustomTemplateToSpec);
-    return [...converted, ...POSTER_TEMPLATES];
-  }, [customRawTemplates]);
+    return converted.length > 0 ? converted : [aiStarterCanvasSpec];
+  }, [customRawTemplates, aiStarterCanvasSpec]);
 
   useEffect(() => {
     allTemplates.forEach((tpl) => {
@@ -6340,13 +6395,16 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     });
   }, [allTemplates]);
 
-  const [selectedCategory, setSelectedCategory] = useState<PosterCategory>('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
-    () => (loadCustomPosterTemplates()[0]?.id || POSTER_TEMPLATES[0].id)
+    () => loadCustomPosterTemplates()[0]?.id || 'aura-ai-blank-starter'
   );
-  const [activeSlotId, setActiveSlotId] = useState<string>(POSTER_TEMPLATES[0].photoSlots[0].id);
-  const [editorPanelTab, setEditorPanelTab] = useState<'photos' | 'text' | 'templates'>('photos');
+  const [activeSlotId, setActiveSlotId] = useState<string>(
+    () =>
+      (loadCustomPosterTemplates()[0]
+        ? convertCustomTemplateToSpec(loadCustomPosterTemplates()[0]).photoSlots[0]?.id
+        : 'custom-slot-1') || 'custom-slot-1'
+  );
+  const [editorPanelTab, setEditorPanelTab] = useState<'photos' | 'text'>('photos');
 
   // Per-slot photo transforms keyed by slot.id
   const [slotTransforms, setSlotTransforms] = useState<Record<string, PhotoSlotTransform>>({});
@@ -6369,17 +6427,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
   const activeTemplate =
     allTemplates.find((t) => t.id === selectedTemplateId) || allTemplates[0];
-
-  const filteredTemplates = allTemplates.filter((t) => {
-    const matchesCat = selectedCategory === 'all' || t.category === selectedCategory;
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      t.name.toLowerCase().includes(q) ||
-      t.categoryLabel.toLowerCase().includes(q) ||
-      t.badge.toLowerCase().includes(q);
-    return matchesCat && matchesSearch;
-  });
 
   // Preload 3 sample portraits on mount so templates look rich immediately and users can replace any photo
   useEffect(() => {
@@ -6625,14 +6672,17 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   };
 
   const handleCanvasPointerMove = (clientX: number, clientY: number) => {
-    if (!isDraggingCanvasPhoto || !dragStartRef.current || !canvasRef.current) return;
+    const dragStart = dragStartRef.current;
+    if (!isDraggingCanvasPhoto || !dragStart || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / Math.max(1, rect.width);
     const scaleY = canvasRef.current.height / Math.max(1, rect.height);
 
-    const dx = (clientX - dragStartRef.current.startClientX) * scaleX;
-    const dy = (clientY - dragStartRef.current.startClientY) * scaleY;
-    const slotId = dragStartRef.current.slotId;
+    const dx = (clientX - dragStart.startClientX) * scaleX;
+    const dy = (clientY - dragStart.startClientY) * scaleY;
+    const { slotId, initialPanX, initialPanY } = dragStart;
+    const nextPanX = Math.round(initialPanX + dx);
+    const nextPanY = Math.round(initialPanY + dy);
 
     setSlotTransforms((prev) => {
       const cur = prev[slotId];
@@ -6641,8 +6691,8 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         ...prev,
         [slotId]: {
           ...cur,
-          panX: Math.round(dragStartRef.current!.initialPanX + dx),
-          panY: Math.round(dragStartRef.current!.initialPanY + dy),
+          panX: nextPanX,
+          panY: nextPanY,
         },
       };
     });
@@ -6661,8 +6711,304 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     updateActiveSlotTransform({ zoom: nextZoom });
   };
 
-  // Reliable Blob-based export for PNG and JPG
+  // =========================================================================
+  // AURA AI + & AURA AI PRO WHITE-LABEL POSTER GENERATOR + CREDIT SYSTEM
+  // =========================================================================
+  const [walletCredits, setWalletCredits] = useState<number>(() => loadWalletCredits());
+  const paidPosterIdsRef = useRef<Set<string>>(new Set());
+
+  const [auraEngineId, setAuraEngineId] = useState<AuraEngineId>('aura-ai-plus');
+  const [auraPrompt, setAuraPrompt] = useState<string>('');
+  const [auraPreferredLayout, setAuraPreferredLayout] = useState<
+    'center-arch-photo' | 'left-photo-right-text' | 'top-circle-photo' | 'dual-couple-photos'
+  >('center-arch-photo');
+  const [isGeneratingAuraPoster, setIsGeneratingAuraPoster] = useState<boolean>(false);
+
+  // Attached photos for Aura AI Poster creation
+  const [auraPhoto1Url, setAuraPhoto1Url] = useState<string>('');
+  const [auraPhoto2Url, setAuraPhoto2Url] = useState<string>('');
+  const [auraCustomBgDataUrl, setAuraCustomBgDataUrl] = useState<string>('');
+  const auraPhoto1ImgRef = useRef<HTMLImageElement | null>(null);
+  const auraPhoto2ImgRef = useRef<HTMLImageElement | null>(null);
+  const auraPhoto1InputRef = useRef<HTMLInputElement | null>(null);
+  const auraPhoto2InputRef = useRef<HTMLInputElement | null>(null);
+  const auraBgInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const syncCredits = () => {
+      setWalletCredits(loadWalletCredits());
+    };
+    window.addEventListener('malnadu-wallet-updated', syncCredits);
+    window.addEventListener('storage', syncCredits);
+    return () => {
+      window.removeEventListener('malnadu-wallet-updated', syncCredits);
+      window.removeEventListener('storage', syncCredits);
+    };
+  }, []);
+
+  const triggerOpenAddCreditsModal = () => {
+    window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'));
+  };
+
+  // Attach primary or secondary photo in Aura AI Studio and immediately place it onto the poster canvas
+  const handleAuraPhotoUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    slotNumber: 1 | 2
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      if (slotNumber === 1) {
+        auraPhoto1ImgRef.current = img;
+        setAuraPhoto1Url(objectUrl);
+        // Also immediately apply to the first photo slot of the active template so user sees their photo right away
+        const targetSlot = activeTemplate.photoSlots[0];
+        if (targetSlot) {
+          setSlotTransforms((prev) => ({
+            ...prev,
+            [targetSlot.id]: {
+              imageUrl: objectUrl,
+              imageElement: img,
+              zoom: 100,
+              panX: 0,
+              panY: 0,
+              rotation: 0,
+              flipX: false,
+              brightness: 100,
+              contrast: 100,
+              cropInset: 0,
+            },
+          }));
+          setActiveSlotId(targetSlot.id);
+        }
+        showToast('Photo 1 attached & placed on poster! Ready for Aura AI or template editing.');
+      } else {
+        auraPhoto2ImgRef.current = img;
+        setAuraPhoto2Url(objectUrl);
+        setAuraPreferredLayout('dual-couple-photos');
+        const targetSlot = activeTemplate.photoSlots[1] || activeTemplate.photoSlots[0];
+        if (targetSlot) {
+          setSlotTransforms((prev) => ({
+            ...prev,
+            [targetSlot.id]: {
+              imageUrl: objectUrl,
+              imageElement: img,
+              zoom: 100,
+              panX: 0,
+              panY: 0,
+              rotation: 0,
+              flipX: false,
+              brightness: 100,
+              contrast: 100,
+              cropInset: 0,
+            },
+          }));
+        }
+        showToast('2nd Photo attached for Dual-Frame Poster!');
+      }
+    };
+    img.src = objectUrl;
+    e.target.value = '';
+  };
+
+  const handleAuraCustomBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      if (!dataUrl) return;
+      setAuraCustomBgDataUrl(dataUrl);
+      const img = new Image();
+      img.onload = () => {
+        customBgImagesRef.current[activeTemplate.id] = img;
+        setBgLoadTick((t) => t + 1);
+      };
+      img.src = dataUrl;
+      showToast('Custom Poster Background attached!');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const [lastAuraSuccessBanner, setLastAuraSuccessBanner] = useState<string>('');
+
+  const handleGeneratePosterWithAuraAi = async (overridePrompt?: string, overrideLayout?: typeof auraPreferredLayout) => {
+    const promptToUse = (overridePrompt !== undefined ? overridePrompt : auraPrompt).trim();
+    const engineInfo = AURA_AI_ENGINES[auraEngineId];
+
+    if (!promptToUse) {
+      showToast(`Please enter your poster prompt first to create with ${engineInfo.displayName}!`);
+      return;
+    }
+
+    const currentCredits = loadWalletCredits();
+    if (currentCredits <= 0) {
+      triggerOpenAddCreditsModal();
+      showToast(
+        `0 Credits Remaining! Please scan UPI QR to add credits before generating with ${engineInfo.displayName}.`
+      );
+      return;
+    }
+
+    setIsGeneratingAuraPoster(true);
+    setLastAuraSuccessBanner('');
+    try {
+      const layoutToUse = overrideLayout || auraPreferredLayout;
+      const aiDesign = await generatePosterDesignWithAuraAi({
+        prompt: promptToUse,
+        engineId: auraEngineId,
+        preferredLayout: layoutToUse,
+        hasSecondaryPhoto: Boolean(auraPhoto2ImgRef.current),
+      });
+
+      // Deduct 1 Credit from Wallet on successful AI Poster creation
+      const deduction = deductWalletCredit();
+      setWalletCredits(deduction.remaining);
+
+      const newTplId = `aura-ai-${Date.now()}`;
+      paidPosterIdsRef.current.add(newTplId);
+
+      const slotX =
+        aiDesign.layoutPreset === 'left-photo-right-text'
+          ? 65
+          : aiDesign.layoutPreset === 'top-circle-photo'
+          ? 330
+          : 310;
+      const slotY =
+        aiDesign.layoutPreset === 'left-photo-right-text'
+          ? 270
+          : aiDesign.layoutPreset === 'top-circle-photo'
+          ? 210
+          : 230;
+      const slotW =
+        aiDesign.layoutPreset === 'left-photo-right-text'
+          ? 430
+          : aiDesign.layoutPreset === 'top-circle-photo'
+          ? 420
+          : 460;
+      const slotH =
+        aiDesign.layoutPreset === 'left-photo-right-text'
+          ? 680
+          : aiDesign.layoutPreset === 'top-circle-photo'
+          ? 420
+          : 540;
+
+      const createdCustomTemplate: CustomPosterTemplate = {
+        id: newTplId,
+        name: aiDesign.name,
+        category: aiDesign.category,
+        categoryLabel: `${aiDesign.engineUsed} · ${aiDesign.categoryLabel}`,
+        badge: aiDesign.badge,
+        bgImageDataUrl: auraCustomBgDataUrl || undefined,
+        bgColors: aiDesign.bgColors,
+        primaryAccent: aiDesign.primaryAccent,
+        secondaryAccent: aiDesign.secondaryAccent,
+        bgPattern: aiDesign.bgPattern,
+        outerBorderStyle: aiDesign.outerBorderStyle,
+        decorMotif: aiDesign.decorMotif,
+        slotShape: aiDesign.slotShape,
+        photoFrameStyle: aiDesign.frameStyle,
+        layoutPreset: aiDesign.layoutPreset,
+        slotX,
+        slotY,
+        slotWidth: slotW,
+        slotHeight: slotH,
+        headlineText: aiDesign.headline,
+        namesText: aiDesign.mainNames,
+        subText: aiDesign.subMessage,
+        dateTimeText: aiDesign.eventDate,
+        venueText: aiDesign.venue,
+        footerMessageText: aiDesign.rsvp,
+        createdAt: new Date().toISOString(),
+      };
+
+      const existingCustom = loadCustomPosterTemplates();
+      const updatedCustomList = [createdCustomTemplate, ...existingCustom].slice(0, 30);
+      saveCustomPosterTemplates(updatedCustomList);
+      setCustomRawTemplates(updatedCustomList);
+
+      if (auraCustomBgDataUrl) {
+        const bgImg = new Image();
+        bgImg.onload = () => {
+          customBgImagesRef.current[newTplId] = bgImg;
+          setBgLoadTick((t) => t + 1);
+        };
+        bgImg.src = auraCustomBgDataUrl;
+      }
+
+      const convertedSpec = convertCustomTemplateToSpec(createdCustomTemplate);
+      setSelectedTemplateId(newTplId);
+
+      // Place user's attached photo(s) or sample portraits into the newly generated AI poster slots
+      const primaryImg = auraPhoto1ImgRef.current || samplePortraitsRef.current[0] || null;
+      const secondaryImg =
+        auraPhoto2ImgRef.current ||
+        auraPhoto1ImgRef.current ||
+        samplePortraitsRef.current[1] ||
+        null;
+
+      setSlotTransforms((prev) => {
+        const next = { ...prev };
+        convertedSpec.photoSlots.forEach((slot, idx) => {
+          const chosenImg = idx === 0 ? primaryImg : secondaryImg;
+          next[slot.id] = {
+            imageUrl: chosenImg ? chosenImg.src : '',
+            imageElement: chosenImg,
+            zoom: 100,
+            panX: 0,
+            panY: 0,
+            rotation: 0,
+            flipX: false,
+            brightness: 100,
+            contrast: 100,
+            cropInset: 0,
+          };
+        });
+        return next;
+      });
+
+      if (convertedSpec.photoSlots.length > 0) {
+        setActiveSlotId(convertedSpec.photoSlots[0].id);
+      }
+
+      setLastAuraSuccessBanner(
+        `✅ ${aiDesign.engineUsed} Poster "${aiDesign.name}" Created! (-1 Credit · ${deduction.remaining} Credits Left)`
+      );
+
+      setTimeout(() => {
+        canvasRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
+
+      showToast(
+        `✨ ${aiDesign.engineUsed} Poster Created! (-1 Credit · ${deduction.remaining} Credits Remaining)`
+      );
+    } catch (err) {
+      console.error('Aura AI poster generation error:', err);
+      showToast('Could not generate poster right now. Please try again.');
+    } finally {
+      setIsGeneratingAuraPoster(false);
+    }
+  };
+
+  // Reliable Blob-based export for PNG and JPG with Credit System enforcement
   const handleExportPoster = (format: 'png' | 'jpeg') => {
+    const alreadyPaidForThisPoster = paidPosterIdsRef.current.has(activeTemplate.id);
+    if (!alreadyPaidForThisPoster) {
+      const currentCredits = loadWalletCredits();
+      if (currentCredits <= 0) {
+        triggerOpenAddCreditsModal();
+        showToast('0 Credits Remaining! Please scan UPI QR to add credits to download HD Poster.');
+        return;
+      }
+      const deduction = deductWalletCredit();
+      setWalletCredits(deduction.remaining);
+      paidPosterIdsRef.current.add(activeTemplate.id);
+    }
+
     const exportCanvas = document.createElement('canvas');
     renderPosterCanvas(exportCanvas, false);
     const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
@@ -6683,7 +7029,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       if (document.body.contains(link)) document.body.removeChild(link);
       URL.revokeObjectURL(url);
     }, 4000);
-    showToast(`Downloaded High-Resolution ${format.toUpperCase()} Poster!`);
+    showToast(
+      `Downloaded High-Resolution ${format.toUpperCase()} Poster! (${loadWalletCredits()} Credits Left)`
+    );
   };
 
   const handleSendPosterToStudio = () => {
@@ -6714,19 +7062,30 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       {/* Top Studio Header Bar */}
       <div className="bg-[#070a14] text-white rounded-3xl p-4 sm:p-6 border border-cyan-500/30 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-amber-300">
             <i className="fa-solid fa-wand-magic-sparkles"></i>
-            <span>48 Ready-Made Studio Poster Templates · Full Desktop & Mobile Canvas Editor</span>
+            <span>Aura AI + & Aura AI Pro Poster Creator</span>
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono text-[11px]">
+              Credits: {walletCredits}
+            </span>
           </div>
           <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white">
-            Wedding, Anniversary, Birthday, Memorial, Housewarming & Festival Poster Maker
+            AI Poster Creator — Aura AI + & Aura AI Pro
           </h2>
           <p className="text-xs text-slate-300 max-w-3xl">
-            Select from 48 handcrafted templates across 8 categories. Upload your photos into predefined frames, drag directly on the poster to reposition, zoom/crop independently, edit all text fields, and download in HD PNG or JPG.
+            Enter your prompt below, attach your own photo to place directly onto the poster, and generate custom posters using <strong>Aura AI +</strong> or <strong>Aura AI Pro</strong>.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={triggerOpenAddCreditsModal}
+            className="min-h-[44px] px-3.5 py-2.5 rounded-2xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 text-purple-200 text-xs font-extrabold transition flex items-center gap-1.5"
+          >
+            <i className="fa-solid fa-wallet text-emerald-400"></i>
+            <span>{walletCredits} Credits · + Add</span>
+          </button>
           <button
             type="button"
             onClick={() => handleExportPoster('png')}
@@ -6756,140 +7115,370 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         </div>
       </div>
 
-      {/* Category Filter Bar */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-3.5 shadow-2xs space-y-3">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 xl:pb-0">
-            {CATEGORY_TABS.map((cat) => (
+      {/* =====================================================================
+          AURA AI + & AURA AI PRO PROMPT POSTER STUDIO + PHOTO ATTACHMENT BAR
+         ===================================================================== */}
+      <div className="bg-gradient-to-br from-[#070a14] via-slate-900 to-[#140b29] text-white rounded-3xl border border-purple-500/40 p-4 sm:p-6 shadow-xl space-y-4">
+        {/* Top Row: White-Labeled Engine Switcher (Aura AI + vs Aura AI Pro) + Photo Frame Layout */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-white/10 pb-3.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-400/40 text-cyan-300 text-xs font-extrabold">
+              <i className="fa-solid fa-sparkles text-amber-300"></i>
+              <span>Select AI Poster Engine:</span>
+            </span>
+
+            {(['aura-ai-plus', 'aura-ai-pro'] as AuraEngineId[]).map((engKey) => {
+              const eng = AURA_AI_ENGINES[engKey];
+              const isSelected = auraEngineId === engKey;
+              return (
+                <button
+                  key={eng.id}
+                  type="button"
+                  onClick={() => setAuraEngineId(eng.id)}
+                  className={`min-h-[42px] px-4 py-2 rounded-2xl border text-left transition flex items-center gap-2.5 ${
+                    isSelected
+                      ? eng.id === 'aura-ai-pro'
+                        ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 border-amber-300 text-white shadow-md scale-[1.02]'
+                        : 'bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 border-cyan-300 text-white shadow-md scale-[1.02]'
+                      : 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-300'
+                  }`}
+                >
+                  <i
+                    className={`fa-solid ${
+                      eng.id === 'aura-ai-pro' ? 'fa-crown text-amber-200' : 'fa-bolt text-cyan-200'
+                    } text-sm`}
+                  ></i>
+                  <div>
+                    <div className="text-xs font-extrabold flex items-center gap-1.5">
+                      <span>{eng.displayName}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-black/30 font-mono">
+                        {eng.badge}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-white/80 hidden sm:block">{eng.tagline}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Photo Frame Layout Selector for AI Poster */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-400 mr-1">Photo Frame Layout:</span>
+            {(
+              [
+                { id: 'center-arch-photo', label: 'Center Arch' },
+                { id: 'left-photo-right-text', label: 'Left Photo + Text' },
+                { id: 'top-circle-photo', label: 'Top Circle' },
+                { id: 'dual-couple-photos', label: '2 Photos (Dual)' },
+              ] as const
+            ).map((lyt) => (
               <button
-                key={cat.id}
+                key={lyt.id}
                 type="button"
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 whitespace-nowrap ${
-                  selectedCategory === cat.id
-                    ? 'bg-[#070a14] text-cyan-300 shadow-xs'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                onClick={() => setAuraPreferredLayout(lyt.id)}
+                className={`min-h-[34px] px-2.5 py-1 rounded-xl text-[11px] font-bold transition ${
+                  auraPreferredLayout === lyt.id
+                    ? 'bg-cyan-500 text-slate-950 font-extrabold'
+                    : 'bg-white/10 hover:bg-white/15 text-slate-300'
                 }`}
               >
-                <i className={`fa-solid ${cat.icon} text-[11px]`}></i>
-                <span>{cat.label}</span>
+                {lyt.label}
               </button>
             ))}
           </div>
+        </div>
 
-          <div className="relative w-full xl:w-72 shrink-0">
-            <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 48 templates..."
-              className="w-full min-h-[38px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-cyan-500"
+        {/* Middle Row: Prompt Input + Attach User Photo(s) + Generate Button */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
+          {/* Prompt Textarea */}
+          <div className="lg:col-span-6 flex flex-col justify-between space-y-2">
+            <label className="text-xs font-extrabold text-cyan-300 flex items-center justify-between">
+              <span>
+                1. Describe Your Poster (Names, Occasion, Date, Venue, Colors — Hindi / English):
+              </span>
+              {auraPrompt && (
+                <button
+                  type="button"
+                  onClick={() => setAuraPrompt('')}
+                  className="text-[11px] text-rose-300 hover:underline"
+                >
+                  Clear Prompt
+                </button>
+              )}
+            </label>
+            <textarea
+              rows={3}
+              value={auraPrompt}
+              onChange={(e) => setAuraPrompt(e.target.value)}
+              placeholder={`Ask ${AURA_AI_ENGINES[auraEngineId].displayName} to design any poster — e.g. "Royal red & gold Wedding Invitation for Rohan & Priya on Sunday 24th Nov 7:00 PM at Taj Palace Hall"...`}
+              className="w-full flex-1 px-4 py-3 rounded-2xl bg-slate-950/90 border border-cyan-500/40 text-white placeholder-slate-400 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-cyan-400"
             />
           </div>
+
+          {/* Attach User Photo(s) & Custom Background Box */}
+          <div className="lg:col-span-3 bg-white/5 rounded-2xl border border-white/15 p-3 flex flex-col justify-between space-y-2">
+            <div className="text-xs font-extrabold text-amber-300 flex items-center gap-1.5">
+              <i className="fa-solid fa-camera-retro"></i>
+              <span>2. Attach Photo to Put on Poster:</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {/* Photo 1 Upload */}
+              <div>
+                <input
+                  ref={auraPhoto1InputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleAuraPhotoUpload(e, 1)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => auraPhoto1InputRef.current?.click()}
+                  className={`w-full h-16 rounded-xl border border-dashed flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition overflow-hidden relative ${
+                    auraPhoto1Url
+                      ? 'border-emerald-400 bg-emerald-950/40 text-emerald-200'
+                      : 'border-cyan-400/50 hover:border-cyan-300 bg-slate-900/70 text-cyan-200'
+                  }`}
+                  title="Upload Main Photo for Poster"
+                >
+                  {auraPhoto1Url ? (
+                    <>
+                      <img
+                        src={auraPhoto1Url}
+                        alt="Attached 1"
+                        className="absolute inset-0 w-full h-full object-cover opacity-55"
+                      />
+                      <span className="relative z-10 px-1.5 py-0.5 rounded bg-black/75 text-emerald-300 text-[9px] font-extrabold">
+                        Photo 1 Ready
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-user-plus text-sm text-cyan-400"></i>
+                      <span>+ Main Photo</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Photo 2 Upload */}
+              <div>
+                <input
+                  ref={auraPhoto2InputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleAuraPhotoUpload(e, 2)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => auraPhoto2InputRef.current?.click()}
+                  className={`w-full h-16 rounded-xl border border-dashed flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition overflow-hidden relative ${
+                    auraPhoto2Url
+                      ? 'border-emerald-400 bg-emerald-950/40 text-emerald-200'
+                      : 'border-purple-400/50 hover:border-purple-300 bg-slate-900/70 text-purple-200'
+                  }`}
+                  title="Upload Optional 2nd Photo for Couple/Dual Poster"
+                >
+                  {auraPhoto2Url ? (
+                    <>
+                      <img
+                        src={auraPhoto2Url}
+                        alt="Attached 2"
+                        className="absolute inset-0 w-full h-full object-cover opacity-55"
+                      />
+                      <span className="relative z-10 px-1.5 py-0.5 rounded bg-black/75 text-emerald-300 text-[9px] font-extrabold">
+                        Photo 2 Ready
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-users text-sm text-purple-400"></i>
+                      <span>+ 2nd Photo</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Optional Custom Background Upload */}
+              <div>
+                <input
+                  ref={auraBgInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAuraCustomBgUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => auraBgInputRef.current?.click()}
+                  className={`w-full h-16 rounded-xl border border-dashed flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition overflow-hidden relative ${
+                    auraCustomBgDataUrl
+                      ? 'border-amber-400 bg-amber-950/40 text-amber-200'
+                      : 'border-amber-400/40 hover:border-amber-300 bg-slate-900/70 text-amber-200'
+                  }`}
+                  title="Upload Custom Poster Background Image (Optional)"
+                >
+                  {auraCustomBgDataUrl ? (
+                    <>
+                      <img
+                        src={auraCustomBgDataUrl}
+                        alt="Attached BG"
+                        className="absolute inset-0 w-full h-full object-cover opacity-55"
+                      />
+                      <span className="relative z-10 px-1.5 py-0.5 rounded bg-black/75 text-amber-300 text-[9px] font-extrabold">
+                        BG Ready
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-image text-sm text-amber-400"></i>
+                      <span>+ Custom BG</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {(auraPhoto1Url || auraPhoto2Url || auraCustomBgDataUrl) && (
+              <div className="flex items-center justify-between text-[10px] text-slate-300">
+                <span className="text-emerald-300 font-bold">
+                  ✓ Attached photo will auto-fit on poster
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    auraPhoto1ImgRef.current = null;
+                    auraPhoto2ImgRef.current = null;
+                    setAuraPhoto1Url('');
+                    setAuraPhoto2Url('');
+                    setAuraCustomBgDataUrl('');
+                  }}
+                  className="text-rose-300 hover:underline font-bold"
+                >
+                  Clear Photos
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Generate AI Poster Action Column */}
+          <div className="lg:col-span-3 flex flex-col justify-between gap-2">
+            <div className="text-xs font-extrabold text-purple-300 flex items-center justify-between">
+              <span>3. Create with {AURA_AI_ENGINES[auraEngineId].displayName}:</span>
+              <span className="font-mono text-[11px] text-amber-300">1 Credit / Poster</span>
+            </div>
+
+            <button
+              type="button"
+              disabled={isGeneratingAuraPoster}
+              onClick={() => handleGeneratePosterWithAuraAi()}
+              className={`w-full flex-1 min-h-[64px] px-4 py-3 rounded-2xl font-extrabold text-xs sm:text-sm text-white shadow-lg transition flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                auraEngineId === 'aura-ai-pro'
+                  ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500'
+                  : 'bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500'
+              } disabled:opacity-60`}
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`fa-solid ${
+                    isGeneratingAuraPoster
+                      ? 'fa-spinner fa-spin'
+                      : 'fa-wand-magic-sparkles'
+                  } text-base`}
+                ></i>
+                <span>
+                  {isGeneratingAuraPoster
+                    ? `Designing with ${AURA_AI_ENGINES[auraEngineId].displayName}...`
+                    : `Generate with ${AURA_AI_ENGINES[auraEngineId].displayName}`}
+                </span>
+              </div>
+              <span className="text-[10px] font-semibold text-white/90">
+                Uses 1 Credit · Places Attached Photo Automatically
+              </span>
+            </button>
+          </div>
         </div>
 
-        {/* Mobile/Tablet Horizontal Quick Template Strip (Hidden on XL where Left Sidebar shows full grid) */}
-        <div className="xl:hidden flex items-center gap-2.5 overflow-x-auto pb-1.5 pt-1">
-          {filteredTemplates.map((tpl) => {
-            const isSelected = tpl.id === activeTemplate.id;
-            return (
+        {lastAuraSuccessBanner && (
+          <div className="rounded-2xl bg-emerald-500/20 border border-emerald-400/50 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-200 font-bold">
+            <span>{lastAuraSuccessBanner}</span>
+            <div className="flex items-center gap-2">
               <button
-                key={tpl.id}
                 type="button"
-                onClick={() => handleSelectTemplate(tpl)}
-                className={`group shrink-0 w-48 rounded-2xl p-2.5 border text-left transition flex flex-col justify-between gap-2 ${
-                  isSelected
-                    ? 'border-cyan-500 bg-cyan-50/60 ring-2 ring-cyan-500/30'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
+                onClick={() =>
+                  canvasRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }
+                className="px-3 py-1 rounded-xl bg-emerald-500 text-slate-950 font-extrabold hover:bg-emerald-400 transition"
               >
-                <div
-                  className="h-20 w-full rounded-xl p-2 flex flex-col justify-between relative overflow-hidden border border-white/20"
-                  style={{
-                    background: `linear-gradient(135deg, ${tpl.bgColors[0]}, ${tpl.bgColors[1]}, ${tpl.bgColors[2]})`,
-                  }}
-                >
-                  <div className="flex items-center justify-between text-[9px] font-bold text-white/90">
-                    <span className="truncate">{tpl.categoryLabel}</span>
-                    <span className="font-mono shrink-0" style={{ color: tpl.primaryAccent }}>
-                      {tpl.photoSlots.length}P
-                    </span>
-                  </div>
-                  <div
-                    className="text-[11px] font-extrabold leading-tight line-clamp-2"
-                    style={{ color: tpl.primaryAccent }}
-                  >
-                    {tpl.name}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-slate-500 font-semibold px-0.5">
-                  <span className="truncate">{tpl.badge}</span>
-                  {isSelected && (
-                    <span className="text-cyan-700 font-extrabold shrink-0">Active</span>
-                  )}
-                </div>
+                View Poster ↓
               </button>
-            );
-          })}
-        </div>
+              <button
+                type="button"
+                onClick={() => handleExportPoster('png')}
+                className="px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white font-extrabold transition"
+              >
+                Download HD PNG
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* FULL-VIEW 3-PANE DESKTOP STUDIO WORKSPACE (Left Template Browser · Center Live Canvas · Right Photo & Text Inspector) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* PANE 1 (XL 3 Cols): Dedicated Desktop Template Browser Sidebar */}
-        <div className="hidden xl:flex xl:col-span-3 bg-white rounded-3xl border border-slate-200 p-4 flex-col gap-3 shadow-xs max-h-[820px]">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-            <span className="text-xs font-extrabold text-slate-900">
-              Templates ({filteredTemplates.length} / 48)
+      {/* User's Recent AI-Generated Posters History Strip (Only AI-generated posters, zero ready-made templates) */}
+      {customRawTemplates.length > 0 && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-3.5 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+              <i className="fa-solid fa-wand-magic-sparkles text-purple-600"></i>
+              <span>My AI Generated Posters ({customRawTemplates.length})</span>
             </span>
-            <span className="text-[11px] font-mono font-bold text-cyan-700">Click to Load</span>
+            <button
+              type="button"
+              onClick={() => {
+                saveCustomPosterTemplates([]);
+                setCustomRawTemplates([]);
+                setSelectedTemplateId('aura-ai-blank-starter');
+                showToast('Cleared AI poster history');
+              }}
+              className="text-[11px] font-bold text-rose-600 hover:underline"
+            >
+              Clear History
+            </button>
           </div>
-          <div className="space-y-2.5 overflow-y-auto pr-1 flex-1">
-            {filteredTemplates.map((tpl) => {
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+            {allTemplates.map((tpl) => {
               const isSelected = tpl.id === activeTemplate.id;
               return (
                 <button
                   key={tpl.id}
                   type="button"
                   onClick={() => handleSelectTemplate(tpl)}
-                  className={`w-full p-2.5 rounded-2xl border text-left transition space-y-1.5 ${
+                  className={`shrink-0 w-52 rounded-2xl p-2.5 border text-left transition flex flex-col justify-between gap-1.5 ${
                     isSelected
-                      ? 'border-cyan-500 bg-cyan-50/70 ring-2 ring-cyan-500/20'
-                      : 'border-slate-200 bg-slate-50/70 hover:bg-white hover:border-slate-300'
+                      ? 'border-cyan-500 bg-cyan-50/60 ring-2 ring-cyan-500/30'
+                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
                   }`}
                 >
-                  <div
-                    className="h-16 rounded-xl p-2 flex flex-col justify-between"
-                    style={{
-                      background: `linear-gradient(135deg, ${tpl.bgColors[0]}, ${tpl.bgColors[1]}, ${tpl.bgColors[2]})`,
-                    }}
-                  >
-                    <div className="flex items-center justify-between text-[9px] font-extrabold uppercase tracking-wider text-white/85">
-                      <span>{tpl.categoryLabel}</span>
-                      <span className="font-mono" style={{ color: tpl.primaryAccent }}>
-                        {tpl.photoSlots.length} {tpl.photoSlots.length === 1 ? 'Photo' : 'Photos'}
-                      </span>
-                    </div>
-                    <div
-                      className="text-xs font-extrabold leading-tight truncate"
-                      style={{ color: tpl.primaryAccent }}
-                    >
-                      {tpl.name}
-                    </div>
+                  <div className="text-[10px] font-extrabold text-purple-700 truncate">
+                    {tpl.badge}
                   </div>
-                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 px-0.5">
-                    <span className="truncate">{tpl.badge}</span>
-                    {isSelected && <span className="text-cyan-700 font-extrabold">● Active</span>}
+                  <div className="text-xs font-extrabold text-slate-900 truncate">
+                    {tpl.name}
                   </div>
                 </button>
               );
             })}
           </div>
         </div>
+      )}
 
-        {/* PANE 2 (LG 7 Cols / XL 5 Cols): Interactive Poster Canvas Preview */}
-        <div className="lg:col-span-7 xl:col-span-5 bg-[#070a14] rounded-3xl border border-cyan-500/30 p-4 sm:p-5 space-y-4 shadow-xl">
+      {/* 2-PANE AI POSTER WORKSPACE (Left Live AI Canvas · Right Photo & Text Inspector) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* PANE 1 (LG 7 Cols): Interactive AI Poster Canvas Preview */}
+        <div className="lg:col-span-7 bg-[#070a14] rounded-3xl border border-cyan-500/30 p-4 sm:p-5 space-y-4 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
             <div>
               <div className="text-xs font-extrabold text-white flex items-center gap-2">
@@ -6988,10 +7577,10 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           </div>
         </div>
 
-        {/* PANE 3 (LG 5 Cols / XL 4 Cols): Photo Placement Controls & Text Editor */}
-        <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
-          {/* Segmented Control Tabs */}
-          <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1.5 rounded-2xl text-xs font-extrabold">
+        {/* PANE 2 (LG 5 Cols): Photo Placement Controls & Text Editor */}
+        <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Segmented Control Tabs (Photos & Text only — No Ready-Made Templates) */}
+          <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1.5 rounded-2xl text-xs font-extrabold">
             <button
               type="button"
               onClick={() => setEditorPanelTab('photos')}
@@ -7014,19 +7603,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
               }`}
             >
               <i className="fa-solid fa-font"></i>
-              <span>Edit Text ({activeTemplate.textFields.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditorPanelTab('templates')}
-              className={`min-h-[40px] rounded-xl transition flex items-center justify-center gap-1.5 ${
-                editorPanelTab === 'templates'
-                  ? 'bg-[#070a14] text-cyan-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <i className="fa-solid fa-swatchbook"></i>
-              <span>48 Designs</span>
+              <span>Edit AI Text ({activeTemplate.textFields.length})</span>
             </button>
           </div>
 
@@ -7388,60 +7965,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                   </div>
                 );
               })}
-            </div>
-          )}
-
-          {/* =================================================================
-              TAB 3: FULL 48 TEMPLATE GALLERY GRID
-             ================================================================= */}
-          {editorPanelTab === 'templates' && (
-            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-              <div className="text-xs font-bold text-slate-600">
-                Showing {filteredTemplates.length} of 48 Ready-Made Templates:
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {filteredTemplates.map((tpl) => {
-                  const isSelected = tpl.id === activeTemplate.id;
-                  return (
-                    <button
-                      key={tpl.id}
-                      type="button"
-                      onClick={() => {
-                        handleSelectTemplate(tpl);
-                        setEditorPanelTab('photos');
-                      }}
-                      className={`p-3 rounded-2xl border text-left transition space-y-2 ${
-                        isSelected
-                          ? 'border-cyan-500 bg-cyan-50/60'
-                          : 'border-slate-200 bg-slate-50 hover:bg-white'
-                      }`}
-                    >
-                      <div
-                        className="h-20 rounded-xl p-2.5 flex flex-col justify-between"
-                        style={{
-                          background: `linear-gradient(135deg, ${tpl.bgColors[0]}, ${tpl.bgColors[1]}, ${tpl.bgColors[2]})`,
-                        }}
-                      >
-                        <span className="text-[9px] font-extrabold uppercase tracking-wider text-white/80">
-                          {tpl.categoryLabel}
-                        </span>
-                        <span
-                          className="text-xs font-extrabold leading-snug"
-                          style={{ color: tpl.primaryAccent }}
-                        >
-                          {tpl.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
-                        <span>{tpl.badge}</span>
-                        <span className="font-mono text-cyan-700">
-                          {tpl.photoSlots.length} {tpl.photoSlots.length === 1 ? 'Photo' : 'Photos'}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
             </div>
           )}
         </div>

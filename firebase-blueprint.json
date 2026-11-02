@@ -145,6 +145,12 @@
           "minLength": 4,
           "maxLength": 2000
         },
+        "shortUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Publicly resolvable short link URL"
+        },
         "createdBy": {
           "type": "string",
           "minLength": 1,

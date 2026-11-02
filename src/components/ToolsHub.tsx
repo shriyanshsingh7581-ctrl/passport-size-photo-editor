@@ -719,10 +719,12 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       if (!result.ok) {
         setLinkErrorMsg(result.error || 'Could not create short link.');
       } else if (result.link) {
+        const createdShortUrl =
+          result.link.shortUrl || `${baseOrigin}/${result.link.slug}`;
         setLatestCreatedLink(result.link);
-        setShortLinkCustomBoxUrl('');
+        setShortLinkCustomBoxUrl(createdShortUrl);
         setLongUrlInput('');
-        showToast('Short Link Created!');
+        showToast(`Short Link Created: ${createdShortUrl}`);
       }
     } finally {
       setIsCreatingLink(false);
@@ -2138,24 +2140,45 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   onClick={() => {
                     const targetToCopy =
                       shortLinkCustomBoxUrl.trim() ||
-                      (latestCreatedLink ? latestCreatedLink.originalUrl : '');
+                      (latestCreatedLink
+                        ? latestCreatedLink.shortUrl || `${baseOrigin}/${latestCreatedLink.slug}`
+                        : '');
                     if (!targetToCopy) {
-                      showToast('Please add a URL in the box first!');
+                      showToast('Generate a short link or add a URL first!');
                       return;
                     }
-                    handleCopyText(targetToCopy, 'Short link copied to clipboard!');
+                    handleCopyText(targetToCopy, `Copied Short Link: ${targetToCopy}`);
                   }}
-                  className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5"
+                  className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5 transition"
                 >
                   <i className="fa-solid fa-copy"></i>
                   <span>Copy Short Link</span>
                 </button>
+                {(shortLinkCustomBoxUrl.trim() || latestCreatedLink) && (
+                  <a
+                    href={
+                      shortLinkCustomBoxUrl.trim() ||
+                      (latestCreatedLink
+                        ? latestCreatedLink.shortUrl || latestCreatedLink.originalUrl
+                        : '#')
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-[40px] px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                    title="Test & Open Short Link"
+                  >
+                    <i className="fa-solid fa-arrow-up-right-from-square"></i>
+                    <span>Open</span>
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     const qrUrl =
                       shortLinkCustomBoxUrl.trim() ||
-                      (latestCreatedLink ? latestCreatedLink.originalUrl : '');
+                      (latestCreatedLink
+                        ? latestCreatedLink.shortUrl || `${baseOrigin}/${latestCreatedLink.slug}`
+                        : '');
                     setQrInputUrl(qrUrl);
                     setQrWebsiteFooterUrl(qrUrl);
                     if (qrUrl) {
@@ -2180,7 +2203,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   Active Short Links ({shortLinks.length})
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Visiting your short link slug immediately redirects to the original URL
+                  Visiting your short link immediately redirects to the original URL
                 </p>
               </div>
             </div>
@@ -2196,7 +2219,10 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             ) : (
               <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                 {shortLinks.map((item) => {
-                  const fullShortUrl = `${baseOrigin}/${item.slug}`;
+                  const fullShortUrl = item.shortUrl || `${baseOrigin}/${item.slug}`;
+                  const openTargetUrl = item.active
+                    ? item.shortUrl || item.originalUrl
+                    : item.originalUrl;
                   return (
                     <div
                       key={item.slug}
@@ -2204,9 +2230,20 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     >
                       <div className="min-w-0 space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-sm font-extrabold text-cyan-700 break-all">
-                            /{item.slug}
-                          </span>
+                          <a
+                            href={openTargetUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-sm font-extrabold text-cyan-700 hover:text-cyan-600 underline decoration-cyan-400/60 break-all"
+                            title="Click to open short link"
+                          >
+                            {item.shortUrl || `/${item.slug}`}
+                          </a>
+                          {item.shortUrl && (
+                            <span className="font-mono text-[11px] font-bold text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded-md">
+                              /{item.slug}
+                            </span>
+                          )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
                               item.active
@@ -2228,18 +2265,21 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
 
                       <div className="flex items-center gap-2 shrink-0 flex-wrap">
                         <a
-                          href={item.originalUrl}
+                          href={openTargetUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 text-cyan-800 text-xs font-bold flex items-center gap-1.5"
-                          title="Open Target URL"
+                          title="Open Short Link"
                         >
                           <i className="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
                           <span>Open</span>
                         </a>
 
                         <button
-                          onClick={() => handleCopyText(fullShortUrl, `Copied ${fullShortUrl}`)}
+                          onClick={() => {
+                            setShortLinkCustomBoxUrl(fullShortUrl);
+                            handleCopyText(fullShortUrl, `Copied Short Link: ${fullShortUrl}`);
+                          }}
                           className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1.5"
                           title="Copy Short URL"
                         >

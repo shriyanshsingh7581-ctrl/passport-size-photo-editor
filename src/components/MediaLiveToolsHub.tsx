@@ -7,6 +7,12 @@ import {
   generateSamplePortraitDataUrl,
 } from '../constants';
 import { PosterTemplateMaker } from './PosterTemplateMaker';
+import {
+  AURA_AI_ENGINES,
+  AuraEngineId,
+  generateLiveBroadcastCopyWithAuraAi,
+} from '../auraAiService';
+import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
 
 export type MediaLiveSubToolId =
   | 'overview'
@@ -1407,8 +1413,113 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
     }
   }, [renderActiveMediaCanvas, customBgUrl, subjectPhotoUrl, logoImgUrl]);
 
+  const [auraLiveEngine, setAuraLiveEngine] = useState<AuraEngineId>('aura-ai-plus');
+  const [auraLivePrompt, setAuraLivePrompt] = useState<string>('');
+  const [isGeneratingAuraLive, setIsGeneratingAuraLive] = useState<boolean>(false);
+  const [walletCredits, setWalletCredits] = useState<number>(() => loadWalletCredits());
+
+  useEffect(() => {
+    const syncCredits = () => setWalletCredits(loadWalletCredits());
+    window.addEventListener('malnadu-credits-updated', syncCredits);
+    window.addEventListener('storage', syncCredits);
+    return () => {
+      window.removeEventListener('malnadu-credits-updated', syncCredits);
+      window.removeEventListener('storage', syncCredits);
+    };
+  }, []);
+
+  const handleGenerateAuraLivePoster = async (overridePrompt?: string) => {
+    const promptToUse = (overridePrompt ?? auraLivePrompt).trim();
+    if (!promptToUse) {
+      showToast('Please enter a poster prompt or pick a ready-made prompt first!');
+      return;
+    }
+
+    const currentCredits = loadWalletCredits();
+    if (currentCredits < 1) {
+      showToast('0 Credits remaining! Please recharge credits via QR Code to generate AI posters.');
+      window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'));
+      return;
+    }
+
+    setIsGeneratingAuraLive(true);
+    try {
+      const result = await generateLiveBroadcastCopyWithAuraAi({
+        engineId: auraLiveEngine,
+        prompt: promptToUse,
+      });
+
+      const deducted = deductWalletCredit();
+      if (!deducted.success) {
+        showToast('Insufficient credits! Please add credits to continue.');
+        window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'));
+        setIsGeneratingAuraLive(false);
+        return;
+      }
+      setWalletCredits(deducted.remaining);
+
+      if (result.accentColor) setAccentColor(result.accentColor);
+
+      if (activeSubTool === 'wedding-live-poster') {
+        const parts = result.title.split(/weds|&|\+/i).map((s) => s.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          setWedBride(parts[0].toUpperCase());
+          setWedGroom(parts[1].toUpperCase());
+        } else {
+          setWedBride(result.title.toUpperCase());
+        }
+        setWedDate(result.dateTime);
+        setWedVenue(result.platform);
+      } else if (activeSubTool === 'funeral-live-poster') {
+        setFunName(result.title.toUpperCase());
+        setFunDates(result.desc);
+        setFunDetails(`${result.dateTime} · ${result.platform}`);
+      } else if (activeSubTool === 'church-live-poster') {
+        setChName(result.platform.toUpperCase());
+        setChEvent(result.title.toUpperCase());
+        setChDateTime(result.dateTime.toUpperCase());
+        setChDetails(result.desc);
+      } else if (activeSubTool === 'youtube-thumbnail') {
+        setYtTitle(result.title.toUpperCase());
+        setYtSubtitle(result.desc.toUpperCase());
+        setYtBadgeText('AURA AI LIVE');
+      } else if (activeSubTool === 'live-title') {
+        setTitleMain(result.title.toUpperCase());
+        setTitleSub(result.desc);
+        setTitleDate(result.dateTime);
+      } else {
+        setLivePosterTitle(result.title.toUpperCase());
+        setLivePosterDateTime(result.dateTime.toUpperCase());
+        setLivePosterPlatform(result.platform);
+        setLivePosterDesc(result.desc);
+      }
+
+      const engineLabel = AURA_AI_ENGINES[auraLiveEngine]?.displayName || 'Aura AI +';
+      showToast(
+        `✨ Poster created with ${engineLabel}! (1 Credit used · ${deducted.remaining} left)`
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Aura AI server busy. Please try again.');
+    } finally {
+      setIsGeneratingAuraLive(false);
+    }
+  };
+
   const exportCurrentGraphic = (format: 'png' | 'jpg') => {
     if (!mainGraphicCanvasRef.current) return;
+    const currentCredits = loadWalletCredits();
+    if (currentCredits < 1) {
+      showToast('0 Credits remaining! Please recharge credits via QR Code to download HD posters.');
+      window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'));
+      return;
+    }
+    const deducted = deductWalletCredit();
+    if (!deducted.success) {
+      window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'));
+      return;
+    }
+    setWalletCredits(deducted.remaining);
+
     const canvas = mainGraphicCanvasRef.current;
     const dataUrl = canvas.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.96);
     const parts = dataUrl.split(',');
@@ -1427,7 +1538,9 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       if (document.body.contains(a)) document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 4000);
-    showToast(`Exported ${canvas.width}×${canvas.height}px ${format.toUpperCase()}!`);
+    showToast(
+      `Exported ${canvas.width}×${canvas.height}px ${format.toUpperCase()}! (1 Credit used · ${deducted.remaining} left)`
+    );
   };
 
   // Record 4-second Animated WebM Video from Canvas (for Countdown & Lower Third)
@@ -1676,10 +1789,10 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
               CATEGORY 3 · BROADCAST, STREAMING & EVENT GRAPHICS SUITE
             </div>
             <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight mt-1">
-              Media & Live Tools — 36+ Event Poster Templates, OBS/vMix Overlays & Video
+              Media & Live Tools — Aura AI + & Aura AI Pro Poster Creator, OBS/vMix Overlays & Video
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              16 professional tools including 36+ editable Wedding, Anniversary, Birthday & Memorial Poster Templates.
+              16 professional tools including AI Poster Creation powered by Aura AI + & Aura AI Pro with direct photo upload.
             </p>
           </div>
           {activeSubTool !== 'overview' && (
@@ -1712,7 +1825,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
             }`}
           >
             <i className="fa-solid fa-wand-magic-sparkles"></i>
-            <span>36+ Poster Template Maker</span>
+            <span>AI Poster Creator (Aura AI)</span>
           </button>
           {mediaToolsList
             .filter((t) => t.id !== 'poster-template-maker')
@@ -1774,18 +1887,18 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
          ===================================================================== */}
       {activeSubTool === 'overview' && (
         <div className="space-y-4">
-          {/* Featured 36+ Poster Template Maker Banner */}
+          {/* Featured Aura AI Poster Creator Banner */}
           <div className="bg-gradient-to-r from-[#070a14] via-purple-950 to-slate-900 text-white rounded-3xl border border-amber-400/40 p-5 sm:p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="space-y-1.5">
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[11px] font-extrabold uppercase tracking-wider">
                 <i className="fa-solid fa-crown"></i>
-                <span>Featured · 36 Ready-Made Editable Templates</span>
+                <span>Featured · Aura AI + & Aura AI Pro Engine</span>
               </div>
               <h2 className="text-lg sm:text-xl font-extrabold text-white">
-                Wedding, Anniversary, Birthday, Memorial & Festival Poster Template Maker
+                AI Poster Creator — Create Custom Posters from Prompt & Attach Your Photo
               </h2>
               <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
-                Upload single or multiple photos into predefined arch, circle, oval & royal frames. Drag, zoom, and crop each photo independently and edit all names, dates, venues, and messages directly in your browser.
+                Enter your prompt, choose between <strong>Aura AI +</strong> and <strong>Aura AI Pro</strong>, and upload your photo so it is automatically placed into the poster frame.
               </p>
             </div>
             <button
@@ -1793,7 +1906,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
               className="min-h-[46px] px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm shadow-md transition flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               <i className="fa-solid fa-wand-magic-sparkles"></i>
-              <span>Open 36+ Poster Template Maker →</span>
+              <span>Open AI Poster Creator →</span>
             </button>
           </div>
 
@@ -1866,6 +1979,94 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
                 <i className="fa-solid fa-stamp text-amber-600"></i>
                 <span>Studio Logo</span>
               </button>
+            </div>
+
+            {/* AURA AI + & AURA AI PRO PROMPT POSTER GENERATOR */}
+            <div className="rounded-2xl bg-gradient-to-br from-[#070a14] via-purple-950/90 to-slate-900 border border-purple-500/40 p-3.5 text-white space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase">
+                    AI Poster Engine
+                  </span>
+                  <span className="text-[11px] font-extrabold text-cyan-300">
+                    {walletCredits} Credits Left
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('malnadu-open-credit-modal'))}
+                  className="text-[10px] font-extrabold text-amber-300 hover:underline"
+                >
+                  + Add Credits
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                {Object.values(AURA_AI_ENGINES).map((eng) => {
+                  const active = auraLiveEngine === eng.id;
+                  return (
+                    <button
+                      key={eng.id}
+                      type="button"
+                      onClick={() => setAuraLiveEngine(eng.id)}
+                      className={`px-2.5 py-2 rounded-xl border text-left transition ${
+                        active
+                          ? 'bg-gradient-to-r from-cyan-500/30 to-purple-600/40 border-cyan-400 text-white'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="text-xs font-extrabold flex items-center justify-between">
+                        <span>{eng.displayName}</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300">
+                          {eng.badge}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                        {eng.tagline}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <textarea
+                rows={2}
+                value={auraLivePrompt}
+                onChange={(e) => setAuraLivePrompt(e.target.value)}
+                placeholder="Type poster prompt (e.g., Grand Kerala Wedding Live Anjali weds Rohan on Sunday 22 Nov 11 AM at Kochi)..."
+                className="w-full px-3 py-2 rounded-xl bg-slate-950/90 border border-white/15 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-cyan-400"
+              />
+
+              <div className="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => subjectUploadInputRef.current?.click()}
+                  className="px-2.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-[11px] font-bold text-white flex items-center gap-1.5 shrink-0"
+                >
+                  <i className="fa-solid fa-camera text-cyan-400"></i>
+                  <span>{subjectPhotoUrl ? 'Photo Attached ✓' : '+ Attach Photo'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isGeneratingAuraLive}
+                  onClick={() => handleGenerateAuraLivePoster()}
+                  className="flex-1 min-h-[38px] px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 disabled:opacity-50 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
+                >
+                  {isGeneratingAuraLive ? (
+                    <>
+                      <i className="fa-solid fa-spinner fa-spin"></i>
+                      <span>Generating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-wand-magic-sparkles"></i>
+                      <span>
+                        Create with {AURA_AI_ENGINES[auraLiveEngine]?.displayName} (1 Cr)
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Tool-Specific Controls */}

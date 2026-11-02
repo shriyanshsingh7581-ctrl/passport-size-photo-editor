@@ -157,11 +157,11 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
   {
     id: 'poster-template-maker',
     category: 'media-live',
-    name: 'Wedding, Anniversary & Memorial Poster Maker',
+    name: 'AI Poster Creator (Aura AI + & Aura AI Pro)',
     description:
-      '36+ ready-made editable poster templates for Wedding, Anniversary, Engagement, Birthday, Memorial & Festival greetings with multi-photo frames, drag/zoom & custom text.',
+      'Create custom Wedding, Anniversary, Birthday, Memorial & Event Posters from your prompt using Aura AI + and Aura AI Pro with direct photo attachment.',
     icon: 'fa-wand-magic-sparkles',
-    badge: '36+ Templates',
+    badge: 'Aura AI + / Pro',
     enabled: true,
   },
   {
@@ -311,6 +311,30 @@ export interface CustomPosterTemplate {
   bgColors: [string, string, string];
   primaryAccent: string;
   secondaryAccent: string;
+  bgPattern?: 'mandala' | 'damask' | 'bokeh' | 'rays' | 'minimal-linen' | 'velvet-vignette';
+  outerBorderStyle?:
+    | 'royal-gold'
+    | 'double-line'
+    | 'floral-frame'
+    | 'temple-border'
+    | 'dignified-frame'
+    | 'festive-toran';
+  decorMotif?:
+    | 'royal-mandala-arch'
+    | 'temple-kalash-gold'
+    | 'floral-botanical-corners'
+    | 'silver-jubilee-sparkles'
+    | 'golden-jubilee-crest'
+    | 'ring-ceremony-geometric'
+    | 'birthday-confetti-crown'
+    | 'kids-carnival-bunting'
+    | 'memorial-lotus-diya'
+    | 'memorial-garland-pillar'
+    | 'memorial-dove-cross'
+    | 'festival-diwali-diyas'
+    | 'festival-eid-crescent'
+    | 'festival-christmas-wreath'
+    | 'festival-traditional-toran';
   slotShape?: 'rect' | 'rounded' | 'arch' | 'circle' | 'oval' | 'octagon';
   photoShape?: 'rect' | 'rounded' | 'arch' | 'circle' | 'oval' | 'octagon';
   photoFrameStyle?:
@@ -428,6 +452,7 @@ export interface ShortLinkRecord {
   id: string;
   slug: string;
   originalUrl: string;
+  shortUrl?: string;
   createdBy: string;
   creatorEmail: string;
   active: boolean;
