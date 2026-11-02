@@ -37,9 +37,9 @@ export const ADMIN_ACCOUNT_HOLDER = OWNER_ADMIN_ACCOUNT_HOLDER;
 export const ADMIN_QR_IMAGE_PATH = OWNER_ADMIN_QR_IMAGE_PATH;
 
 // 2. WEBSITE USER PAYMENT QR CODE (T TT Google Pay UPI QR — Shown to Website Users when buying photo credits)
-export const WEBSITE_USER_QR_IMAGE_PATH = '/assets/aistudio/IMG-20261102-WA0066.svg';
-export const WEBSITE_USER_PAYEE_NAME = 'T T';
-const WEBSITE_USER_CUSTOM_QR_KEY = 'malnadu_website_user_custom_qr_v1';
+export const WEBSITE_USER_QR_IMAGE_PATH = '/assets/aistudio/IMG-20261102-WA0066_bcf898c7.jpg';
+export const WEBSITE_USER_PAYEE_NAME = 'T TT';
+const WEBSITE_USER_CUSTOM_QR_KEY = 'malnadu_website_user_custom_qr_v2';
 
 export function loadWebsiteUserQrImage(): string {
   try {

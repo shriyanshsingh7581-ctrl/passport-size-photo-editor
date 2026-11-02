@@ -528,20 +528,28 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                 <span>Scan to Pay with Any UPI App</span>
               </div>
 
-              <div className="bg-[#131314] p-2 rounded-2xl border border-white/10 shadow-sm w-full max-w-[260px] mx-auto">
+              <div className="bg-[#1e1f22] p-1.5 rounded-2xl border border-white/15 shadow-md w-full max-w-[290px] mx-auto overflow-hidden">
                 <img
                   src={websiteUserQrSrc}
                   alt={`UPI QR - ${WEBSITE_USER_PAYEE_NAME}`}
-                  className="w-full h-auto rounded-xl object-contain"
+                  className="w-full h-auto rounded-xl object-contain select-none"
                 />
               </div>
 
-              <div className="w-full space-y-1 pt-1">
+              <div className="w-full space-y-2 pt-1">
                 <div className="text-sm font-extrabold text-white tracking-wide">
-                  {WEBSITE_USER_PAYEE_NAME}
+                  {WEBSITE_USER_PAYEE_NAME} • Google Pay / All UPI
                 </div>
-                <p className="text-[11px] text-slate-300">
-                  Scan to pay with Google Pay, PhonePe, Paytm, or any UPI app. After payment, submit your UTR / Screenshot on the right so the Website Admin can credit your account.
+                <a
+                  href={websiteUserQrSrc}
+                  download="Malnadu-Studio-UPI-Payment-QR.jpg"
+                  className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 border border-teal-400/40 text-teal-200 text-xs font-extrabold flex items-center justify-center gap-2 transition"
+                >
+                  <i className="fa-solid fa-download"></i>
+                  <span>Download QR to Scan from Gallery</span>
+                </a>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Scan directly or download QR &amp; choose &ldquo;Scan from Gallery&rdquo; in Google Pay, PhonePe, or Paytm. After payment, submit your UTR / Screenshot on the right.
                 </p>
               </div>
             </div>
