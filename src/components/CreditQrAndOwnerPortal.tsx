@@ -3,6 +3,8 @@ import {
   ADMIN_ACCOUNT_HOLDER,
   ADMIN_QR_IMAGE_PATH,
   ADMIN_UPI_ID,
+  WEBSITE_USER_PAYEE_NAME,
+  loadWebsiteUserQrImage,
   CreditRechargeLog,
   DEFAULT_ADMIN_WHATSAPP,
   PaymentCreditRequest,
@@ -153,12 +155,25 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     setAdminPoolExactInput(String(adminCreditPool));
   }, [adminCreditPool]);
 
+  const [websiteUserQrSrc, setWebsiteUserQrSrc] = useState<string>(() => loadWebsiteUserQrImage());
+
   useEffect(() => {
     const syncRequests = () => {
       setPaymentRequests(loadPaymentCreditRequests());
     };
+    const syncUserQr = () => {
+      setWebsiteUserQrSrc(loadWebsiteUserQrImage());
+    };
     window.addEventListener('malnadu-payment-requests-updated', syncRequests);
-    return () => window.removeEventListener('malnadu-payment-requests-updated', syncRequests);
+    window.addEventListener('malnadu-user-qr-updated', syncUserQr);
+    window.addEventListener('storage', syncRequests);
+    window.addEventListener('storage', syncUserQr);
+    return () => {
+      window.removeEventListener('malnadu-payment-requests-updated', syncRequests);
+      window.removeEventListener('malnadu-user-qr-updated', syncUserQr);
+      window.removeEventListener('storage', syncRequests);
+      window.removeEventListener('storage', syncUserQr);
+    };
   }, []);
 
   if (!isOpen) return null;
@@ -204,8 +219,9 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
 
     const created = submitClientPaymentRequest({
       clientName: reqClientName.trim(),
-      clientContact: reqClientContact.trim() || 'Direct Website Client',
+      clientContact: reqClientContact.trim() || currentUserProfile?.email || 'Direct Website Client',
       userId: currentUserProfile?.uid,
+      targetType: 'client_wallet',
       packageLabel: selectedPkg.label,
       creditsRequested: selectedPkg.credits,
       amountInr: selectedPkg.price,
@@ -220,9 +236,9 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     setReqScreenshotUrl('');
     setReqSubmitBanner({
       type: 'success',
-      text: `Payment Request (#${created.id.slice(-5).toUpperCase()}) for +${selectedPkg.credits} Photos submitted! Once the Administrator confirms your payment in the Credit & Payment Admin Panel, credits will be added immediately.`,
+      text: `Payment Request (#${created.id.slice(-5).toUpperCase()}) for +${selectedPkg.credits} Photos submitted to the Website Admin Panel! Once the Website Admin confirms your payment, credits will be added directly to your account.`,
     });
-    showToast(`Payment Request Submitted for +${selectedPkg.credits} Credits!`);
+    showToast(`Payment Request Sent to Website Admin for +${selectedPkg.credits} Credits!`);
   };
 
   const handleRedeemCoupon = (e: React.FormEvent) => {
@@ -447,15 +463,15 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     <div
       className={
         standalonePage
-          ? 'max-w-5xl mx-auto px-3.5 sm:px-6 py-6'
+          ? 'max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-6'
           : 'fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto'
       }
     >
       {/* =====================================================================
-          MODE 1: CLIENT UPI QR CODE & PAYMENT REQUEST SUBMISSION MODAL
+          MODE 1: CLIENT UPI QR CODE & PAYMENT REQUEST SUBMISSION MODAL (T TT GPay QR)
          ===================================================================== */}
       {mode === 'client_qr' && (
-        <div className="bg-white rounded-3xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-cyan-200 space-y-5 my-auto max-h-[94vh] overflow-y-auto">
+        <div className="bg-white rounded-3xl max-w-4xl w-full p-5 sm:p-6 shadow-2xl border border-cyan-200 space-y-5 my-auto max-h-[94vh] overflow-y-auto">
           {/* Top Header */}
           <div className="flex items-center justify-between border-b border-slate-100 pb-3.5 gap-3">
             <div className="flex items-center gap-3">
@@ -477,7 +493,7 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Scan the official UPI QR code to pay and submit your payment request for instant credit approval.
+                  Scan the UPI QR code below with any UPI app, complete payment, and submit your request so the Website Admin can add credits to your account.
                 </p>
               </div>
             </div>
@@ -503,57 +519,31 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
             </div>
           </div>
 
-          {/* Main 2-Column Layout: Left = Uploaded Slice QR Code, Right = Packages + Submit Payment Request */}
+          {/* Main 2-Column Layout: Left = Website User Payment QR (T TT Google Pay QR), Right = Packages + Submit Payment Request */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
-            {/* Left Column: Official Uploaded Slice UPI QR Code */}
-            <div className="md:col-span-5 bg-slate-50 rounded-2xl p-4 border-2 border-purple-200/80 flex flex-col items-center text-center space-y-3 shadow-xs">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-100 text-purple-800 text-[11px] font-extrabold tracking-wide uppercase">
-                <i className="fa-solid fa-bolt text-purple-600"></i>
-                <span>Official UPI QR Code</span>
+            {/* Left Column: Website User Payment QR Code (T TT Google Pay QR) */}
+            <div className="md:col-span-5 bg-[#1e1f22] text-white rounded-2xl p-4 border border-slate-700 flex flex-col items-center text-center space-y-3 shadow-md">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-teal-500/20 border border-teal-400/30 text-teal-300 text-[11px] font-extrabold tracking-wide uppercase">
+                <i className="fa-solid fa-qrcode"></i>
+                <span>Scan to Pay with Any UPI App</span>
               </div>
 
-              <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm w-full max-w-[230px] mx-auto">
+              <div className="bg-[#131314] p-2 rounded-2xl border border-white/10 shadow-sm w-full max-w-[260px] mx-auto">
                 <img
-                  src={ADMIN_QR_IMAGE_PATH}
-                  alt={`UPI QR - ${ADMIN_ACCOUNT_HOLDER}`}
+                  src={websiteUserQrSrc}
+                  alt={`UPI QR - ${WEBSITE_USER_PAYEE_NAME}`}
                   className="w-full h-auto rounded-xl object-contain"
                 />
               </div>
 
-              <div className="w-full space-y-1.5 pt-1">
-                <div className="text-xs font-extrabold text-slate-900">
-                  {ADMIN_ACCOUNT_HOLDER}
+              <div className="w-full space-y-1 pt-1">
+                <div className="text-sm font-extrabold text-white tracking-wide">
+                  {WEBSITE_USER_PAYEE_NAME}
                 </div>
-                <div className="flex items-center justify-center gap-1.5 bg-white px-3 py-2 rounded-xl border border-slate-200">
-                  <span className="font-mono text-xs font-extrabold text-purple-700 select-all">
-                    {ADMIN_UPI_ID}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyUpiId}
-                    className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-[10px] font-extrabold transition"
-                    title="Copy UPI ID"
-                  >
-                    <i className="fa-regular fa-copy mr-1"></i>
-                    Copy
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Works with Google Pay, PhonePe, Paytm, Slice & all UPI Apps
+                <p className="text-[11px] text-slate-300">
+                  Scan to pay with Google Pay, PhonePe, Paytm, or any UPI app. After payment, submit your UTR / Screenshot on the right so the Website Admin can credit your account.
                 </p>
               </div>
-
-              <a
-                href={`https://wa.me/${cleanWhatsAppDigits}?text=${encodeURIComponent(
-                  `Hello ${ADMIN_ACCOUNT_HOLDER}, I have paid ${selectedPkg.price} via UPI QR (${ADMIN_UPI_ID}) for +${selectedPkg.credits} Studio Photo Credits. Please confirm my payment and add credits.`
-                )}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full min-h-[40px] py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-xs flex items-center justify-center gap-1.5 transition"
-              >
-                <i className="fa-brands fa-whatsapp text-sm"></i>
-                <span>Notify Admin on WhatsApp</span>
-              </a>
             </div>
 
             {/* Right Column: Package Selection + Submit Payment Request Form + Activation Code */}
@@ -834,8 +824,8 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
 
           {/* Client Footer Bar (No Public Admin Links) */}
           <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-[11px] text-slate-400">
-              UPI Verified Account: {ADMIN_ACCOUNT_HOLDER} ({ADMIN_UPI_ID})
+            <span className="text-[11px] text-slate-500">
+              After payment submission, the Website Admin will verify and add credits to your account.
             </span>
 
             <button

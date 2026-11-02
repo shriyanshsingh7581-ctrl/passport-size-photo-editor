@@ -62,6 +62,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   const [blueSpillStrength, setBlueSpillStrength] = useState<number>(80);
   const [hairDetailStrength, setHairDetailStrength] = useState<number>(70);
   const [bgRotation, setBgRotation] = useState<number>(0);
+  const [bgZoom, setBgZoom] = useState<number>(100);
+  const [bgPanX, setBgPanX] = useState<number>(0);
+  const [bgPanY, setBgPanY] = useState<number>(0);
   const [bgProcessing, setBgProcessing] = useState<boolean>(false);
   const [bgProgress, setBgProgress] = useState<number>(0);
   const [bgStatusText, setBgStatusText] = useState<string>('Original Photo Loaded (Click Remove Background)');
@@ -72,6 +75,13 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   const bgOrigImgDataRef = useRef<ImageData | null>(null);
   const bgAlphaMaskRef = useRef<Uint8Array | null>(null);
   const bgSampledBackdropRef = useRef<[number, number, number]>([210, 230, 255]);
+  const bgDragRef = useRef<{ active: boolean; startX: number; startY: number; origPanX: number; origPanY: number }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    origPanX: 0,
+    origPanY: 0,
+  });
 
   // =========================================================================
   // 2. DEDICATED PHOTO CLARITY ENHANCER STATE
@@ -88,10 +98,18 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   const clarityFileInputRef = useRef<HTMLInputElement | null>(null);
   const claritySourceImgRef = useRef<HTMLImageElement | null>(null);
 
+  const baseOrigin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online';
+
   // =========================================================================
   // 3. QR CODE GENERATOR STATE
   // =========================================================================
-  const [qrInputUrl, setQrInputUrl] = useState<string>('https://passportstudiopro.netlify.app');
+  const [qrInputUrl, setQrInputUrl] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online'
+  );
+  const [qrWebsiteFooterUrl, setQrWebsiteFooterUrl] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online'
+  );
   const [qrSize, setQrSize] = useState<number>(360);
   const [qrFgColor, setQrFgColor] = useState<string>('#070a14');
   const [qrBgColor, setQrBgColor] = useState<string>('#ffffff');
@@ -103,13 +121,9 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   // 4. CUSTOM LINK SHORTENER STATE
   // =========================================================================
   const [longUrlInput, setLongUrlInput] = useState<string>('');
-  const [customSlugInput, setCustomSlugInput] = useState<string>('');
   const [linkErrorMsg, setLinkErrorMsg] = useState<string | null>(null);
   const [isCreatingLink, setIsCreatingLink] = useState<boolean>(false);
   const [latestCreatedLink, setLatestCreatedLink] = useState<ShortLinkRecord | null>(null);
-
-  const baseOrigin =
-    typeof window !== 'undefined' ? window.location.origin : 'https://malnadumedia.com';
 
   // =========================================================================
   // BACKGROUND REMOVER LOGIC
@@ -124,7 +138,10 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       edgeShiftVal = bgEdgeTolerance,
       rotationDeg = bgRotation,
       spillVal = blueSpillStrength,
-      hairVal = hairDetailStrength
+      hairVal = hairDetailStrength,
+      zoomVal = bgZoom,
+      panXVal = bgPanX,
+      panYVal = bgPanY
     ) => {
       let sourceCanvas = rawCanvas;
 
@@ -165,16 +182,28 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
         ctx.fillRect(0, 0, outW, outH);
       }
 
+      const scaleFactor = Math.max(0.3, Math.min(3, zoomVal / 100));
+
       ctx.save();
-      ctx.translate(outW / 2, outH / 2);
+      ctx.translate(outW / 2 + panXVal, outH / 2 + panYVal);
       ctx.rotate((rotationDeg * Math.PI) / 180);
+      ctx.scale(scaleFactor, scaleFactor);
       ctx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2);
       ctx.restore();
 
       // Use lossless PNG so repeated slider changes never degrade quality
       setBgCutoutDataUrl(out.toDataURL('image/png'));
     },
-    [bgEdgeTolerance, bgRotation, blueSpillStrength, hairDetailStrength, hasAppliedBgRemoval]
+    [
+      bgEdgeTolerance,
+      bgRotation,
+      blueSpillStrength,
+      hairDetailStrength,
+      bgZoom,
+      bgPanX,
+      bgPanY,
+      hasAppliedBgRemoval,
+    ]
   );
 
   const runDedicatedBgRemoval = useCallback(
@@ -563,13 +592,14 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
   // =========================================================================
   const handleGenerateQrCode = useCallback(
     async (
-      targetText = qrInputUrl,
+      text = qrInputUrl,
       sizePx = qrSize,
       fgHex = qrFgColor,
       bgHex = qrBgColor,
-      errLvl = qrErrorLevel
+      errLvl = qrErrorLevel,
+      footerWebsiteUrl = qrWebsiteFooterUrl
     ) => {
-      const cleaned = targetText.trim();
+      const cleaned = text.trim();
       if (!cleaned) {
         setQrErrorMsg('Please enter a valid URL or text to generate a QR code.');
         return;
@@ -579,7 +609,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
         const QRCodeMod: any = await import('qrcode');
         const toDataURL = QRCodeMod.toDataURL || QRCodeMod.default?.toDataURL;
         if (toDataURL) {
-          const url = await toDataURL(cleaned, {
+          const rawQrUrl = await toDataURL(cleaned, {
             width: sizePx,
             margin: 2,
             color: {
@@ -588,14 +618,55 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             },
             errorCorrectionLevel: errLvl,
           });
-          setQrDataUrl(url);
+
+          // Render the QR code onto an HTML5 Canvas with the Website URL written clearly at the bottom
+          const bottomUrlText = (footerWebsiteUrl || cleaned || baseOrigin).trim();
+          const img = new Image();
+          img.onload = () => {
+            const footerHeight = Math.max(38, Math.round(sizePx * 0.13));
+            const canvas = document.createElement('canvas');
+            canvas.width = sizePx;
+            canvas.height = sizePx + footerHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              setQrDataUrl(rawQrUrl);
+              return;
+            }
+            ctx.fillStyle = bgHex || '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, sizePx, sizePx);
+
+            // Subtle divider line above website URL
+            ctx.strokeStyle = `${fgHex}28`;
+            ctx.lineWidth = Math.max(1, Math.round(sizePx * 0.003));
+            ctx.beginPath();
+            ctx.moveTo(Math.round(sizePx * 0.08), sizePx - 2);
+            ctx.lineTo(Math.round(sizePx * 0.92), sizePx - 2);
+            ctx.stroke();
+
+            // Draw Website URL centered underneath the QR code
+            const maxTextWidth = sizePx * 0.88;
+            let fontSize = Math.max(12, Math.round(sizePx * 0.044));
+            ctx.fillStyle = fgHex || '#070a14';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+            while (ctx.measureText(bottomUrlText).width > maxTextWidth && fontSize > 9) {
+              fontSize -= 1;
+              ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+            }
+            ctx.fillText(bottomUrlText, sizePx / 2, sizePx + footerHeight / 2 - 2);
+            setQrDataUrl(canvas.toDataURL('image/png'));
+          };
+          img.onerror = () => setQrDataUrl(rawQrUrl);
+          img.src = rawQrUrl;
         }
       } catch (err) {
         console.error('QR generation error:', err);
         setQrErrorMsg('Unable to generate QR code. Please check your input.');
       }
     },
-    [qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel]
+    [qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, qrWebsiteFooterUrl, baseOrigin]
   );
 
   const handleDownloadQrCode = () => {
@@ -616,11 +687,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       if (document.body.contains(a)) document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 4000);
-    showToast('Downloaded High-Resolution QR Code PNG!');
+    showToast('Downloaded High-Resolution QR Code PNG with Website URL!');
   };
 
   // =========================================================================
-  // LINK SHORTENER LOGIC
+  // LINK SHORTENER LOGIC (Auto-Slug Generation, Custom Slug Input Removed)
   // =========================================================================
   const handleShortLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -643,22 +714,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       return;
     }
 
-    let slug = customSlugInput
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-
-    if (!slug) {
-      slug = `mm-${Math.random().toString(36).substring(2, 7)}`;
-    }
-
-    const reservedSlugs = ['admin', 'dashboard', 'studio', 'tools', 'login', 'api'];
-    if (reservedSlugs.includes(slug)) {
-      setLinkErrorMsg(`The short name "${slug}" is reserved. Please pick another custom name.`);
-      return;
-    }
+    const slug = `mm-${Math.random().toString(36).substring(2, 7)}`;
 
     setIsCreatingLink(true);
     try {
@@ -668,8 +724,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
       } else if (result.link) {
         setLatestCreatedLink(result.link);
         setLongUrlInput('');
-        setCustomSlugInput('');
-        showToast('Custom Short Link Created!');
+        showToast('Short Link Created!');
       }
     } finally {
       setIsCreatingLink(false);
@@ -989,6 +1044,180 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 />
               </div>
 
+              {/* Zoom In / Zoom Out & Position Controls for Background-Removed Photo */}
+              <div className="pt-2 border-t border-slate-200/80 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-700">
+                    Zoom In / Zoom Out Photo
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-extrabold text-cyan-700">{bgZoom}%</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBgZoom(100);
+                        setBgPanX(0);
+                        setBgPanY(0);
+                        if (bgRawCutoutCanvasRef.current) {
+                          compositeCutoutWithFill(
+                            bgRawCutoutCanvasRef.current,
+                            bgFillColor,
+                            bgEdgeTolerance,
+                            bgRotation,
+                            blueSpillStrength,
+                            hairDetailStrength,
+                            100,
+                            0,
+                            0
+                          );
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-[10px] font-bold text-slate-600"
+                    >
+                      Reset 100%
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(40, bgZoom - 10);
+                      setBgZoom(next);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          next,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-slate-800 font-extrabold text-sm flex items-center justify-center shadow-2xs"
+                    title="Zoom Out (-10%)"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-minus text-xs"></i>
+                  </button>
+                  <input
+                    type="range"
+                    min={40}
+                    max={250}
+                    value={bgZoom}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setBgZoom(val);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          val,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="flex-1 cursor-pointer accent-cyan-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(250, bgZoom + 10);
+                      setBgZoom(next);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          next,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:border-cyan-500 text-slate-800 font-extrabold text-sm flex items-center justify-center shadow-2xs"
+                    title="Zoom In (+10%)"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-plus text-xs"></i>
+                  </button>
+                </div>
+
+                {/* Horizontal & Vertical Reposition Sliders */}
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <div>
+                    <div className="flex justify-between text-[11px] font-bold text-slate-600 mb-0.5">
+                      <span>Move Left / Right</span>
+                      <span className="font-mono text-cyan-700">{bgPanX}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-300}
+                      max={300}
+                      value={bgPanX}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setBgPanX(val);
+                        if (bgRawCutoutCanvasRef.current) {
+                          compositeCutoutWithFill(
+                            bgRawCutoutCanvasRef.current,
+                            bgFillColor,
+                            bgEdgeTolerance,
+                            bgRotation,
+                            blueSpillStrength,
+                            hairDetailStrength,
+                            bgZoom,
+                            val,
+                            bgPanY
+                          );
+                        }
+                      }}
+                      className="w-full cursor-pointer accent-cyan-600"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[11px] font-bold text-slate-600 mb-0.5">
+                      <span>Move Up / Down</span>
+                      <span className="font-mono text-cyan-700">{bgPanY}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-300}
+                      max={300}
+                      value={bgPanY}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setBgPanY(val);
+                        if (bgRawCutoutCanvasRef.current) {
+                          compositeCutoutWithFill(
+                            bgRawCutoutCanvasRef.current,
+                            bgFillColor,
+                            bgEdgeTolerance,
+                            bgRotation,
+                            blueSpillStrength,
+                            hairDetailStrength,
+                            bgZoom,
+                            bgPanX,
+                            val
+                          );
+                        }
+                      }}
+                      className="w-full cursor-pointer accent-cyan-600"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
                 <span className="text-xs font-bold text-slate-700">Rotate Photo:</span>
                 <div className="flex items-center gap-1.5">
@@ -1114,15 +1343,79 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                 </div>
               </div>
 
-              {/* Cutout Output Card */}
-              <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-3">
-                <span className="text-xs font-bold text-cyan-700 mb-2">Background Removed</span>
-                <div className="relative w-full h-[280px] sm:h-[340px] flex items-center justify-center overflow-hidden rounded-xl checkerboard border border-slate-200 p-2">
+              {/* Cutout Output Card with Interactive Zoom In / Zoom Out & Drag Reposition */}
+              <div className="flex flex-col items-center bg-slate-50 rounded-2xl border border-slate-200 p-3 space-y-2.5">
+                <div className="w-full flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-700">
+                    Background Removed ({bgZoom}%)
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-500">
+                    Drag to Move · Scroll to Zoom
+                  </span>
+                </div>
+                <div
+                  className="relative w-full h-[280px] sm:h-[340px] flex items-center justify-center overflow-hidden rounded-xl checkerboard border border-slate-200 p-2 cursor-grab active:cursor-grabbing select-none"
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY < 0 ? 8 : -8;
+                    const nextZoom = Math.max(40, Math.min(250, bgZoom + delta));
+                    setBgZoom(nextZoom);
+                    if (bgRawCutoutCanvasRef.current) {
+                      compositeCutoutWithFill(
+                        bgRawCutoutCanvasRef.current,
+                        bgFillColor,
+                        bgEdgeTolerance,
+                        bgRotation,
+                        blueSpillStrength,
+                        hairDetailStrength,
+                        nextZoom,
+                        bgPanX,
+                        bgPanY
+                      );
+                    }
+                  }}
+                  onMouseDown={(e) => {
+                    bgDragRef.current = {
+                      active: true,
+                      startX: e.clientX,
+                      startY: e.clientY,
+                      origPanX: bgPanX,
+                      origPanY: bgPanY,
+                    };
+                  }}
+                  onMouseMove={(e) => {
+                    if (!bgDragRef.current.active) return;
+                    const nx = Math.max(-350, Math.min(350, bgDragRef.current.origPanX + (e.clientX - bgDragRef.current.startX) * 1.4));
+                    const ny = Math.max(-350, Math.min(350, bgDragRef.current.origPanY + (e.clientY - bgDragRef.current.startY) * 1.4));
+                    setBgPanX(Math.round(nx));
+                    setBgPanY(Math.round(ny));
+                    if (bgRawCutoutCanvasRef.current) {
+                      compositeCutoutWithFill(
+                        bgRawCutoutCanvasRef.current,
+                        bgFillColor,
+                        bgEdgeTolerance,
+                        bgRotation,
+                        blueSpillStrength,
+                        hairDetailStrength,
+                        bgZoom,
+                        Math.round(nx),
+                        Math.round(ny)
+                      );
+                    }
+                  }}
+                  onMouseUp={() => {
+                    bgDragRef.current.active = false;
+                  }}
+                  onMouseLeave={() => {
+                    bgDragRef.current.active = false;
+                  }}
+                >
                   {bgCutoutDataUrl ? (
                     <img
                       src={bgCutoutDataUrl}
                       alt="Cutout Result"
-                      className="max-h-full max-w-full object-contain rounded-lg"
+                      draggable={false}
+                      className="max-h-full max-w-full object-contain rounded-lg pointer-events-none"
                     />
                   ) : (
                     <span className="text-xs text-slate-400">Waiting for cutout...</span>
@@ -1140,6 +1433,84 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* Quick Zoom In / Zoom Out Bar right under the Background Removed Preview */}
+                <div className="w-full flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(40, bgZoom - 10);
+                      setBgZoom(next);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          next,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-extrabold flex items-center gap-1"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-minus text-[11px] text-cyan-700"></i>
+                    <span>Zoom Out</span>
+                  </button>
+
+                  <input
+                    type="range"
+                    min={40}
+                    max={250}
+                    value={bgZoom}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setBgZoom(val);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          val,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="flex-1 cursor-pointer accent-cyan-600"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(250, bgZoom + 10);
+                      setBgZoom(next);
+                      if (bgRawCutoutCanvasRef.current) {
+                        compositeCutoutWithFill(
+                          bgRawCutoutCanvasRef.current,
+                          bgFillColor,
+                          bgEdgeTolerance,
+                          bgRotation,
+                          blueSpillStrength,
+                          hairDetailStrength,
+                          next,
+                          bgPanX,
+                          bgPanY
+                        );
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center gap-1"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-plus text-[11px]"></i>
+                    <span>Zoom In</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1498,20 +1869,54 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Website URL or Text Content
+                  Website URL or Text Content (QR Target)
                 </label>
                 <input
                   type="text"
                   value={qrInputUrl}
                   onChange={(e) => {
-                    setQrInputUrl(e.target.value);
-                    if (e.target.value.trim()) {
-                      handleGenerateQrCode(e.target.value, qrSize, qrFgColor, qrBgColor, qrErrorLevel);
+                    const val = e.target.value;
+                    setQrInputUrl(val);
+                    setQrWebsiteFooterUrl(val);
+                    if (val.trim()) {
+                      handleGenerateQrCode(val, qrSize, qrFgColor, qrBgColor, qrErrorLevel, val);
                     }
                   }}
-                  placeholder="https://example.com"
+                  placeholder="https://studiopassport.online"
                   className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Website URL Printed Below QR Code
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQrWebsiteFooterUrl(baseOrigin);
+                      handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, baseOrigin);
+                    }}
+                    className="text-[11px] font-bold text-cyan-700 hover:underline"
+                  >
+                    Use {baseOrigin.replace(/^https?:\/\//, '')}
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={qrWebsiteFooterUrl}
+                  onChange={(e) => {
+                    const footerVal = e.target.value;
+                    setQrWebsiteFooterUrl(footerVal);
+                    handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, footerVal);
+                  }}
+                  placeholder={baseOrigin}
+                  className="w-full min-h-[44px] px-4 py-2 text-xs font-mono font-bold bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This Website URL is automatically printed at the bottom of the QR Code image when viewed or downloaded.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1524,7 +1929,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     onChange={(e) => {
                       const s = parseInt(e.target.value, 10);
                       setQrSize(s);
-                      handleGenerateQrCode(qrInputUrl, s, qrFgColor, qrBgColor, qrErrorLevel);
+                      handleGenerateQrCode(qrInputUrl, s, qrFgColor, qrBgColor, qrErrorLevel, qrWebsiteFooterUrl);
                     }}
                     className="w-full min-h-[44px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
                   >
@@ -1544,7 +1949,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                     onChange={(e) => {
                       const lvl = e.target.value as 'L' | 'M' | 'Q' | 'H';
                       setQrErrorLevel(lvl);
-                      handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, lvl);
+                      handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, lvl, qrWebsiteFooterUrl);
                     }}
                     className="w-full min-h-[44px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
                   >
@@ -1565,7 +1970,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       value={qrFgColor}
                       onChange={(e) => {
                         setQrFgColor(e.target.value);
-                        handleGenerateQrCode(qrInputUrl, qrSize, e.target.value, qrBgColor, qrErrorLevel);
+                        handleGenerateQrCode(qrInputUrl, qrSize, e.target.value, qrBgColor, qrErrorLevel, qrWebsiteFooterUrl);
                       }}
                       className="w-7 h-7 rounded cursor-pointer border-0"
                     />
@@ -1583,7 +1988,7 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                       value={qrBgColor}
                       onChange={(e) => {
                         setQrBgColor(e.target.value);
-                        handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, e.target.value, qrErrorLevel);
+                        handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, e.target.value, qrErrorLevel, qrWebsiteFooterUrl);
                       }}
                       className="w-7 h-7 rounded cursor-pointer border-0"
                     />
@@ -1594,11 +1999,11 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel)}
+                onClick={() => handleGenerateQrCode(qrInputUrl, qrSize, qrFgColor, qrBgColor, qrErrorLevel, qrWebsiteFooterUrl)}
                 className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-sm shadow-sm active:scale-[0.99] transition flex items-center justify-center gap-2"
               >
                 <i className="fa-solid fa-qrcode"></i>
-                <span>Generate QR Code</span>
+                <span>Generate QR Code with Website URL</span>
               </button>
             </div>
           </div>
@@ -1608,10 +2013,10 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
             <div className="w-full flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="text-base font-extrabold text-slate-900">Scannable QR Preview</h2>
-                <p className="text-xs text-slate-500">Test with any smartphone camera</p>
+                <p className="text-xs text-slate-500">Includes Website URL written at the bottom</p>
               </div>
               <span className="text-xs font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-lg">
-                {qrSize}×{qrSize}px
+                {qrSize}px
               </span>
             </div>
 
@@ -1619,16 +2024,16 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
               {qrDataUrl ? (
                 <img
                   src={qrDataUrl}
-                  alt="Generated QR Code"
-                  className="w-56 h-56 sm:w-64 sm:h-64 object-contain rounded-2xl shadow-md bg-white p-2 border border-slate-200"
+                  alt="Generated QR Code with Website URL"
+                  className="w-60 sm:w-72 h-auto object-contain rounded-2xl shadow-md bg-white p-2 border border-slate-200"
                 />
               ) : (
                 <div className="w-56 h-56 flex items-center justify-center text-xs text-slate-400">
                   Enter a URL to generate QR Code
                 </div>
               )}
-              <div className="mt-3 text-xs font-mono text-slate-500 max-w-xs truncate">
-                {qrInputUrl || 'No URL'}
+              <div className="mt-3 text-xs font-mono font-bold text-cyan-800 max-w-xs truncate">
+                {qrWebsiteFooterUrl || qrInputUrl || baseOrigin}
               </div>
             </div>
 
@@ -1692,27 +2097,6 @@ export const ToolsHub: React.FC<ToolsHubProps> = ({
                   placeholder="https://example.com/very-long-url-path"
                   className="w-full min-h-[48px] px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Custom Short Name / Slug
-                </label>
-                <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden focus-within:ring-2 focus-within:ring-cyan-500">
-                  <span className="px-3 py-3 text-xs font-mono text-slate-400 bg-slate-100 border-r border-slate-200 select-none truncate max-w-[140px]">
-                    {baseOrigin.replace(/^https?:\/\//, '')}/
-                  </span>
-                  <input
-                    type="text"
-                    value={customSlugInput}
-                    onChange={(e) => setCustomSlugInput(e.target.value)}
-                    placeholder="photo-edit"
-                    className="flex-1 min-h-[48px] px-3 py-2.5 text-sm font-mono bg-transparent focus:outline-none"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Letters, numbers, and hyphens only. Leave blank to auto-generate.
-                </p>
               </div>
 
               <button

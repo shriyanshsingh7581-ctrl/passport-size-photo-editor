@@ -1,5 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { generateSamplePortraitDataUrl } from '../constants';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  generateSamplePortraitDataUrl,
+  CustomPosterTemplate,
+  loadCustomPosterTemplates,
+} from '../constants';
 
 export type PosterCategory =
   | 'all'
@@ -88,6 +92,7 @@ export interface PosterTemplateSpec {
   decorMotif: PosterDecorMotif;
   photoSlots: PhotoSlotSpec[];
   textFields: TextFieldSpec[];
+  customBgImageUrl?: string;
 }
 
 export interface PhotoSlotTransform {
@@ -6080,13 +6085,266 @@ const CATEGORY_TABS: Array<{ id: PosterCategory; label: string; icon: string }> 
   { id: 'baby-congrats', label: 'Baby & Congrats (3)', icon: 'fa-award' },
 ];
 
+function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSpec {
+  const isLeftLayout = ct.layoutPreset === 'left-photo-right-text';
+  const isDualLayout = ct.layoutPreset === 'dual-couple-photos';
+
+  const photoSlots: PhotoSlotSpec[] = isDualLayout
+    ? [
+        {
+          id: `${ct.id}-photo-1`,
+          label: 'Left Portrait Frame',
+          x: 100,
+          y: 260,
+          width: 400,
+          height: 500,
+          shape: ct.slotShape || 'arch',
+          frameStyle: 'gold-double',
+          accentColor: ct.primaryAccent || '#fbbf24',
+          defaultSampleIndex: 0,
+        },
+        {
+          id: `${ct.id}-photo-2`,
+          label: 'Right Portrait Frame',
+          x: 580,
+          y: 260,
+          width: 400,
+          height: 500,
+          shape: ct.slotShape || 'arch',
+          frameStyle: 'gold-double',
+          accentColor: ct.primaryAccent || '#fbbf24',
+          defaultSampleIndex: 1,
+        },
+      ]
+    : [
+        {
+          id: `${ct.id}-photo-1`,
+          label: 'Main Subject Photo',
+          x: ct.slotX || (isLeftLayout ? 65 : 310),
+          y: ct.slotY || (isLeftLayout ? 270 : 230),
+          width: ct.slotWidth || (isLeftLayout ? 430 : 460),
+          height: ct.slotHeight || (isLeftLayout ? 680 : 540),
+          shape: ct.slotShape || 'arch',
+          frameStyle: 'gold-double',
+          accentColor: ct.primaryAccent || '#fbbf24',
+          defaultSampleIndex: 0,
+        },
+      ];
+
+  const textFields: TextFieldSpec[] = isLeftLayout
+    ? [
+        {
+          id: 'headline',
+          label: 'Top Header / Blessing',
+          defaultValue: ct.headlineText || 'AUSPICIOUS CELEBRATION',
+          x: 785,
+          y: 310,
+          maxWidth: 480,
+          fontSize: 28,
+          fontFamily: 'serif',
+          fontWeight: '700',
+          color: ct.primaryAccent || '#fbbf24',
+          align: 'center',
+          uppercase: true,
+          letterSpacing: 3,
+        },
+        {
+          id: 'mainNames',
+          label: 'Main Title / Names',
+          defaultValue: ct.namesText || 'Aarav & Ananya',
+          x: 785,
+          y: 440,
+          maxWidth: 490,
+          fontSize: 54,
+          fontFamily: 'serif',
+          fontWeight: '800',
+          color: '#ffffff',
+          align: 'center',
+        },
+        {
+          id: 'subMessage',
+          label: 'Invitation / Tribute Message',
+          defaultValue:
+            ct.subText || 'Cordially invite you and your family to grace this joyous occasion',
+          x: 785,
+          y: 590,
+          maxWidth: 470,
+          fontSize: 25,
+          fontFamily: 'sans',
+          fontWeight: '600',
+          color: ct.secondaryAccent || '#fef3c7',
+          align: 'center',
+          maxLines: 3,
+        },
+        {
+          id: 'eventDate',
+          label: 'Date & Time',
+          defaultValue: ct.dateTimeText || 'Sunday, 24th November · 6:30 PM Onwards',
+          x: 785,
+          y: 780,
+          maxWidth: 470,
+          fontSize: 26,
+          fontFamily: 'sans',
+          fontWeight: '800',
+          color: '#1e1b4b',
+          align: 'center',
+          pillBgColor: ct.primaryAccent || '#fbbf24',
+        },
+        {
+          id: 'venue',
+          label: 'Venue / Location',
+          defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
+          x: 785,
+          y: 910,
+          maxWidth: 470,
+          fontSize: 24,
+          fontFamily: 'sans',
+          fontWeight: '700',
+          color: '#ffffff',
+          align: 'center',
+          maxLines: 2,
+        },
+      ]
+    : [
+        {
+          id: 'headline',
+          label: 'Top Header / Blessing',
+          defaultValue: ct.headlineText || 'AUSPICIOUS CELEBRATION',
+          x: 540,
+          y: 135,
+          maxWidth: 900,
+          fontSize: 30,
+          fontFamily: 'serif',
+          fontWeight: '700',
+          color: ct.primaryAccent || '#fbbf24',
+          align: 'center',
+          uppercase: true,
+          letterSpacing: 3,
+        },
+        {
+          id: 'mainNames',
+          label: 'Main Title / Names',
+          defaultValue: ct.namesText || 'Aarav & Ananya',
+          x: 540,
+          y: 865,
+          maxWidth: 920,
+          fontSize: 64,
+          fontFamily: 'serif',
+          fontWeight: '800',
+          color: '#ffffff',
+          align: 'center',
+        },
+        {
+          id: 'subMessage',
+          label: 'Invitation / Tribute Message',
+          defaultValue:
+            ct.subText || 'Cordially invite you and your family to grace this joyous occasion',
+          x: 540,
+          y: 965,
+          maxWidth: 880,
+          fontSize: 26,
+          fontFamily: 'sans',
+          fontWeight: '600',
+          color: ct.secondaryAccent || '#fef3c7',
+          align: 'center',
+          maxLines: 2,
+        },
+        {
+          id: 'eventDate',
+          label: 'Date & Time',
+          defaultValue: ct.dateTimeText || 'Sunday, 24th November · 6:30 PM Onwards',
+          x: 540,
+          y: 1085,
+          maxWidth: 820,
+          fontSize: 28,
+          fontFamily: 'sans',
+          fontWeight: '800',
+          color: '#1e1b4b',
+          align: 'center',
+          pillBgColor: ct.primaryAccent || '#fbbf24',
+        },
+        {
+          id: 'venue',
+          label: 'Venue / Location',
+          defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
+          x: 540,
+          y: 1185,
+          maxWidth: 880,
+          fontSize: 24,
+          fontFamily: 'sans',
+          fontWeight: '700',
+          color: '#ffffff',
+          align: 'center',
+          maxLines: 2,
+        },
+      ];
+
+  return {
+    id: ct.id,
+    name: ct.name,
+    category: ct.category,
+    categoryLabel: ct.categoryLabel || 'Custom Admin Template',
+    badge: ct.badge || 'Admin Custom',
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    bgColors: ct.bgColors || ['#3b0764', '#4c0519', '#1e1b4b'],
+    bgPattern: 'mandala',
+    outerBorderStyle: 'royal-gold',
+    primaryAccent: ct.primaryAccent || '#fbbf24',
+    secondaryAccent: ct.secondaryAccent || '#fef3c7',
+    decorMotif: 'royal-mandala-arch',
+    photoSlots,
+    textFields,
+    customBgImageUrl: ct.bgImageDataUrl || undefined,
+  };
+}
+
 export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   onSendToStudio,
   showToast,
 }) => {
+  const [customRawTemplates, setCustomRawTemplates] = useState<CustomPosterTemplate[]>(() =>
+    loadCustomPosterTemplates()
+  );
+  const customBgImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  const [, setBgLoadTick] = useState(0);
+
+  useEffect(() => {
+    const syncCustom = () => {
+      setCustomRawTemplates(loadCustomPosterTemplates());
+    };
+    window.addEventListener('malnadu-custom-templates-updated', syncCustom);
+    window.addEventListener('storage', syncCustom);
+    return () => {
+      window.removeEventListener('malnadu-custom-templates-updated', syncCustom);
+      window.removeEventListener('storage', syncCustom);
+    };
+  }, []);
+
+  const allTemplates = useMemo(() => {
+    const converted = customRawTemplates.map(convertCustomTemplateToSpec);
+    return [...converted, ...POSTER_TEMPLATES];
+  }, [customRawTemplates]);
+
+  useEffect(() => {
+    allTemplates.forEach((tpl) => {
+      if (tpl.customBgImageUrl && !customBgImagesRef.current[tpl.id]) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          customBgImagesRef.current[tpl.id] = img;
+          setBgLoadTick((t) => t + 1);
+        };
+        img.src = tpl.customBgImageUrl;
+      }
+    });
+  }, [allTemplates]);
+
   const [selectedCategory, setSelectedCategory] = useState<PosterCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(POSTER_TEMPLATES[0].id);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    () => (loadCustomPosterTemplates()[0]?.id || POSTER_TEMPLATES[0].id)
+  );
   const [activeSlotId, setActiveSlotId] = useState<string>(POSTER_TEMPLATES[0].photoSlots[0].id);
   const [editorPanelTab, setEditorPanelTab] = useState<'photos' | 'text' | 'templates'>('photos');
 
@@ -6110,9 +6368,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   const samplePortraitsRef = useRef<HTMLImageElement[]>([]);
 
   const activeTemplate =
-    POSTER_TEMPLATES.find((t) => t.id === selectedTemplateId) || POSTER_TEMPLATES[0];
+    allTemplates.find((t) => t.id === selectedTemplateId) || allTemplates[0];
 
-  const filteredTemplates = POSTER_TEMPLATES.filter((t) => {
+  const filteredTemplates = allTemplates.filter((t) => {
     const matchesCat = selectedCategory === 'all' || t.category === selectedCategory;
     const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
@@ -6193,6 +6451,14 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
       // 1. Background, Ornamental Patterns & Borders
       drawTemplateBackgroundAndBorders(ctx, activeTemplate);
+
+      // 1b. If Admin uploaded a Custom Background Image for this template, render it
+      const customBgImg = customBgImagesRef.current[activeTemplate.id];
+      if (customBgImg) {
+        ctx.save();
+        ctx.drawImage(customBgImg, 0, 0, targetCanvas.width, targetCanvas.height);
+        ctx.restore();
+      }
 
       // 2. Render Each Predefined Photo Slot with Clipping, Zoom, Pan, Crop & Rotation
       activeTemplate.photoSlots.forEach((slot) => {

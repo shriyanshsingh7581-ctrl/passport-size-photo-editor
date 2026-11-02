@@ -24,9 +24,47 @@ export const DEFAULT_ADMIN_PASSWORD = 'Malnadu@Admin#7581!$';
 // Backward-compatible alias
 export const DEFAULT_ADMIN_PIN = DEFAULT_ADMIN_PASSWORD;
 export const DEFAULT_ADMIN_WHATSAPP = '+91 75810 30272';
-export const ADMIN_UPI_ID = '7581030272@slc';
-export const ADMIN_ACCOUNT_HOLDER = 'Shriyansh Singh Rajpoot';
-export const ADMIN_QR_IMAGE_PATH = '/assets/aistudio/UPI_QR_-_Shriyansh_Singh_Rajpoot__1__eba4263b.jpg';
+
+// 1. OWNER / SUPER ADMIN QR CODE (Shriyansh Singh Rajpoot — Used in /website-admin to purchase Admin Pool Credits from Owner)
+export const OWNER_ADMIN_UPI_ID = '7581030272@slc';
+export const OWNER_ADMIN_ACCOUNT_HOLDER = 'Shriyansh Singh Rajpoot';
+export const OWNER_ADMIN_QR_IMAGE_PATH =
+  '/assets/aistudio/shriyansh-slice-qr.svg';
+
+// Backward-compatible aliases for Owner QR
+export const ADMIN_UPI_ID = OWNER_ADMIN_UPI_ID;
+export const ADMIN_ACCOUNT_HOLDER = OWNER_ADMIN_ACCOUNT_HOLDER;
+export const ADMIN_QR_IMAGE_PATH = OWNER_ADMIN_QR_IMAGE_PATH;
+
+// 2. WEBSITE USER PAYMENT QR CODE (T TT Google Pay UPI QR — Shown to Website Users when buying photo credits)
+export const WEBSITE_USER_QR_IMAGE_PATH = '/assets/aistudio/IMG-20261102-WA0066.svg';
+export const WEBSITE_USER_PAYEE_NAME = 'T T';
+const WEBSITE_USER_CUSTOM_QR_KEY = 'malnadu_website_user_custom_qr_v1';
+
+export function loadWebsiteUserQrImage(): string {
+  try {
+    const custom = localStorage.getItem(WEBSITE_USER_CUSTOM_QR_KEY);
+    if (custom && custom.startsWith('data:image/')) {
+      return custom;
+    }
+  } catch {
+    // ignore
+  }
+  return WEBSITE_USER_QR_IMAGE_PATH;
+}
+
+export function saveWebsiteUserQrImage(dataUrl: string): void {
+  try {
+    if (!dataUrl) {
+      localStorage.removeItem(WEBSITE_USER_CUSTOM_QR_KEY);
+    } else {
+      localStorage.setItem(WEBSITE_USER_CUSTOM_QR_KEY, dataUrl);
+    }
+    window.dispatchEvent(new CustomEvent('malnadu-user-qr-updated'));
+  } catch {
+    // ignore
+  }
+}
 
 interface WalletVaultPayload {
   c: number; // available credits
@@ -71,14 +109,14 @@ const DEFAULT_DEMO_PAYMENT_REQUESTS: PaymentCreditRequest[] = [
   {
     id: 'req-demo-101',
     clientName: 'Arjun Nair (Studio Client)',
-    clientContact: '+91 98951 44321',
+    clientContact: 'arjun.nair@gmail.com',
     userId: 'user-arjun-02',
     targetType: 'client_wallet',
-    packageLabel: 'Studio Pro Pack',
-    creditsRequested: 500,
-    amountInr: '₹299',
+    packageLabel: 'Starter Pack',
+    creditsRequested: 100,
+    amountInr: '₹99',
     utrNumber: '431289450112',
-    paymentNote: 'Paid ₹299 via Google Pay to 7581030272@slc. Please confirm and add 500 credits.',
+    paymentNote: 'Paid ₹99 via Google Pay QR (T T). Please confirm and add 100 credits to my account.',
     status: 'pending',
     createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
   },
@@ -669,6 +707,96 @@ export function rejectClientPaymentRequest(
     };
   }
 
+  const all = loadPaymentCreditRequests();
+  const nextList = all.map((r) =>
+    r.id === requestId
+      ? { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() }
+      : r
+  );
+  savePaymentCreditRequests(nextList);
+  return { ok: true };
+}
+
+/**
+ * WEBSITE ADMIN (/website-admin) approves a Website User's QR Payment Request
+ * strictly by deducting the credits from the Website Admin's Distributable Pool (`adminCreditPool`).
+ * The Website Admin CANNOT approve or add more credits than what is available in `adminCreditPool`.
+ */
+export function approveUserPaymentFromAdminPool(
+  requestId: string,
+  customCreditsToGive?: number
+): {
+  ok: boolean;
+  creditsGiven: number;
+  remainingAdminPool: number;
+  approvedRequest?: PaymentCreditRequest;
+  error?: string;
+} {
+  const all = loadPaymentCreditRequests();
+  const target = all.find((r) => r.id === requestId);
+  const currentPool = loadAdminCreditPool();
+
+  if (!target) {
+    return {
+      ok: false,
+      creditsGiven: 0,
+      remainingAdminPool: currentPool,
+      error: 'Payment request not found.',
+    };
+  }
+
+  if (target.status === 'approved') {
+    return {
+      ok: false,
+      creditsGiven: 0,
+      remainingAdminPool: currentPool,
+      error: 'This payment request has already been confirmed and credited.',
+    };
+  }
+
+  const creditsToGrant =
+    customCreditsToGive !== undefined
+      ? Math.max(1, Math.floor(Number(customCreditsToGive) || 0))
+      : Math.max(1, Math.floor(Number(target.creditsRequested) || 50));
+
+  if (currentPool <= 0 || creditsToGrant > currentPool) {
+    return {
+      ok: false,
+      creditsGiven: 0,
+      remainingAdminPool: currentPool,
+      error: `Insufficient Admin Pool Credits! You only have ${currentPool} credits left in your Admin Pool, so you cannot add ${creditsToGrant} credits. Please scan Shriyansh Singh Rajpoot's UPI QR (${OWNER_ADMIN_UPI_ID}) below to purchase more Admin Pool credits from the Owner.`,
+    };
+  }
+
+  const nextPool = saveAdminCreditPool(currentPool - creditsToGrant);
+
+  const updatedReq: PaymentCreditRequest = {
+    ...target,
+    creditsRequested: creditsToGrant,
+    status: 'approved',
+    processedAt: new Date().toISOString(),
+  };
+
+  const nextList = all.map((r) => (r.id === requestId ? updatedReq : r));
+  savePaymentCreditRequests(nextList);
+
+  appendCreditRechargeLog({
+    targetName: `${target.clientName} (User QR Payment Approved)`,
+    targetEmail: `${target.clientContact} · UTR: ${target.utrNumber} · Pool Left: ${nextPool}`,
+    action: 'add',
+    amount: creditsToGrant,
+    balanceAfter: nextPool,
+  });
+
+  return {
+    ok: true,
+    creditsGiven: creditsToGrant,
+    remainingAdminPool: nextPool,
+    approvedRequest: updatedReq,
+  };
+}
+
+export function rejectUserPaymentByWebsiteAdmin(requestId: string): { ok: boolean } {
   const all = loadPaymentCreditRequests();
   const nextList = all.map((r) =>
     r.id === requestId

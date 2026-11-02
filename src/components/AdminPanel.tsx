@@ -10,23 +10,41 @@ import {
   DEFAULT_TOOL_CATALOG,
   ToolCatalogItem,
   ToolCategoryId,
+  CustomPosterTemplate,
+  loadCustomPosterTemplates,
+  saveCustomPosterTemplates,
 } from '../constants';
 import {
   ADMIN_ACCOUNT_HOLDER,
   ADMIN_QR_IMAGE_PATH,
   ADMIN_UPI_ID,
+  DEFAULT_ADMIN_WHATSAPP,
+  WEBSITE_USER_PAYEE_NAME,
+  loadWebsiteUserQrImage,
+  saveWebsiteUserQrImage,
   verifyAdminSecretPin,
   saveWalletCredits,
   saveAdminCreditPool,
   redeemAdminPoolRechargeCode,
   submitClientPaymentRequest,
+  loadPaymentCreditRequests,
+  approveUserPaymentFromAdminPool,
+  rejectUserPaymentByWebsiteAdmin,
+  PaymentCreditRequest,
   updateAdminMasterPassword,
   loadCreditRechargeLogs,
   appendCreditRechargeLog,
   CreditRechargeLog,
 } from '../creditWallet';
 
-export type AdminTab = 'credits' | 'users' | 'tools' | 'branding' | 'links' | 'operations';
+export type AdminTab =
+  | 'credits'
+  | 'users'
+  | 'templates'
+  | 'tools'
+  | 'branding'
+  | 'links'
+  | 'operations';
 
 interface AdminPanelProps {
   currentUserProfile: UserProfile | null;
@@ -119,10 +137,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Redeem Owner Code / Request Admin Pool Top-Up State
   const [adminPoolCouponInput, setAdminPoolCouponInput] = useState('');
-  const [showAdminPoolQrModal, setShowAdminPoolQrModal] = useState(false);
+  const [showAdminPoolQrModal, setShowAdminPoolQrModal] = useState(true);
   const [poolReqAmount, setPoolReqAmount] = useState<number>(1000);
   const [poolReqUtr, setPoolReqUtr] = useState('');
   const [poolReqNote, setPoolReqNote] = useState('');
+
+  // Website User QR Payment Requests Queue (Users who paid on T TT QR code)
+  const [userPaymentRequests, setUserPaymentRequests] = useState<PaymentCreditRequest[]>(() =>
+    loadPaymentCreditRequests()
+  );
+  const [reqGrantInputs, setReqGrantInputs] = useState<Record<string, string>>({});
+  const [websiteUserQrUrl, setWebsiteUserQrUrl] = useState<string>(() => loadWebsiteUserQrImage());
+  const userQrUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   // Change Master Password Form State
   const [showChangePassForm, setShowChangePassForm] = useState(false);
@@ -135,6 +161,110 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   useEffect(() => {
     setExactCreditSetInput(String(availableCredits));
   }, [availableCredits]);
+
+  useEffect(() => {
+    const syncPayReqs = () => {
+      setUserPaymentRequests(loadPaymentCreditRequests());
+    };
+    const syncUserQr = () => {
+      setWebsiteUserQrUrl(loadWebsiteUserQrImage());
+    };
+    window.addEventListener('malnadu-payment-requests-updated', syncPayReqs);
+    window.addEventListener('malnadu-user-qr-updated', syncUserQr);
+    window.addEventListener('storage', syncPayReqs);
+    window.addEventListener('storage', syncUserQr);
+    return () => {
+      window.removeEventListener('malnadu-payment-requests-updated', syncPayReqs);
+      window.removeEventListener('malnadu-user-qr-updated', syncUserQr);
+      window.removeEventListener('storage', syncPayReqs);
+      window.removeEventListener('storage', syncUserQr);
+    };
+  }, []);
+
+  const handleUploadCustomUserQr = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (dataUrl) {
+        saveWebsiteUserQrImage(dataUrl);
+        setWebsiteUserQrUrl(dataUrl);
+        showToast('Updated Website User Payment QR Code!');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  /**
+   * Website Admin approves a Website User's QR Payment Request strictly by deducting
+   * the credits from `adminCreditPool` and adding them to that user's account.
+   */
+  const handleApproveUserQrPayment = async (req: PaymentCreditRequest) => {
+    setPoolActionNotice(null);
+    const customAmtStr = reqGrantInputs[req.id];
+    const creditsToGive =
+      customAmtStr !== undefined && customAmtStr.trim() !== ''
+        ? Math.max(1, parseInt(customAmtStr, 10) || req.creditsRequested)
+        : req.creditsRequested;
+
+    const res = approveUserPaymentFromAdminPool(req.id, creditsToGive);
+    if (!res.ok) {
+      setPoolActionNotice({
+        type: 'err',
+        text:
+          res.error ||
+          'Insufficient Admin Pool Credits! Please purchase more credits from Owner Shriyansh Singh Rajpoot.',
+      });
+      setShowAdminPoolQrModal(true);
+      showToast(`Insufficient Admin Pool (${adminCreditPool} left)! Recharge from Owner.`);
+      return;
+    }
+
+    onUpdateAdminCreditPool(res.remainingAdminPool);
+    setUserPaymentRequests(loadPaymentCreditRequests());
+    setCreditLogs(loadCreditRechargeLogs());
+
+    // Find matching user account by userId, email, or name and add the approved credits
+    const matchedUser = users.find(
+      (u) =>
+        (req.userId && u.uid === req.userId) ||
+        (req.clientContact &&
+          (u.email.toLowerCase() === req.clientContact.toLowerCase() ||
+            (u.phone && u.phone === req.clientContact))) ||
+        u.displayName.toLowerCase() === req.clientName.toLowerCase()
+    );
+
+    if (matchedUser) {
+      const currentUserCredits = typeof matchedUser.credits === 'number' ? matchedUser.credits : 5;
+      const nextUserCredits = currentUserCredits + res.creditsGiven;
+      await onUpdateUserCredits(matchedUser.uid, nextUserCredits);
+      setPoolActionNotice({
+        type: 'ok',
+        text: `Approved Payment (#${req.id.slice(-5).toUpperCase()})! Added +${res.creditsGiven} Credits to ${matchedUser.displayName}'s account (${nextUserCredits} total). Remaining Admin Pool: ${res.remainingAdminPool} Credits.`,
+      });
+      showToast(
+        `Added +${res.creditsGiven} Credits to ${matchedUser.displayName} (Pool Left: ${res.remainingAdminPool})`
+      );
+    } else {
+      const nextWallet = saveWalletCredits(availableCredits + res.creditsGiven);
+      onUpdateWalletCredits(nextWallet);
+      setPoolActionNotice({
+        type: 'ok',
+        text: `Approved Payment (#${req.id.slice(-5).toUpperCase()}) for ${req.clientName}! Added +${res.creditsGiven} Credits from Admin Pool (Remaining Pool: ${res.remainingAdminPool} Credits).`,
+      });
+      showToast(
+        `Approved +${res.creditsGiven} Credits for ${req.clientName} (Pool Left: ${res.remainingAdminPool})`
+      );
+    }
+  };
+
+  const handleRejectUserQrPayment = (reqId: string) => {
+    rejectUserPaymentByWebsiteAdmin(reqId);
+    setUserPaymentRequests(loadPaymentCreditRequests());
+    showToast('Rejected user payment request.');
+  };
 
   const handleUnlockCreditVault = (e: React.FormEvent) => {
     e.preventDefault();
@@ -456,6 +586,120 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setShowAddUserForm(false);
   };
 
+  // Custom Poster Templates State (Website Admin Panel)
+  const [customTemplates, setCustomTemplates] = useState<CustomPosterTemplate[]>(() =>
+    loadCustomPosterTemplates()
+  );
+  const [tplName, setTplName] = useState('');
+  const [tplCategory, setTplCategory] = useState<CustomPosterTemplate['category']>('wedding');
+  const [tplBadge, setTplBadge] = useState('Admin Custom HD');
+  const [tplLayoutPreset, setTplLayoutPreset] =
+    useState<CustomPosterTemplate['layoutPreset']>('left-photo-right-text');
+  const [tplSlotShape, setTplSlotShape] =
+    useState<CustomPosterTemplate['slotShape']>('arch');
+  const [tplBgImageDataUrl, setTplBgImageDataUrl] = useState('');
+  const [tplBgColor1, setTplBgColor1] = useState('#3b0764');
+  const [tplBgColor2, setTplBgColor2] = useState('#4c0519');
+  const [tplBgColor3, setTplBgColor3] = useState('#1e1b4b');
+  const [tplPrimaryAccent, setTplPrimaryAccent] = useState('#fbbf24');
+  const [tplHeadline, setTplHeadline] = useState('SHUBH VIVAH · WEDDING INVITATION');
+  const [tplNames, setTplNames] = useState('Aarav & Ananya');
+  const [tplSubText, setTplSubText] = useState(
+    'Cordially invite you and your family to grace this joyous celebration'
+  );
+  const [tplDateTime, setTplDateTime] = useState('Sunday, 24th November · 6:30 PM Onwards');
+  const [tplVenue, setTplVenue] = useState('Grand Royal Convention Hall, Main Road');
+  const customTplBgInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const syncCustomTemplates = () => {
+      setCustomTemplates(loadCustomPosterTemplates());
+    };
+    window.addEventListener('malnadu-custom-templates-updated', syncCustomTemplates);
+    window.addEventListener('storage', syncCustomTemplates);
+    return () => {
+      window.removeEventListener('malnadu-custom-templates-updated', syncCustomTemplates);
+      window.removeEventListener('storage', syncCustomTemplates);
+    };
+  }, []);
+
+  const handleCustomTemplateBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const res = ev.target?.result as string;
+      if (res) {
+        setTplBgImageDataUrl(res);
+        showToast('Custom template background design loaded!');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleCreateCustomTemplate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = tplName.trim();
+    if (!cleanName) {
+      showToast('Please enter a Template Name.');
+      return;
+    }
+
+    const categoryLabels: Record<CustomPosterTemplate['category'], string> = {
+      wedding: 'Wedding Invitation',
+      anniversary: 'Wedding Anniversary',
+      engagement: 'Engagement Ceremony',
+      birthday: 'Birthday Celebration',
+      memorial: 'Memorial Tribute',
+      festival: 'Festival Greeting',
+      housewarming: 'Housewarming (Griha Pravesh)',
+      'baby-congrats': 'Baby & Congratulations',
+    };
+
+    const isLeft = tplLayoutPreset === 'left-photo-right-text';
+
+    const newTemplate: CustomPosterTemplate = {
+      id: `custom-tpl-${Date.now()}`,
+      name: cleanName,
+      category: tplCategory,
+      categoryLabel: categoryLabels[tplCategory] || 'Custom Studio Poster',
+      badge: tplBadge.trim() || 'Admin Custom',
+      bgColors: [tplBgColor1, tplBgColor2, tplBgColor3],
+      primaryAccent: tplPrimaryAccent,
+      secondaryAccent: '#fef3c7',
+      bgImageDataUrl: tplBgImageDataUrl || undefined,
+      layoutPreset: tplLayoutPreset,
+      slotShape: tplSlotShape,
+      slotX: isLeft ? 65 : 310,
+      slotY: isLeft ? 270 : 230,
+      slotWidth: isLeft ? 430 : 460,
+      slotHeight: isLeft ? 680 : 540,
+      headlineText: tplHeadline.trim() || 'AUSPICIOUS CELEBRATION',
+      namesText: tplNames.trim() || 'Aarav & Ananya',
+      subText:
+        tplSubText.trim() ||
+        'Cordially invite you and your family to grace this joyous occasion',
+      dateTimeText: tplDateTime.trim() || 'Sunday, 24th November · 6:30 PM Onwards',
+      venueText: tplVenue.trim() || 'Grand Royal Convention Hall, Main Road',
+      createdAt: new Date().toISOString(),
+    };
+
+    const updated = [newTemplate, ...customTemplates];
+    setCustomTemplates(updated);
+    saveCustomPosterTemplates(updated);
+    setTplName('');
+    setTplBgImageDataUrl('');
+    showToast(`Added Custom Template "${newTemplate.name}" to Poster Maker!`);
+  };
+
+  const handleDeleteCustomTemplate = (id: string) => {
+    const updated = customTemplates.filter((t) => t.id !== id);
+    setCustomTemplates(updated);
+    saveCustomPosterTemplates(updated);
+    showToast('Removed custom poster template.');
+  };
+
   const handleSettingsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSettings(true);
@@ -616,7 +860,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5">
+    <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
       {/* Top Admin Header Banner — MALNADU MEDIA Butterfly-Camera Logo Theme */}
       <div className="bg-[#070a14] text-white rounded-3xl p-4 sm:p-6 shadow-md border border-cyan-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
         <div className="flex items-center gap-3.5">
@@ -785,7 +1029,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             label: `Admin Credit Pool (${adminCreditPool}) & User Credits`,
             icon: 'fa-coins',
           },
-          { id: 'users', label: 'User Management & Approval', icon: 'fa-users-gear' },
+          {
+            id: 'users',
+            label: `Logged-In Users (${totalUsersCount}) & Approvals`,
+            icon: 'fa-users-gear',
+          },
+          {
+            id: 'templates',
+            label: `Custom Poster Templates (${customTemplates.length})`,
+            icon: 'fa-wand-magic-sparkles',
+          },
           { id: 'tools', label: 'Tools & Categories Manager', icon: 'fa-layer-group' },
           { id: 'branding', label: 'Brand, Theme & Footer Credit', icon: 'fa-palette' },
           { id: 'links', label: `Short Links (${shortLinks.length})`, icon: 'fa-link' },
@@ -893,18 +1146,211 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* Redeem Owner Code or Request Pool Recharge via UPI QR Panel */}
-          <div className="bg-white rounded-3xl border border-cyan-200 p-5 space-y-4 shadow-xs">
+          {/* SECTION 0: INCOMING WEBSITE USER QR PAYMENT REQUESTS (FROM T TT GOOGLE PAY QR) */}
+          <div className="bg-white rounded-3xl border-2 border-teal-500/30 p-5 sm:p-6 space-y-4 shadow-xs">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-[#1e1f22] text-teal-300 border border-teal-500/40 flex items-center justify-center text-xl shrink-0">
+                  <i className="fa-solid fa-qrcode"></i>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-extrabold uppercase">
+                      Website User Payments ({WEBSITE_USER_PAYEE_NAME} UPI QR)
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-mono text-[11px] font-extrabold">
+                      Pending Approvals:{' '}
+                      {
+                        userPaymentRequests.filter(
+                          (r) => r.targetType !== 'admin_pool' && r.status === 'pending'
+                        ).length
+                      }
+                    </span>
+                  </div>
+                  <h3 className="text-base font-extrabold text-slate-900 mt-1">
+                    Incoming User QR Payment Requests — Confirm &amp; Add Credits from Your Admin Pool
+                  </h3>
+                  <p className="text-xs text-slate-500 max-w-3xl">
+                    When any user on the website scans the <strong>{WEBSITE_USER_PAYEE_NAME} UPI QR Code</strong> and submits payment, their request appears below. Confirming a request deducts those credits from your <strong>Admin Pool ({adminCreditPool} available)</strong> and adds them to the user's account. You cannot add more credits than what the Owner has allocated to your pool.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <div className="bg-[#1e1f22] p-1.5 rounded-xl border border-slate-700 w-14 h-14 shrink-0 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={websiteUserQrUrl}
+                    alt="Website User QR"
+                    className="w-full h-full object-contain rounded-lg"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <input
+                    ref={userQrUploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleUploadCustomUserQr}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => userQrUploadInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-teal-300 text-[11px] font-extrabold transition flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-upload"></i>
+                    <span>Update User QR Image</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveWebsiteUserQrImage('');
+                      setWebsiteUserQrUrl(loadWebsiteUserQrImage());
+                      showToast('Restored Default T TT Google Pay QR Code');
+                    }}
+                    className="block text-[10px] font-bold text-slate-500 hover:text-slate-800"
+                  >
+                    Reset to Default T TT QR
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {userPaymentRequests.filter((r) => r.targetType !== 'admin_pool').length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No user QR payment requests submitted yet.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {userPaymentRequests
+                  .filter((r) => r.targetType !== 'admin_pool')
+                  .map((req) => {
+                    const customGrantVal = reqGrantInputs[req.id] ?? String(req.creditsRequested);
+                    const parsedGrant = Math.max(1, parseInt(customGrantVal, 10) || req.creditsRequested);
+                    const hasEnoughPool = adminCreditPool >= parsedGrant;
+
+                    return (
+                      <div
+                        key={req.id}
+                        className={`p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
+                          req.status === 'pending'
+                            ? 'bg-amber-50/50 border-amber-300'
+                            : req.status === 'approved'
+                            ? 'bg-emerald-50/40 border-emerald-200'
+                            : 'bg-slate-50 border-slate-200 opacity-75'
+                        }`}
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-extrabold text-slate-900">
+                              {req.clientName}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-600">
+                              ({req.clientContact})
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-lg bg-purple-100 text-purple-900 border border-purple-200 font-mono text-xs font-extrabold">
+                              Requested: +{req.creditsRequested} Credits ({req.amountInr})
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-cyan-300 font-mono text-xs font-bold">
+                              UTR: {req.utrNumber}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : req.status === 'rejected'
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : 'bg-amber-200 text-amber-950'
+                              }`}
+                            >
+                              {req.status}
+                            </span>
+                          </div>
+                          {req.paymentNote && (
+                            <p className="text-xs text-slate-600">{req.paymentNote}</p>
+                          )}
+                          <div className="text-[11px] text-slate-400">
+                            Submitted: {new Date(req.createdAt).toLocaleString()}
+                          </div>
+                        </div>
+
+                        {req.status === 'pending' ? (
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1">
+                              <span className="text-[10px] font-bold text-slate-500">
+                                Credits from Pool:
+                              </span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={Math.max(1, adminCreditPool)}
+                                value={customGrantVal}
+                                onChange={(e) =>
+                                  setReqGrantInputs((prev) => ({
+                                    ...prev,
+                                    [req.id]: e.target.value,
+                                  }))
+                                }
+                                className="w-16 text-xs font-mono font-extrabold text-slate-900 focus:outline-none"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              disabled={!hasEnoughPool}
+                              onClick={() => handleApproveUserQrPayment(req)}
+                              className="min-h-[38px] px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-rose-600 disabled:opacity-90 text-white text-xs font-extrabold transition flex items-center gap-1.5 shadow-xs"
+                            >
+                              <i
+                                className={`fa-solid ${
+                                  hasEnoughPool ? 'fa-circle-check' : 'fa-triangle-exclamation'
+                                }`}
+                              ></i>
+                              <span>
+                                {hasEnoughPool
+                                  ? `Confirm & Add +${parsedGrant} Credits`
+                                  : `Pool Low (${adminCreditPool} Left) — Buy from Owner`}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectUserQrPayment(req.id)}
+                              className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold transition"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-xs font-bold text-emerald-700 shrink-0">
+                            {req.status === 'approved'
+                              ? `✓ Credited (+${req.creditsRequested} Photos)`
+                              : 'Rejected'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          {/* PURCHASE ADMIN POOL CREDITS FROM OWNER (SHRIYANSH SINGH RAJPOOT — 7581030272@slc) */}
+          <div className="bg-white rounded-3xl border-2 border-purple-300 p-5 sm:p-6 space-y-4 shadow-xs">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-700">
-                  Recharge Website Admin Pool (From Owner)
-                </span>
-                <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                  Redeem Owner Activation Code to Add Credits to Your Admin Pool
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-200 text-[10px] font-extrabold uppercase tracking-wider">
+                    Owner Admin Credit Pool Recharge · {ADMIN_ACCOUNT_HOLDER}
+                  </span>
+                  {adminCreditPool <= 50 && (
+                    <span className="px-2.5 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-extrabold uppercase">
+                      Admin Pool Running Low ({adminCreditPool} Credits Left) — Contact Owner to Recharge
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900 mt-1">
+                  Purchase / Recharge Admin Pool Credits from Owner ({ADMIN_ACCOUNT_HOLDER})
                 </h3>
-                <p className="text-xs text-slate-500">
-                  Enter an activation code provided by the Owner (e.g. <span className="font-mono font-bold">MM-500-...</span>) to instantly increase your Website Admin Credit Pool.
+                <p className="text-xs text-slate-600">
+                  As Website Admin, you can only distribute the credits available in your <strong>Admin Credit Pool ({adminCreditPool} left)</strong>. When your credits finish, scan <strong>{ADMIN_ACCOUNT_HOLDER}&apos;s Slice UPI QR Code ({ADMIN_UPI_ID})</strong> below to purchase more Admin Pool credits or enter an Owner Activation Code.
                 </p>
               </div>
 
@@ -929,23 +1375,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </form>
             </div>
 
-            {/* Optional Collapsible UPI QR Request Form for Website Admin Pool Top-Up */}
+            {/* Owner Shriyansh Singh Rajpoot Slice UPI QR Code & Admin Pool Top-Up Form */}
             {showAdminPoolQrModal && (
-              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-12 gap-5 items-center bg-slate-50 p-4 rounded-2xl">
-                <div className="md:col-span-4 flex flex-col items-center text-center space-y-2">
-                  <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs max-w-[180px]">
+              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-12 gap-5 items-center bg-purple-50/50 p-4 rounded-2xl border border-purple-200">
+                <div className="md:col-span-4 flex flex-col items-center text-center space-y-2.5">
+                  <span className="px-3 py-1 rounded-lg bg-purple-700 text-white text-[10px] font-extrabold uppercase tracking-wider">
+                    Owner QR · For Admin Credit Purchase
+                  </span>
+                  <div className="bg-white p-2.5 rounded-2xl border-2 border-purple-300 shadow-sm max-w-[210px]">
                     <img
                       src={ADMIN_QR_IMAGE_PATH}
-                      alt="Owner UPI QR"
+                      alt={`Owner UPI QR - ${ADMIN_ACCOUNT_HOLDER}`}
                       className="w-full h-auto rounded-xl object-contain"
                     />
                   </div>
                   <div className="text-xs font-extrabold text-slate-900">
-                    {ADMIN_ACCOUNT_HOLDER}
+                    Account holder: {ADMIN_ACCOUNT_HOLDER}
                   </div>
-                  <div className="text-[11px] font-mono font-bold text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-lg border border-purple-200">
+                  <div className="text-[11px] font-mono font-extrabold text-purple-800 bg-white px-3 py-1 rounded-lg border border-purple-200">
                     UPI ID: {ADMIN_UPI_ID}
                   </div>
+                  <a
+                    href={`https://wa.me/${DEFAULT_ADMIN_WHATSAPP.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                      `Hello ${ADMIN_ACCOUNT_HOLDER}, my Website Admin Credit Pool has ${adminCreditPool} credits left. I want to purchase +${poolReqAmount} Admin Pool credits via your Slice UPI QR (${ADMIN_UPI_ID}).`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full max-w-[210px] min-h-[38px] py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <i className="fa-brands fa-whatsapp text-sm"></i>
+                    <span>Contact Shriyansh on WhatsApp</span>
+                  </a>
                 </div>
 
                 <form
@@ -954,23 +1414,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-extrabold text-slate-900">
-                      Request Admin Pool Top-Up from Owner
+                      Purchase Admin Pool Credits from {ADMIN_ACCOUNT_HOLDER} ({ADMIN_UPI_ID})
                     </h4>
                     <button
                       type="button"
                       onClick={() => setShowAdminPoolQrModal(false)}
                       className="text-xs font-bold text-slate-500 hover:text-slate-800"
                     >
-                      Close
+                      Hide QR
                     </button>
                   </div>
                   <p className="text-xs text-slate-600">
-                    Scan the Owner UPI QR code, complete payment, and submit your UTR number below. Once the Owner confirms your payment, the credits will be added directly to your <strong>Website Admin Pool</strong>.
+                    Scan <strong>{ADMIN_ACCOUNT_HOLDER}&apos;s Slice UPI QR code</strong> on the left, complete payment, and submit your UTR number below. Your request will appear in the Owner&apos;s Credit Admin Panel (<code>/credit-admin</code>), and once confirmed, the credits will be added to your <strong>Website Admin Pool</strong> so you can distribute them to your users.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Pool Credits Needed
+                        Admin Pool Credits to Purchase
                       </label>
                       <select
                         value={poolReqAmount}
@@ -979,7 +1439,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       >
                         {[200, 500, 1000, 2500, 5000, 10000].map((amt) => (
                           <option key={amt} value={amt}>
-                            +{amt} Pool Credits
+                            +{amt} Admin Pool Credits
                           </option>
                         ))}
                       </select>
@@ -1005,16 +1465,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         type="text"
                         value={poolReqNote}
                         onChange={(e) => setPoolReqNote(e.target.value)}
-                        placeholder="Admin Pool Recharge"
+                        placeholder="Paid to Shriyansh Singh Rajpoot"
                         className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl"
                       />
                     </div>
                   </div>
                   <button
                     type="submit"
-                    className="min-h-[42px] px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 text-white text-xs font-extrabold shadow-sm transition"
+                    className="min-h-[42px] px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white text-xs font-extrabold shadow-sm transition"
                   >
-                    Submit Admin Pool Request to Owner
+                    Submit Admin Pool Purchase Request to Owner ({ADMIN_ACCOUNT_HOLDER})
                   </button>
                 </form>
               </div>
@@ -1156,16 +1616,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                      {[25, 50, 100, 500].map((amt) => (
+                      {[5, 10, 25, 50, 100, 500].map((amt) => (
                         <button
                           key={amt}
                           type="button"
                           disabled={adminCreditPool < amt}
                           onClick={() => handleAdjustUserCredits(u, 'add', amt)}
-                          className="min-h-[36px] px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-mono text-xs font-extrabold transition"
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-mono text-xs font-extrabold transition"
                           title={`Give +${amt} Credits from Admin Pool`}
                         >
-                          Give +{amt}
+                          +{amt}
                         </button>
                       ))}
 
@@ -1702,6 +2162,356 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 1.2: CUSTOM POSTER TEMPLATES BUILDER & MANAGER
+         ===================================================================== */}
+      {adminTab === 'templates' && (
+        <div className="space-y-5">
+          <div className="bg-[#070a14] text-white rounded-3xl p-5 sm:p-6 border border-cyan-500/40 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-rose-600 text-white flex items-center justify-center text-xl shrink-0">
+                <i className="fa-solid fa-wand-magic-sparkles"></i>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base sm:text-lg font-extrabold text-white">
+                    Custom Poster Templates Manager
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                    {customTemplates.length} Custom Templates Active
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                  Add your own custom Wedding, Anniversary, Engagement, Birthday, Memorial, or Festival templates with custom background artwork, photo frame layout, and default editable text. Every template created here appears immediately in the Poster Maker on the website!
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Left Form: Add New Custom Template */}
+            <form
+              onSubmit={handleCreateCustomTemplate}
+              className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs"
+            >
+              <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-700">
+                    Create New Template
+                  </span>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Add Custom Poster Template to Website
+                  </h3>
+                </div>
+                <input
+                  ref={customTplBgInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCustomTemplateBgUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => customTplBgInputRef.current?.click()}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#070a14] hover:bg-slate-800 text-amber-300 text-xs font-extrabold transition flex items-center gap-1.5"
+                >
+                  <i className="fa-solid fa-image"></i>
+                  <span>
+                    {tplBgImageDataUrl ? 'Change Background Image' : 'Upload Background Artwork'}
+                  </span>
+                </button>
+              </div>
+
+              {tplBgImageDataUrl && (
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={tplBgImageDataUrl}
+                      alt="Custom Template Background"
+                      className="w-14 h-16 object-cover rounded-xl border border-emerald-300"
+                    />
+                    <div>
+                      <div className="text-xs font-extrabold text-emerald-950">
+                        Custom Background Design Attached
+                      </div>
+                      <div className="text-[11px] text-emerald-700">
+                        User photos &amp; editable text will be layered on top of this artwork.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTplBgImageDataUrl('')}
+                    className="px-2.5 py-1 rounded-lg bg-white text-rose-600 border border-rose-200 text-xs font-bold"
+                  >
+                    Remove Image
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Template Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={tplName}
+                    onChange={(e) => setTplName(e.target.value)}
+                    placeholder="e.g. Royal Gold Couple Wedding Card"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Category *
+                  </label>
+                  <select
+                    value={tplCategory}
+                    onChange={(e) => setTplCategory(e.target.value as any)}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  >
+                    <option value="wedding">Wedding Invitation</option>
+                    <option value="anniversary">Wedding Anniversary</option>
+                    <option value="engagement">Engagement</option>
+                    <option value="birthday">Birthday</option>
+                    <option value="memorial">Memorial / Condolence</option>
+                    <option value="festival">Festival Greeting</option>
+                    <option value="housewarming">Housewarming</option>
+                    <option value="baby-congrats">Baby &amp; Congrats</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Photo &amp; Text Layout Preset
+                  </label>
+                  <select
+                    value={tplLayoutPreset}
+                    onChange={(e) => setTplLayoutPreset(e.target.value as any)}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  >
+                    <option value="left-photo-right-text">Left Photo + Right Text</option>
+                    <option value="center-arch-photo">Center Arch Photo + Bottom Text</option>
+                    <option value="top-circle-photo">Top Circle Photo + Bottom Text</option>
+                    <option value="dual-couple-photos">Dual Couple Photos (2 Frames)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Photo Frame Shape
+                  </label>
+                  <select
+                    value={tplSlotShape}
+                    onChange={(e) => setTplSlotShape(e.target.value as any)}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  >
+                    <option value="arch">Royal Arch Frame</option>
+                    <option value="rounded">Rounded Portrait Frame</option>
+                    <option value="circle">Circular Medallion</option>
+                    <option value="oval">Classic Oval Frame</option>
+                    <option value="rect">Rectangular Frame</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Badge Label
+                  </label>
+                  <input
+                    type="text"
+                    value={tplBadge}
+                    onChange={(e) => setTplBadge(e.target.value)}
+                    placeholder="Admin Custom HD"
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    BG Top Color
+                  </label>
+                  <input
+                    type="color"
+                    value={tplBgColor1}
+                    onChange={(e) => setTplBgColor1(e.target.value)}
+                    className="w-full h-10 rounded-xl cursor-pointer border border-slate-300 bg-white p-1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    BG Mid Color
+                  </label>
+                  <input
+                    type="color"
+                    value={tplBgColor2}
+                    onChange={(e) => setTplBgColor2(e.target.value)}
+                    className="w-full h-10 rounded-xl cursor-pointer border border-slate-300 bg-white p-1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    BG Bottom Color
+                  </label>
+                  <input
+                    type="color"
+                    value={tplBgColor3}
+                    onChange={(e) => setTplBgColor3(e.target.value)}
+                    className="w-full h-10 rounded-xl cursor-pointer border border-slate-300 bg-white p-1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Gold / Accent Color
+                  </label>
+                  <input
+                    type="color"
+                    value={tplPrimaryAccent}
+                    onChange={(e) => setTplPrimaryAccent(e.target.value)}
+                    className="w-full h-10 rounded-xl cursor-pointer border border-slate-300 bg-white p-1"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Default Top Headline
+                  </label>
+                  <input
+                    type="text"
+                    value={tplHeadline}
+                    onChange={(e) => setTplHeadline(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Default Main Names / Title
+                  </label>
+                  <input
+                    type="text"
+                    value={tplNames}
+                    onChange={(e) => setTplNames(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Default Invitation / Tribute Message
+                  </label>
+                  <input
+                    type="text"
+                    value={tplSubText}
+                    onChange={(e) => setTplSubText(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Default Date &amp; Time
+                  </label>
+                  <input
+                    type="text"
+                    value={tplDateTime}
+                    onChange={(e) => setTplDateTime(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Default Venue / Location
+                  </label>
+                  <input
+                    type="text"
+                    value={tplVenue}
+                    onChange={(e) => setTplVenue(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full min-h-[46px] py-2.5 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-2"
+              >
+                <i className="fa-solid fa-plus-circle"></i>
+                <span>Add Custom Template to Website Poster Maker</span>
+              </button>
+            </form>
+
+            {/* Right List: Existing Custom Templates */}
+            <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Your Custom Poster Templates ({customTemplates.length})
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Live in the Poster Maker alongside the 48 built-in studio templates
+                  </p>
+                </div>
+              </div>
+
+              {customTemplates.length === 0 ? (
+                <div className="py-12 text-center space-y-2 text-slate-400">
+                  <i className="fa-solid fa-wand-magic-sparkles text-2xl text-slate-300"></i>
+                  <p className="text-xs font-bold text-slate-500">
+                    No custom templates added yet.
+                  </p>
+                  <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                    Use the form on the left to upload a custom background or create a new template layout for your users.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+                  {customTemplates.map((ct) => (
+                    <div
+                      key={ct.id}
+                      className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="w-12 h-14 rounded-xl border border-slate-300 shrink-0 overflow-hidden flex items-center justify-center text-[10px] font-extrabold text-white"
+                          style={{
+                            background: ct.bgImageDataUrl
+                              ? `url(${ct.bgImageDataUrl}) center/cover no-repeat`
+                              : `linear-gradient(135deg, ${ct.bgColors[0]}, ${ct.bgColors[1]}, ${ct.bgColors[2]})`,
+                          }}
+                        >
+                          {!ct.bgImageDataUrl && 'TPL'}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-extrabold text-slate-900 truncate">
+                            {ct.name}
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-cyan-700">{ct.categoryLabel}</span>
+                            <span>·</span>
+                            <span>{ct.layoutPreset}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCustomTemplate(ct.id)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold shrink-0"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

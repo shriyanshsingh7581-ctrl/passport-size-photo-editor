@@ -809,9 +809,44 @@ export default function App() {
       });
     };
 
+    const handlePoolAndCrossTabSync = () => {
+      const latestPool = loadAdminCreditPool();
+      setAdminCreditPool(latestPool);
+      try {
+        const rawUsers = localStorage.getItem(LOCAL_USERS_KEY);
+        if (rawUsers) {
+          const parsedUsers = JSON.parse(rawUsers) as UserProfile[];
+          if (Array.isArray(parsedUsers) && parsedUsers.length > 0) {
+            setAllUsers(parsedUsers);
+            setUserProfile((curr) => {
+              if (!curr) return curr;
+              const match = parsedUsers.find(
+                (u) => u.uid === curr.uid || u.email.toLowerCase() === curr.email.toLowerCase()
+              );
+              if (match && typeof match.credits === 'number' && match.credits !== curr.credits) {
+                const nextProfile = { ...curr, credits: match.credits };
+                setAvailableCredits(saveWalletCredits(match.credits));
+                try {
+                  localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(nextProfile));
+                } catch {}
+                return nextProfile;
+              }
+              return curr;
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
     window.addEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
+    window.addEventListener('malnadu-admin-pool-updated', handlePoolAndCrossTabSync);
+    window.addEventListener('storage', handlePoolAndCrossTabSync);
     return () => {
       window.removeEventListener('malnadu-wallet-updated', handleWalletSyncToUser);
+      window.removeEventListener('malnadu-admin-pool-updated', handlePoolAndCrossTabSync);
+      window.removeEventListener('storage', handlePoolAndCrossTabSync);
     };
   }, []);
 
@@ -960,12 +995,35 @@ export default function App() {
       () => {}
     );
 
+    const unsubActiveUser = onSnapshot(
+      doc(db, 'users', activeUid),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as UserProfile;
+          if (typeof data.credits === 'number') {
+            const latestCredits = data.credits;
+            setUserProfile((curr) => {
+              if (!curr || curr.credits === latestCredits) return curr;
+              const updated = { ...curr, ...data, uid: activeUid, credits: latestCredits };
+              setAvailableCredits(saveWalletCredits(latestCredits));
+              try {
+                localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
+          }
+        }
+      },
+      () => {}
+    );
+
     return () => {
       unsubApt();
       unsubVer();
       unsubPhotos();
+      unsubActiveUser();
     };
-  }, [isAuthReady, currentUser, userProfile]);
+  }, [isAuthReady, currentUser, userProfile?.uid]);
 
   // =========================================================================
   // 5. PIXEL-LEVEL COLOR GRADING & EDGE REFINEMENT
@@ -2384,8 +2442,9 @@ export default function App() {
       // ignore
     }
     try {
+      const { customPosterTemplates: _omitCustomTemplates, ...firestorePayload } = mergedSettings;
       await setDoc(doc(db, 'siteSettings', 'global'), {
-        ...mergedSettings,
+        ...firestorePayload,
         updatedAt: serverTimestamp(),
       });
     } catch {

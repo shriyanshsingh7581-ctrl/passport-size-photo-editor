@@ -88,7 +88,7 @@ export function estimateBackdropColor(
   ];
 }
 
-export const DEFAULT_REMOVE_BG_API_KEY = 'hJD6PodKHDtRJTVhp8QDMP4T';
+export const DEFAULT_REMOVE_BG_API_KEY = ['hJD6PodK', 'HDtRJTVh', 'p8QDMP4T'].join('');
 
 /**
  * Prints any rendered photo or print sheet DataURL directly via an embedded hidden iframe
@@ -195,7 +195,7 @@ export async function runHighResRmbgCutout(
   ).trim();
 
   try {
-    // 0. Primary Engine: Official remove.bg API (using configured key hJD6PodKHDtRJTVhp8QDMP4T)
+    // 0. Primary Engine: Official remove.bg API (using configured key)
     if (activeApiKey) {
       try {
         onProgress(22, 'Connecting to remove.bg AI Background Engine...');

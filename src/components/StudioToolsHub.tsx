@@ -125,6 +125,9 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
   const [resizedPxH, setResizedPxH] = useState<number>(531);
   const [resizedBytes, setResizedBytes] = useState<number>(0);
   const [resizeError, setResizeError] = useState<string | null>(null);
+  const [resizeZoom, setResizeZoom] = useState<number>(100);
+  const [resizePanX, setResizePanX] = useState<number>(0);
+  const [resizePanY, setResizePanY] = useState<number>(0);
 
   const resizeFileInputRef = useRef<HTMLInputElement | null>(null);
   const resizeImgRef = useRef<HTMLImageElement | null>(null);
@@ -178,19 +181,24 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
 
     const srcW = activeSource.width;
     const srcH = activeSource.height;
+    const zoomFactor = Math.max(0.4, Math.min(2.5, resizeZoom / 100));
+    const offsetX = (resizePanX / 100) * targetW * 0.4;
+    const offsetY = (resizePanY / 100) * targetH * 0.4;
 
     if (fitMode === 'stretch') {
-      ctx.drawImage(activeSource, 0, 0, targetW, targetH);
+      const dW = targetW * zoomFactor;
+      const dH = targetH * zoomFactor;
+      ctx.drawImage(activeSource, (targetW - dW) / 2 + offsetX, (targetH - dH) / 2 + offsetY, dW, dH);
     } else if (fitMode === 'contain') {
-      const scale = Math.min(targetW / srcW, targetH / srcH);
+      const scale = Math.min(targetW / srcW, targetH / srcH) * zoomFactor;
       const dW = srcW * scale;
       const dH = srcH * scale;
-      ctx.drawImage(activeSource, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
+      ctx.drawImage(activeSource, (targetW - dW) / 2 + offsetX, (targetH - dH) / 2 + offsetY, dW, dH);
     } else {
-      const scale = Math.max(targetW / srcW, targetH / srcH);
+      const scale = Math.max(targetW / srcW, targetH / srcH) * zoomFactor;
       const dW = srcW * scale;
       const dH = srcH * scale;
-      ctx.drawImage(activeSource, (targetW - dW) / 2, (targetH - dH) / 2, dW, dH);
+      ctx.drawImage(activeSource, (targetW - dW) / 2 + offsetX, (targetH - dH) / 2 + offsetY, dW, dH);
     }
 
     let q = outputFormat === 'image/png' ? undefined : outputQuality / 100;
@@ -229,6 +237,9 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
     outputFormat,
     outputQuality,
     resizeTargetMaxKb,
+    resizeZoom,
+    resizePanX,
+    resizePanY,
     convertToPixels,
   ]);
 
@@ -277,6 +288,9 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
       resizeImgRef.current = img;
       resizeCutoutCanvasRef.current = null;
       setResizeBgRemoved(false);
+      setResizeZoom(100);
+      setResizePanX(0);
+      setResizePanY(0);
       setResizeBgStatus('remove.bg API Ready');
       setResizeSrc(dataUrl);
       setResizeOrigW(img.naturalWidth || img.width);
@@ -750,6 +764,84 @@ export const StudioToolsHub: React.FC<StudioToolsHubProps> = ({
                     />
                     <span>Custom</span>
                   </label>
+                </div>
+              </div>
+
+              {/* Zoom In / Zoom Out & Position Controls for Photo / Cutout Subject */}
+              <div className="pt-2 border-t border-cyan-500/20 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold text-cyan-950 flex items-center gap-1.5">
+                    <i className="fa-solid fa-magnifying-glass-plus text-cyan-600"></i>
+                    <span>Photo / BG Removed Zoom &amp; Position:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResizeZoom(100);
+                      setResizePanX(0);
+                      setResizePanY(0);
+                    }}
+                    className="px-2 py-0.5 rounded-lg bg-white hover:bg-slate-100 text-[10px] font-extrabold text-slate-700 border border-slate-200 transition"
+                  >
+                    Reset ({resizeZoom}%)
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setResizeZoom((z) => Math.max(40, z - 10))}
+                    className="h-8 px-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-xs font-extrabold text-slate-700 flex items-center gap-1 transition active:scale-95"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-minus text-cyan-600"></i>
+                    <span>Zoom Out</span>
+                  </button>
+                  <input
+                    type="range"
+                    min={40}
+                    max={250}
+                    step={2}
+                    value={resizeZoom}
+                    onChange={(e) => setResizeZoom(parseInt(e.target.value, 10))}
+                    className="flex-1 accent-cyan-600 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setResizeZoom((z) => Math.min(250, z + 10))}
+                    className="h-8 px-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-xs font-extrabold text-slate-700 flex items-center gap-1 transition active:scale-95"
+                  >
+                    <i className="fa-solid fa-magnifying-glass-plus text-cyan-600"></i>
+                    <span>Zoom In</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 mb-0.5">
+                      <span>Horizontal Shift (Left / Right)</span>
+                      <span className="font-mono text-cyan-700">{resizePanX}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-100}
+                      max={100}
+                      value={resizePanX}
+                      onChange={(e) => setResizePanX(parseInt(e.target.value, 10))}
+                      className="w-full accent-cyan-600 cursor-pointer"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 mb-0.5">
+                      <span>Vertical Shift (Up / Down)</span>
+                      <span className="font-mono text-cyan-700">{resizePanY}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-100}
+                      max={100}
+                      value={resizePanY}
+                      onChange={(e) => setResizePanY(parseInt(e.target.value, 10))}
+                      className="w-full accent-cyan-600 cursor-pointer"
+                    />
+                  </div>
                 </div>
               </div>
             </div>

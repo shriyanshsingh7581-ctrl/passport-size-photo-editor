@@ -292,6 +292,80 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
   },
 ];
 
+export interface CustomPosterTemplate {
+  id: string;
+  name: string;
+  category:
+    | 'wedding'
+    | 'anniversary'
+    | 'engagement'
+    | 'birthday'
+    | 'memorial'
+    | 'festival'
+    | 'housewarming'
+    | 'baby-congrats';
+  categoryLabel: string;
+  badge: string;
+  bgImageDataUrl?: string;
+  customBgImageUrl?: string;
+  bgColors: [string, string, string];
+  primaryAccent: string;
+  secondaryAccent: string;
+  slotShape?: 'rect' | 'rounded' | 'arch' | 'circle' | 'oval' | 'octagon';
+  photoShape?: 'rect' | 'rounded' | 'arch' | 'circle' | 'oval' | 'octagon';
+  photoFrameStyle?:
+    | 'gold-double'
+    | 'floral-wreath'
+    | 'ornate-corner'
+    | 'garland-tribute'
+    | 'silver-luxury'
+    | 'polaroid-white'
+    | 'rose-gold';
+  layoutPreset:
+    | 'left-photo-right-text'
+    | 'center-arch-photo'
+    | 'top-circle-photo'
+    | 'dual-couple-photos'
+    | 'left-photo'
+    | 'center-photo'
+    | 'top-photo'
+    | 'dual-photo';
+  slotX: number;
+  slotY: number;
+  slotWidth: number;
+  slotHeight: number;
+  headlineText: string;
+  namesText?: string;
+  mainNamesText?: string;
+  subText?: string;
+  dateTimeText: string;
+  venueText: string;
+  footerMessageText?: string;
+  createdAt: string;
+}
+
+export const LOCAL_CUSTOM_TEMPLATES_KEY = 'malnadu_custom_poster_templates_v1';
+
+export function loadCustomPosterTemplates(): CustomPosterTemplate[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_CUSTOM_TEMPLATES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomPosterTemplates(list: CustomPosterTemplate[]): void {
+  try {
+    localStorage.setItem(LOCAL_CUSTOM_TEMPLATES_KEY, JSON.stringify(list));
+    window.dispatchEvent(new CustomEvent('malnadu-custom-templates-updated'));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 export interface SiteSettings {
   brandName: string;
   brandTagline: string;
@@ -315,6 +389,7 @@ export interface SiteSettings {
   contactPhone?: string;
   adminCreditPool?: number;
   toolCatalog?: ToolCatalogItem[];
+  customPosterTemplates?: CustomPosterTemplate[];
   updatedAt?: any;
 }
 
@@ -342,6 +417,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   contactPhone: '+91 98450 11223',
   adminCreditPool: 500,
   toolCatalog: DEFAULT_TOOL_CATALOG,
+  customPosterTemplates: [],
 };
 
 export interface ShortLinkRecord {
