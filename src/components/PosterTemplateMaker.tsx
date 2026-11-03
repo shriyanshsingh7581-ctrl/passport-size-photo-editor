@@ -6065,10 +6065,18 @@ function drawWrappedTextField(
     ctx.stroke();
   }
 
-  // Soft text drop shadow for legibility
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-  ctx.shadowBlur = 6;
-  ctx.shadowOffsetY = 2;
+  // Soft text drop shadow & crisp outline for legibility over AI-generated poster images
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 3;
+  if (!field.pillBgColor) {
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.08));
+    ctx.lineJoin = 'round';
+    finalLines.forEach((line, idx) => {
+      ctx.strokeText(line, field.x, field.y + idx * lineHeight);
+    });
+  }
   ctx.fillStyle = color;
 
   finalLines.forEach((line, idx) => {
@@ -6680,63 +6688,61 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         ctx.restore();
       }
 
-      // If this is a pure AI Photo-to-Photo generated poster and user hasn't enabled manual overlay,
-      // show the complete AI-generated Photo-to-Photo poster directly without covering it up!
-      if (isPureAiPhotoToPhoto) {
-        return;
+      // 2. Render Each Predefined Photo Slot with Clipping, Zoom, Pan, Crop & Rotation
+      // If this is a pure AI Photo-to-Photo generated poster and user hasn't enabled manual photo frame overlay,
+      // skip covering the AI subject with the manual photo slot box, while STILL rendering all synced text layers below!
+      if (!isPureAiPhotoToPhoto) {
+        activeTemplate.photoSlots.forEach((slot) => {
+          const transform = slotTransforms[slot.id];
+          const cropInsetPx = Math.round(
+            (Math.min(slot.width, slot.height) * (transform?.cropInset || 0)) / 200
+          );
+
+          ctx.save();
+          defineSlotClipPath(ctx, slot, cropInsetPx);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+          ctx.fill();
+
+          if (transform?.imageElement) {
+            ctx.clip();
+            const img = transform.imageElement;
+            const imgW = img.naturalWidth || img.width || 600;
+            const imgH = img.naturalHeight || img.height || 800;
+
+            const coverScale = Math.max(slot.width / imgW, slot.height / imgH);
+            const finalScale = coverScale * ((transform.zoom || 100) / 100);
+
+            const centerX = slot.x + slot.width / 2 + (transform.panX || 0);
+            const centerY = slot.y + slot.height / 2 + (transform.panY || 0);
+
+            ctx.translate(centerX, centerY);
+            ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
+            ctx.scale(transform.flipX ? -finalScale : finalScale, finalScale);
+
+            if (transform.brightness !== 100 || transform.contrast !== 100) {
+              ctx.filter = `brightness(${transform.brightness}%) contrast(${transform.contrast}%)`;
+            }
+
+            ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+            ctx.filter = 'none';
+          } else {
+            ctx.fillStyle = '#cbd5e1';
+            ctx.font = '700 22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Click to Upload Photo', slot.x + slot.width / 2, slot.y + slot.height / 2);
+          }
+          ctx.restore();
+
+          // 3. Draw Decorative Frame over the Photo Slot
+          drawSlotDecorativeFrame(
+            ctx,
+            slot,
+            showSelectionHighlight && activeSlotId === slot.id
+          );
+        });
       }
 
-      // 2. Render Each Predefined Photo Slot with Clipping, Zoom, Pan, Crop & Rotation
-      activeTemplate.photoSlots.forEach((slot) => {
-        const transform = slotTransforms[slot.id];
-        const cropInsetPx = Math.round(
-          (Math.min(slot.width, slot.height) * (transform?.cropInset || 0)) / 200
-        );
-
-        ctx.save();
-        defineSlotClipPath(ctx, slot, cropInsetPx);
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
-        ctx.fill();
-
-        if (transform?.imageElement) {
-          ctx.clip();
-          const img = transform.imageElement;
-          const imgW = img.naturalWidth || img.width || 600;
-          const imgH = img.naturalHeight || img.height || 800;
-
-          const coverScale = Math.max(slot.width / imgW, slot.height / imgH);
-          const finalScale = coverScale * ((transform.zoom || 100) / 100);
-
-          const centerX = slot.x + slot.width / 2 + (transform.panX || 0);
-          const centerY = slot.y + slot.height / 2 + (transform.panY || 0);
-
-          ctx.translate(centerX, centerY);
-          ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-          ctx.scale(transform.flipX ? -finalScale : finalScale, finalScale);
-
-          if (transform.brightness !== 100 || transform.contrast !== 100) {
-            ctx.filter = `brightness(${transform.brightness}%) contrast(${transform.contrast}%)`;
-          }
-
-          ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
-          ctx.filter = 'none';
-        } else {
-          ctx.fillStyle = '#cbd5e1';
-          ctx.font = '700 22px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('Click to Upload Photo', slot.x + slot.width / 2, slot.y + slot.height / 2);
-        }
-        ctx.restore();
-
-        // 3. Draw Decorative Frame over the Photo Slot
-        drawSlotDecorativeFrame(
-          ctx,
-          slot,
-          showSelectionHighlight && activeSlotId === slot.id
-        );
-      });
-
-      // 4. Render All Editable Non-Overlapping Text Layers
+      // 4. Render All Editable Non-Overlapping Text Layers (Always synced with Edit Poster Text Layers inputs)
       activeTemplate.textFields.forEach((field) => {
         const key = `${activeTemplate.id}::${field.id}`;
         drawWrappedTextField(ctx, field, textOverrides[key]);
@@ -7242,6 +7248,17 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       }
 
       const convertedSpec = convertCustomTemplateToSpec(createdCustomTemplate);
+      setTextOverrides((prev) => {
+        const next = { ...prev };
+        convertedSpec.textFields.forEach((f) => {
+          next[`${newTplId}::${f.id}`] = {
+            text: f.defaultValue,
+            color: f.color,
+            fontScale: 100,
+          };
+        });
+        return next;
+      });
       setSelectedTemplateId(newTplId);
       setBgLoadTick((t) => t + 1);
 
@@ -8365,101 +8382,117 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           )}
 
           {/* =================================================================
-              TAB 2: EDITABLE TEXT FIELDS (NAMES, DATE/TIME, VENUE, MESSAGE)
+              TAB 2 / BOTTOM SECTION: EDITABLE TEXT FIELDS (AUTO-SYNCED)
              ================================================================= */}
-          {editorPanelTab === 'text' && (
-            <div className="space-y-3.5 max-h-[600px] overflow-y-auto pr-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-slate-800">
-                  Edit Poster Text Layers (Auto-Aligned)
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTextOverrides((prev) => {
-                      const next = { ...prev };
-                      activeTemplate.textFields.forEach((f) => {
-                        delete next[`${activeTemplate.id}::${f.id}`];
-                      });
-                      return next;
+          <div className="space-y-3.5 max-h-[600px] overflow-y-auto pr-1 pt-2 border-t border-slate-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-slate-800">
+                Edit Poster Text Layers (Auto-Synced)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setTextOverrides((prev) => {
+                    const next = { ...prev };
+                    activeTemplate.textFields.forEach((f) => {
+                      delete next[`${activeTemplate.id}::${f.id}`];
                     });
-                    showToast('Reset text fields to template default');
-                  }}
-                  className="text-[11px] font-bold text-rose-600 hover:underline"
+                    return next;
+                  });
+                  showToast('Reset text fields to template default');
+                }}
+                className="text-[11px] font-bold text-rose-600 hover:underline"
+              >
+                Reset All Text
+              </button>
+            </div>
+
+            {activeTemplate.textFields.map((field) => {
+              const key = `${activeTemplate.id}::${field.id}`;
+              const currentText =
+                textOverrides[key]?.text !== undefined
+                  ? textOverrides[key].text
+                  : field.defaultValue;
+              const currentColor = textOverrides[key]?.color || field.color;
+              const currentScale = textOverrides[key]?.fontScale || 100;
+
+              const updateField = (patch: Partial<TextFieldOverride>) => {
+                const updatedText = patch.text !== undefined ? patch.text : currentText;
+                setTextOverrides((prev) => ({
+                  ...prev,
+                  [key]: {
+                    text: updatedText,
+                    color: patch.color !== undefined ? patch.color : currentColor,
+                    fontScale: patch.fontScale !== undefined ? patch.fontScale : currentScale,
+                  },
+                }));
+
+                if (patch.text !== undefined) {
+                  setCustomRawTemplates((prevList) => {
+                    const idx = prevList.findIndex((t) => t.id === activeTemplate.id);
+                    if (idx === -1) return prevList;
+                    const updatedItem = { ...prevList[idx] };
+                    if (field.id === 'headline') updatedItem.headlineText = patch.text;
+                    else if (field.id === 'mainNames') updatedItem.namesText = patch.text;
+                    else if (field.id === 'subMessage') updatedItem.subText = patch.text;
+                    else if (field.id === 'eventDate') updatedItem.dateTimeText = patch.text;
+                    else if (field.id === 'venue') updatedItem.venueText = patch.text;
+                    else if (field.id === 'rsvp') updatedItem.footerMessageText = patch.text;
+                    const nextList = [...prevList];
+                    nextList[idx] = updatedItem;
+                    saveCustomPosterTemplates(nextList);
+                    return nextList;
+                  });
+                }
+              };
+
+              return (
+                <div
+                  key={field.id}
+                  className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2"
                 >
-                  Reset All Text
-                </button>
-              </div>
-
-              {activeTemplate.textFields.map((field) => {
-                const key = `${activeTemplate.id}::${field.id}`;
-                const currentText =
-                  textOverrides[key]?.text !== undefined
-                    ? textOverrides[key].text
-                    : field.defaultValue;
-                const currentColor = textOverrides[key]?.color || field.color;
-                const currentScale = textOverrides[key]?.fontScale || 100;
-
-                const updateField = (patch: Partial<TextFieldOverride>) => {
-                  setTextOverrides((prev) => ({
-                    ...prev,
-                    [key]: {
-                      text: currentText,
-                      color: currentColor,
-                      fontScale: currentScale,
-                      ...patch,
-                    },
-                  }));
-                };
-
-                return (
-                  <div
-                    key={field.id}
-                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="text-xs font-extrabold text-slate-800">
-                        {field.label}
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={currentColor}
-                          onChange={(e) => updateField({ color: e.target.value })}
-                          title="Text Color"
-                          className="w-6 h-6 rounded cursor-pointer border border-slate-300"
-                        />
-                        <span className="text-[10px] font-mono font-bold text-slate-500">
-                          Size: {currentScale}%
-                        </span>
-                      </div>
-                    </div>
-
-                    <textarea
-                      rows={currentText.includes('\n') ? 2 : 1}
-                      value={currentText}
-                      onChange={(e) => updateField({ text: e.target.value })}
-                      className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-cyan-500"
-                    />
-
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-extrabold text-slate-800">
+                      {field.label}
+                    </label>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-500">Text Size:</span>
                       <input
-                        type="range"
-                        min={70}
-                        max={135}
-                        value={currentScale}
-                        onChange={(e) =>
-                          updateField({ fontScale: Number(e.target.value) })
-                        }
-                        className="flex-1 accent-cyan-600 h-1.5"
+                        type="color"
+                        value={currentColor}
+                        onChange={(e) => updateField({ color: e.target.value })}
+                        title="Text Color"
+                        className="w-6 h-6 rounded cursor-pointer border border-slate-300"
                       />
+                      <span className="text-[10px] font-mono font-bold text-slate-500">
+                        Size: {currentScale}%
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+
+                  <textarea
+                    rows={currentText.includes('\n') ? 2 : 1}
+                    value={currentText}
+                    onChange={(e) => updateField({ text: e.target.value })}
+                    className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-cyan-500"
+                  />
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-slate-500">Text Size:</span>
+                    <input
+                      type="range"
+                      min={70}
+                      max={135}
+                      value={currentScale}
+                      onChange={(e) =>
+                        updateField({ fontScale: Number(e.target.value) })
+                      }
+                      className="flex-1 accent-cyan-600 h-1.5"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

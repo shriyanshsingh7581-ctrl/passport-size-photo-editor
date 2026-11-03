@@ -426,8 +426,8 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
 
   // IMPORTANT: Place reference image_url parts FIRST in content array, followed by text prompt.
   const photoToPhotoPromptText = hasInputPhoto
-    ? `Generate a new ${ratioDescription} poster image based on this reference image and this prompt: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include festive studio lighting, luxury framing, and clear poster title text. Output an image.`
-    : `Generate a new ${ratioDescription} poster image for this request: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include rich luxury lighting, festive ornamental borders, and clear celebratory typography. Output an image.`;
+    ? `Generate a new ${ratioDescription} poster image based on this reference image and this prompt: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include festive studio lighting, luxury framing, and clean Negative Space for text overlay (do NOT render any text, words, or letters in the image). Output an image.`
+    : `Generate a new ${ratioDescription} poster image for this request: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include rich luxury lighting and festive ornamental borders with clean space for text overlay (do NOT render any text, words, or letters in the image). Output an image.`;
 
   const contentParts: Array<
     | { type: 'text'; text: string }
