@@ -116,7 +116,19 @@ export const PHOTO_COUNT_OPTIONS: Array<'auto' | number> = [
 
 const DEFAULT_DEMO_USERS: UserProfile[] = [
   {
+    uid: 'admin-liveonconnect-01',
+    userId: 'liveonconnect',
+    displayName: 'LiveOnConnect Admin',
+    email: 'Liveonconnect@gmail.com',
+    phone: '+91 98450 11223',
+    role: 'admin',
+    status: 'approved',
+    credits: 5,
+    createdAt: new Date(Date.now() - 86400000 * 15).toISOString(),
+  },
+  {
     uid: 'admin-malnadu-01',
+    userId: 'admin',
     displayName: 'Malnadu Media Admin',
     email: 'shriyanshsingh7581@gmail.com',
     phone: '+91 98450 11223',
@@ -763,7 +775,28 @@ export default function App() {
     async (silent = false) => {
       setIsCloudSyncing(true);
       try {
-        const res = await forceSyncFromFirestoreServer();
+        let localUsersToPush: UserProfile[] = [...DEFAULT_DEMO_USERS];
+        try {
+          const rawSaved = localStorage.getItem(LOCAL_USERS_KEY);
+          if (rawSaved) {
+            const parsed = JSON.parse(rawSaved);
+            if (Array.isArray(parsed)) {
+              const map = new Map<string, UserProfile>();
+              DEFAULT_DEMO_USERS.forEach((u) => map.set(u.uid, u));
+              parsed.forEach((u: UserProfile) => {
+                if (u && u.uid) map.set(u.uid, u);
+              });
+              localUsersToPush = Array.from(map.values());
+            }
+          }
+        } catch {}
+
+        const res = await forceSyncFromFirestoreServer(
+          localUsersToPush,
+          loadPaymentCreditRequests(),
+          loadAdminCreditPool(),
+          loadWalletCredits()
+        );
         if (res.ok) {
           if (typeof res.adminCreditPool === 'number') {
             const syncedPool = saveAdminCreditPool(res.adminCreditPool);
@@ -1031,7 +1064,8 @@ export default function App() {
     }
 
     const isBootstrapAdmin =
-      currentUser.email?.toLowerCase() === 'shriyanshsingh7581@gmail.com';
+      currentUser.email?.toLowerCase() === 'shriyanshsingh7581@gmail.com' ||
+      currentUser.email?.toLowerCase() === 'liveonconnect@gmail.com';
 
     // Listen to shortLinks collection (admin gets all, regular user gets their own)
     const linksQuery = isBootstrapAdmin
@@ -1223,6 +1257,7 @@ export default function App() {
       if (user) {
         const isBootstrapAdmin =
           user.email?.toLowerCase() === 'shriyanshsingh7581@gmail.com' ||
+          user.email?.toLowerCase() === 'liveonconnect@gmail.com' ||
           user.email?.toLowerCase() === 'admin@malnadumedia.com';
 
         const baseDisplayName = (
@@ -2650,6 +2685,7 @@ export default function App() {
     const emailClean = authEmail.trim();
     const isBootstrapAdmin =
       emailClean.toLowerCase() === 'shriyanshsingh7581@gmail.com' ||
+      emailClean.toLowerCase() === 'liveonconnect@gmail.com' ||
       emailClean.toLowerCase() === 'admin@malnadumedia.com';
 
     try {
@@ -6041,6 +6077,7 @@ export default function App() {
             isCloudSyncing={isCloudSyncing}
             lastCloudSyncedAt={lastCloudSyncedAt}
             onForceCloudSync={() => handleForceCloudSync(false)}
+            onAdminGoogleSignIn={handleGoogleSignIn}
             onUpdateWalletCredits={(c) => {
               const saved = saveWalletCredits(c);
               setAvailableCredits(saved);

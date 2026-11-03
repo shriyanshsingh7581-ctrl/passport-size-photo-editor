@@ -190,7 +190,13 @@ export async function upsertUserInFirestoreAdmin(
       payload.loginPassword = String(resolvedLoginPass).slice(0, 100);
     }
 
-    if (existingSnap.exists() && existingSnap.data()?.createdAt) {
+    if (
+      existingSnap.exists() &&
+      existingSnap.data()?.createdAt &&
+      typeof existingSnap.data()?.createdAt === 'object' &&
+      ('seconds' in existingSnap.data().createdAt ||
+        typeof existingSnap.data().createdAt.toDate === 'function')
+    ) {
       payload.createdAt = existingSnap.data().createdAt;
     } else {
       payload.createdAt = serverTimestamp();
@@ -228,6 +234,36 @@ export async function upsertUserInFirestoreAdmin(
   }
 }
 
+const ALLOWED_SITE_SETTINGS_KEYS = [
+  'brandName',
+  'brandTagline',
+  'logoType',
+  'logoText',
+  'logoUrl',
+  'faviconUrl',
+  'primaryColor',
+  'secondaryColor',
+  'footerCredit',
+  'seoTitle',
+  'seoDescription',
+  'enablePassportStudio',
+  'enableBgRemover',
+  'enableClarityEnhancer',
+  'enableQrGenerator',
+  'enableLinkShortener',
+  'enableStudioToolsCategory',
+  'enableAkshayaToolsCategory',
+  'enableMediaLiveToolsCategory',
+  'contactPhone',
+  'adminCreditPool',
+  'studioWalletCredits',
+  'adminVaultSecret',
+  'enableFreeSignupCredits',
+  'freeSignupCreditsAmount',
+  'toolCatalog',
+  'updatedAt',
+];
+
 /**
  * Syncs the Admin Credit Pool balance (and optional Studio Wallet balance) to Firestore `/siteSettings/global`.
  */
@@ -246,7 +282,7 @@ export async function syncAdminPoolToFirestore(
     const settingsRef = doc(adminDb, 'siteSettings', 'global');
     const snap = await getDoc(settingsRef);
     const existingData = snap.exists() ? snap.data() : {};
-    const payload: Record<string, any> = {
+    const rawMerged: Record<string, any> = {
       ...DEFAULT_SITE_SETTINGS,
       ...existingData,
       adminCreditPool: safePool,
@@ -254,13 +290,22 @@ export async function syncAdminPoolToFirestore(
       updatedAt: serverTimestamp(),
     };
     if (typeof safeStudioWallet === 'number') {
-      payload.studioWalletCredits = safeStudioWallet;
+      rawMerged.studioWalletCredits = safeStudioWallet;
     } else if (typeof existingData?.studioWalletCredits === 'number') {
-      payload.studioWalletCredits = existingData.studioWalletCredits;
+      rawMerged.studioWalletCredits = existingData.studioWalletCredits;
     }
-    await setDoc(settingsRef, payload);
-  } catch {
-    // ignore if offline
+
+    // Strip any non-schema keys (such as customPosterTemplates) so Firestore rules strictly pass
+    const cleanPayload: Record<string, any> = {};
+    for (const key of ALLOWED_SITE_SETTINGS_KEYS) {
+      if (rawMerged[key] !== undefined) {
+        cleanPayload[key] = rawMerged[key];
+      }
+    }
+
+    await setDoc(settingsRef, cleanPayload);
+  } catch (err) {
+    console.warn('syncAdminPoolToFirestore warning:', err);
   }
 }
 
@@ -323,7 +368,13 @@ export async function upsertPaymentRequestInFirestore(req: {
       payload.processedAt = req.processedAt.slice(0, 60);
     }
 
-    if (existingSnap.exists() && existingSnap.data()?.createdAt) {
+    if (
+      existingSnap.exists() &&
+      existingSnap.data()?.createdAt &&
+      typeof existingSnap.data()?.createdAt === 'object' &&
+      ('seconds' in existingSnap.data().createdAt ||
+        typeof existingSnap.data().createdAt.toDate === 'function')
+    ) {
       payload.createdAt = existingSnap.data().createdAt;
     } else {
       payload.createdAt = serverTimestamp();
@@ -337,10 +388,16 @@ export async function upsertPaymentRequestInFirestore(req: {
 }
 
 /**
- * Performs an authoritative 1-click fetch directly from the Firestore server (`getDocFromServer` / `getDocsFromServer`)
- * so that all browsers and devices immediately display the exact same Admin Credit Pool, User Balances, and Payment Requests.
+ * Performs an authoritative bidirectional sync with the Firestore server (`getDocFromServer` / `getDocsFromServer`).
+ * - Any locally created users or payment requests that aren't on Firestore yet are automatically uploaded first.
+ * - Then the complete live state (`adminCreditPool`, `studioWalletCredits`, `users`, `paymentRequests`) is fetched from the server.
  */
-export async function forceSyncFromFirestoreServer(): Promise<{
+export async function forceSyncFromFirestoreServer(
+  localUsersToPush?: any[],
+  localPayReqsToPush?: any[],
+  fallbackAdminPool?: number,
+  fallbackStudioWallet?: number
+): Promise<{
   ok: boolean;
   adminCreditPool?: number;
   studioWalletCredits?: number;
@@ -360,6 +417,15 @@ export async function forceSyncFromFirestoreServer(): Promise<{
       settingsSnap = await getDocFromServer(settingsRef);
     } catch {
       settingsSnap = await getDoc(settingsRef);
+    }
+
+    if (!settingsSnap.exists()) {
+      await syncAdminPoolToFirestore(fallbackAdminPool ?? 500, fallbackStudioWallet ?? 0);
+      try {
+        settingsSnap = await getDocFromServer(settingsRef);
+      } catch {
+        settingsSnap = await getDoc(settingsRef);
+      }
     }
 
     let adminCreditPool: number | undefined;
@@ -389,12 +455,51 @@ export async function forceSyncFromFirestoreServer(): Promise<{
       usersSnap = await getDocs(usersQuery);
     }
 
-    const users = usersSnap.docs
+    let serverUsers = usersSnap.docs
       .map((d) => ({
         ...d.data(),
         uid: d.id,
       }))
       .filter((u: any) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
+
+    // Push any local users (e.g., previously created User IDs/Passwords on this device) that are missing on the server
+    if (Array.isArray(localUsersToPush) && localUsersToPush.length > 0) {
+      const serverUids = new Set(serverUsers.map((u: any) => u.uid));
+      const serverEmails = new Set(
+        serverUsers.map((u: any) => String(u.email || '').trim().toLowerCase())
+      );
+
+      let pushedCount = 0;
+      for (const localU of localUsersToPush) {
+        if (!localU || !localU.uid) continue;
+        const cleanEmail = String(localU.email || '').trim().toLowerCase();
+        if (cleanEmail === 'malnadu.admin.vault@malnadumedia.com') continue;
+
+        if (!serverUids.has(localU.uid) && (!cleanEmail || !serverEmails.has(cleanEmail))) {
+          const upRes = await upsertUserInFirestoreAdmin(
+            localU,
+            typeof localU.credits === 'number' ? localU.credits : 5
+          );
+          if (upRes.ok) {
+            pushedCount++;
+          }
+        }
+      }
+
+      if (pushedCount > 0) {
+        try {
+          usersSnap = await getDocsFromServer(usersQuery);
+        } catch {
+          usersSnap = await getDocs(usersQuery);
+        }
+        serverUsers = usersSnap.docs
+          .map((d) => ({
+            ...d.data(),
+            uid: d.id,
+          }))
+          .filter((u: any) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
+      }
+    }
 
     // 3. Fetch all paymentRequests directly from server
     const payReqQuery = query(
@@ -406,6 +511,24 @@ export async function forceSyncFromFirestoreServer(): Promise<{
       payReqSnap = await getDocsFromServer(payReqQuery);
     } catch {
       payReqSnap = await getDocs(payReqQuery);
+    }
+
+    const serverPayReqIds = new Set(payReqSnap.docs.map((d) => d.id));
+    if (Array.isArray(localPayReqsToPush) && localPayReqsToPush.length > 0) {
+      let pushedReqCount = 0;
+      for (const localReq of localPayReqsToPush) {
+        if (localReq && localReq.id && !serverPayReqIds.has(localReq.id)) {
+          const ok = await upsertPaymentRequestInFirestore(localReq);
+          if (ok) pushedReqCount++;
+        }
+      }
+      if (pushedReqCount > 0) {
+        try {
+          payReqSnap = await getDocsFromServer(payReqQuery);
+        } catch {
+          payReqSnap = await getDocs(payReqQuery);
+        }
+      }
     }
 
     const paymentRequests = payReqSnap.docs.map((d) => {
@@ -428,7 +551,7 @@ export async function forceSyncFromFirestoreServer(): Promise<{
       adminCreditPool,
       studioWalletCredits,
       siteSettings,
-      users,
+      users: serverUsers,
       paymentRequests,
       syncedAt: new Date().toLocaleTimeString(),
     };

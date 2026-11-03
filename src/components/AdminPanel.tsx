@@ -61,6 +61,7 @@ interface AdminPanelProps {
   isCloudSyncing?: boolean;
   lastCloudSyncedAt?: string;
   onForceCloudSync?: () => Promise<void> | void;
+  onAdminGoogleSignIn?: () => Promise<void> | void;
   onUpdateWalletCredits: (newCredits: number) => void;
   onUpdateAdminCreditPool: (newPoolCredits: number) => void;
   onUpdateUserCredits: (
@@ -115,6 +116,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   isCloudSyncing = false,
   lastCloudSyncedAt = 'Live',
   onForceCloudSync,
+  onAdminGoogleSignIn,
   onUpdateWalletCredits,
   onUpdateAdminCreditPool,
   onUpdateUserCredits,
@@ -139,8 +141,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   }, [initialAdminTab]);
 
-  // Dedicated Credit Admin Vault Lock & Password State
+  const PRIMARY_CUSTOMER_ADMIN_EMAIL = 'Liveonconnect@gmail.com';
+  const AUTHORIZED_ADMIN_EMAILS = [
+    'liveonconnect@gmail.com',
+    'shriyanshsingh7581@gmail.com',
+    'admin@malnadumedia.com',
+  ];
+
+  // Dedicated Credit Admin Vault Lock, Mandatory Admin Gmail & Password State
   const [isCreditVaultUnlocked, setIsCreditVaultUnlocked] = useState(false);
+  const [vaultEmailInput, setVaultEmailInput] = useState<string>(() => {
+    const currEmail = currentUserProfile?.email?.trim() || '';
+    if (currEmail && AUTHORIZED_ADMIN_EMAILS.includes(currEmail.toLowerCase())) {
+      return currEmail;
+    }
+    return PRIMARY_CUSTOMER_ADMIN_EMAIL;
+  });
+  const [unlockedAdminEmail, setUnlockedAdminEmail] = useState<string>(PRIMARY_CUSTOMER_ADMIN_EMAIL);
   const [vaultPasswordInput, setVaultPasswordInput] = useState('');
   const [showVaultPassword, setShowVaultPassword] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
@@ -338,12 +355,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleUnlockCreditVault = (e: React.FormEvent) => {
     e.preventDefault();
     setVaultError(null);
+    const cleanEmail = vaultEmailInput.trim().toLowerCase();
+    if (!cleanEmail || !AUTHORIZED_ADMIN_EMAILS.includes(cleanEmail)) {
+      setVaultError(
+        `Mandatory Admin Gmail ID Required! Please enter "${PRIMARY_CUSTOMER_ADMIN_EMAIL}" to log into the Admin Panel.`
+      );
+      return;
+    }
     if (!verifyAdminSecretPin(vaultPasswordInput)) {
       setVaultError(
         'Incorrect Admin Master Password! Only the authorized Administrator can unlock the Website Admin Panel.'
       );
       return;
     }
+    setUnlockedAdminEmail(vaultEmailInput.trim());
     setUnlockedPasswordCache(vaultPasswordInput.trim());
     setIsCreditVaultUnlocked(true);
     setVaultPasswordInput('');
@@ -351,7 +376,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (onForceCloudSync) {
       onForceCloudSync();
     }
-    showToast('Website Admin Panel Unlocked & Synced with Realtime Database!');
+    showToast(`Admin Panel Unlocked (${vaultEmailInput.trim()}) & Synced with Realtime Database!`);
   };
 
   const handleLockCreditVault = () => {
@@ -1074,6 +1099,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           <form onSubmit={handleUnlockCreditVault} className="space-y-4">
             <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <label className="block text-xs font-extrabold text-slate-300">
+                  Mandatory Admin Gmail ID <span className="text-emerald-400">(Required)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVaultEmailInput(PRIMARY_CUSTOMER_ADMIN_EMAIL);
+                    setVaultError(null);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 text-[10px] font-extrabold transition cursor-pointer"
+                >
+                  Use {PRIMARY_CUSTOMER_ADMIN_EMAIL}
+                </button>
+              </div>
+              <div className="relative">
+                <i className="fa-solid fa-envelope absolute left-4 top-1/2 -translate-y-1/2 text-emerald-400 text-xs"></i>
+                <input
+                  type="email"
+                  required
+                  value={vaultEmailInput}
+                  onChange={(e) => {
+                    setVaultEmailInput(e.target.value);
+                    setVaultError(null);
+                  }}
+                  placeholder="Enter Liveonconnect@gmail.com..."
+                  className="w-full min-h-[48px] pl-10 pr-4 py-2.5 rounded-2xl bg-slate-900 border border-emerald-500/40 text-white font-mono text-sm focus:outline-none focus:border-emerald-400"
+                />
+              </div>
+              <p className="text-[11px] text-emerald-300/90 mt-1.5 font-semibold">
+                Authorized Customer Admin Gmail: <span className="font-mono font-extrabold text-white">{PRIMARY_CUSTOMER_ADMIN_EMAIL}</span> (Synced across all devices)
+              </p>
+            </div>
+
+            <div>
               <label className="block text-xs font-extrabold text-slate-300 mb-2">
                 Strong Admin Master Password
               </label>
@@ -1111,14 +1171,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             <button
               type="submit"
-              className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-sm shadow-lg active:scale-[0.99] transition flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3 px-5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-sm shadow-lg active:scale-[0.99] transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <i className="fa-solid fa-unlock-keyhole"></i>
-              <span>Unlock Website Control Admin Panel</span>
+              <span>Unlock & Sync Admin Panel ({PRIMARY_CUSTOMER_ADMIN_EMAIL})</span>
             </button>
+
+            {onAdminGoogleSignIn && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await onAdminGoogleSignIn();
+                  if (onForceCloudSync) {
+                    onForceCloudSync();
+                  }
+                }}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/20 text-white text-xs font-extrabold transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <i className="fa-brands fa-google text-emerald-400"></i>
+                <span>Connect Google Account ({PRIMARY_CUSTOMER_ADMIN_EMAIL}) for Cloud Sync</span>
+              </button>
+            )}
           </form>
 
-          <div className="pt-3 border-t border-white/10 flex items-center justify-center">
+          <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-2 flex-wrap">
             <button
               type="button"
               onClick={onNavigateToStudio}
@@ -1126,6 +1202,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             >
               ← Back to Website
             </button>
+            {onForceCloudSync && (
+              <button
+                type="button"
+                onClick={() => onForceCloudSync()}
+                disabled={isCloudSyncing}
+                className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin' : ''}`}></i>
+                <span>{isCloudSyncing ? 'Syncing...' : 'Sync Database Now'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1153,6 +1240,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </h1>
               <span className="px-2.5 py-0.5 rounded-lg font-mono text-[10px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
                 /website-admin
+              </span>
+              <span className="px-2.5 py-0.5 rounded-lg font-mono text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 flex items-center gap-1">
+                <i className="fa-solid fa-circle-check text-[9px]"></i>
+                <span>{unlockedAdminEmail || PRIMARY_CUSTOMER_ADMIN_EMAIL}</span>
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">

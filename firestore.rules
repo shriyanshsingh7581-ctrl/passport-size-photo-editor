@@ -30,7 +30,9 @@ service cloud.firestore {
     function isBootstrapAdmin() {
       return isSignedIn() &&
              request.auth.token.email_verified == true &&
-             request.auth.token.email == 'shriyanshsingh7581@gmail.com';
+             (request.auth.token.email == 'shriyanshsingh7581@gmail.com' ||
+              request.auth.token.email == 'liveonconnect@gmail.com' ||
+              request.auth.token.email == 'Liveonconnect@gmail.com');
     }
 
     function isAdmin() {
@@ -97,7 +99,7 @@ service cloud.firestore {
                'enableClarityEnhancer', 'enableQrGenerator', 'enableLinkShortener',
                'enableStudioToolsCategory', 'enableAkshayaToolsCategory', 'enableMediaLiveToolsCategory',
                'contactPhone', 'adminCreditPool', 'studioWalletCredits', 'adminVaultSecret',
-               'enableFreeSignupCredits', 'freeSignupCreditsAmount', 'toolCatalog', 'updatedAt'
+               'enableFreeSignupCredits', 'freeSignupCreditsAmount', 'toolCatalog', 'customPosterTemplates', 'updatedAt'
              ]) &&
              (!('adminCreditPool' in data) || (data.adminCreditPool is int && data.adminCreditPool >= 0 && data.adminCreditPool <= 10000000)) &&
              (!('studioWalletCredits' in data) || (data.studioWalletCredits is int && data.studioWalletCredits >= 0 && data.studioWalletCredits <= 10000000)) &&
@@ -303,7 +305,7 @@ service cloud.firestore {
       allow update: if isValidId(userId) &&
                     isValidUser(incoming()) &&
                     incoming().uid == existing().uid &&
-                    incoming().createdAt == existing().createdAt &&
+                    (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
                     incoming().updatedAt == request.time &&
                     (
                       // Action 1: Owner updates displayName, phone, or deducts spent credits
@@ -318,11 +320,11 @@ service cloud.firestore {
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'userId', 'loginPassword', 'displayName', 'email', 'phone',
                          'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint',
-                         'adminVaultSecret', 'updatedAt'
+                         'adminVaultSecret', 'createdAt', 'updatedAt'
                        ]))
                     );
 
-      allow delete: if isValidId(userId) && isAdmin();
+      allow delete: if isValidId(userId) && (isAdmin() || isBootstrapAdmin());
     }
 
     // PAYMENT REQUESTS COLLECTION
@@ -343,12 +345,12 @@ service cloud.firestore {
       allow update: if isValidId(requestId) &&
                     isValidPaymentRequest(incoming()) &&
                     incoming().id == existing().id &&
-                    incoming().createdAt == existing().createdAt &&
+                    (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
                     incoming().updatedAt == request.time &&
                     (isAdmin() || hasAdminVaultSecret()) &&
                     incoming().diff(existing()).affectedKeys().hasOnly([
                       'status', 'creditsRequested', 'targetType', 'approvedCode',
-                      'processedAt', 'adminVaultSecret', 'updatedAt'
+                      'processedAt', 'adminVaultSecret', 'createdAt', 'updatedAt'
                     ]);
 
       allow delete: if isValidId(requestId) && isAdmin();
