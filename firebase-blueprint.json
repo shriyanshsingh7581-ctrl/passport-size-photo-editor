@@ -2,15 +2,27 @@
   "entities": {
     "User": {
       "title": "User Profile",
-      "description": "Registered user profile in MALNADU MEDIA with role-based access and approval status tracking.",
+      "description": "Registered user profile in MALNADU MEDIA with role-based access, custom User ID & Password login credentials, and real-time credit balance.",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
-          "description": "Firebase Auth UID of the user",
+          "description": "Firebase Auth UID or managed UID of the user",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Custom User ID / Username created by Admin for direct login",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "loginPassword": {
+          "type": "string",
+          "description": "Admin-managed login password for the user account",
+          "minLength": 0,
+          "maxLength": 100
         },
         "displayName": {
           "type": "string",
@@ -21,7 +33,7 @@
         "email": {
           "type": "string",
           "format": "email",
-          "description": "Verified email address of the user",
+          "description": "Email address of the user",
           "minLength": 3,
           "maxLength": 150
         },
@@ -43,8 +55,6 @@
         },
         "credits": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 1000000,
           "description": "Available studio photo credits for the user"
         },
         "freeCreditsClaimed": {
@@ -70,6 +80,46 @@
       },
       "required": ["uid", "displayName", "email", "phone", "role", "status", "createdAt", "updatedAt"]
     },
+    "PaymentRequest": {
+      "title": "UPI QR Payment & Credit Request",
+      "description": "Real-time UPI QR payment request submitted by a user or Admin for credit recharge.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "clientName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "clientContact": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetType": { "type": "string", "enum": ["client_wallet", "admin_pool"] },
+        "packageLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "creditsRequested": { "type": "integer" },
+        "amountInr": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "utrNumber": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "paymentNote": { "type": "string", "minLength": 0, "maxLength": 300 },
+        "paymentScreenshotDataUrl": { "type": "string", "minLength": 0, "maxLength": 350000 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "approvedCode": { "type": "string", "minLength": 0, "maxLength": 60 },
+        "processedAt": { "type": "string", "minLength": 0, "maxLength": 60 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "clientName",
+        "clientContact",
+        "packageLabel",
+        "creditsRequested",
+        "amountInr",
+        "utrNumber",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "SiteSettings": {
       "title": "Global Website Settings",
       "description": "Persistent branding, theme color, SEO, feature visibility, and footer credit configuration for MALNADU MEDIA.",
@@ -93,8 +143,6 @@
         "enableLinkShortener": { "type": "boolean" },
         "adminCreditPool": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 10000000,
           "description": "Distributable credit pool allocated by the Super Owner (/credit-admin) to the Website Admin (/website-admin) for user credit distribution"
         },
         "enableFreeSignupCredits": {
@@ -103,8 +151,6 @@
         },
         "freeSignupCreditsAmount": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 100,
           "description": "Number of free credits granted to a new user account on first signup (deducted from adminCreditPool)"
         },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -165,8 +211,7 @@
           "type": "boolean"
         },
         "clicks": {
-          "type": "integer",
-          "minimum": 0
+          "type": "integer"
         },
         "createdAt": {
           "type": "string",
@@ -448,7 +493,11 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
-      "description": "Stores registered user profiles, role assignments, and account approval status."
+      "description": "Stores registered user profiles, role assignments, login credentials, and real-time credit balance."
+    },
+    "/paymentRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/PaymentRequest" },
+      "description": "Stores real-time UPI QR payment and credit recharge requests."
     },
     "/siteSettings/{settingId}": {
       "schema": { "$ref": "#/entities/SiteSettings" },

@@ -18,6 +18,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   addDoc,
   updateDoc,
@@ -32,6 +33,9 @@ import {
   db,
   googleProvider,
   createFirebaseAccountViaSecondaryApp,
+  ensureAdminVaultSession,
+  upsertUserInFirestoreAdmin,
+  syncAdminPoolToFirestore,
 } from './firebase';
 import {
   COUNTRY_PRESETS,
@@ -774,8 +778,106 @@ export default function App() {
       }
     );
 
+    // Real-time global Firestore listener via Admin Vault so all users & live credits sync across devices
+    let unsubVaultUsers: (() => void) | null = null;
+    let isMounted = true;
+    ensureAdminVaultSession()
+      .then((adminDb) => {
+        if (!isMounted) return;
+        unsubVaultUsers = onSnapshot(
+          collection(adminDb, 'users'),
+          (snap) => {
+            if (!snap.empty) {
+              const firestoreUsers: UserProfile[] = snap.docs
+                .map((d) => ({
+                  ...(d.data() as UserProfile),
+                  uid: d.id,
+                }))
+                .filter((u) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
+
+              setAllUsers((prev) => {
+                const map = new Map<string, UserProfile>();
+                prev.forEach((u) => {
+                  if (u.email !== 'malnadu.admin.vault@malnadumedia.com') {
+                    map.set(u.uid, u);
+                  }
+                });
+                firestoreUsers.forEach((u) => {
+                  const prevLocal = map.get(u.uid);
+                  const resolvedCredits =
+                    typeof u.credits === 'number'
+                      ? u.credits
+                      : typeof prevLocal?.credits === 'number'
+                      ? prevLocal.credits
+                      : 0;
+                  map.set(u.uid, {
+                    ...prevLocal,
+                    ...u,
+                    credits: resolvedCredits,
+                    userId: u.userId || prevLocal?.userId,
+                    loginPassword: u.loginPassword || prevLocal?.loginPassword,
+                  });
+                });
+                const merged = Array.from(map.values());
+                syncExistingUsersIntoFreeCreditGuard(merged);
+                try {
+                  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(merged));
+                } catch {
+                  // ignore
+                }
+                return merged;
+              });
+
+              // Immediately update the currently logged-in user's live credits if matched by UID, User ID, or Email
+              setUserProfile((curr) => {
+                if (!curr) return curr;
+                const matched = firestoreUsers.find(
+                  (u) =>
+                    u.uid === curr.uid ||
+                    (curr.userId &&
+                      u.userId &&
+                      u.userId.toLowerCase() === curr.userId.toLowerCase()) ||
+                    (curr.email && u.email && u.email.toLowerCase() === curr.email.toLowerCase())
+                );
+                if (!matched) return curr;
+                const liveCredits =
+                  typeof matched.credits === 'number' ? matched.credits : curr.credits ?? 0;
+                if (
+                  liveCredits !== curr.credits ||
+                  matched.status !== curr.status ||
+                  matched.role !== curr.role ||
+                  matched.uid !== curr.uid
+                ) {
+                  const nextProfile: UserProfile = {
+                    ...curr,
+                    ...matched,
+                    credits: liveCredits,
+                    userId: matched.userId || curr.userId,
+                    loginPassword: matched.loginPassword || curr.loginPassword,
+                  };
+                  setAvailableCredits(saveWalletCredits(liveCredits));
+                  try {
+                    localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(nextProfile));
+                  } catch {
+                    // ignore
+                  }
+                  return nextProfile;
+                }
+                return curr;
+              });
+            }
+          },
+          () => {}
+        );
+      })
+      .catch(() => {});
+
     return () => {
+      isMounted = false;
       unsubSettings();
+      if (unsubVaultUsers) {
+        unsubVaultUsers();
+      }
     };
   }, []);
 
@@ -820,16 +922,23 @@ export default function App() {
       usersQuery,
       (snap) => {
         if (!snap.empty) {
-          const firestoreUsers: UserProfile[] = snap.docs.map((d) => ({
-            ...(d.data() as UserProfile),
-            uid: d.id,
-          }));
+          const firestoreUsers: UserProfile[] = snap.docs
+            .map((d) => ({
+              ...(d.data() as UserProfile),
+              uid: d.id,
+            }))
+            .filter((u) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
           setAllUsers((prev) => {
             const map = new Map<string, UserProfile>();
-            prev.forEach((u) => map.set(u.uid, u));
+            prev.forEach((u) => {
+              if (u.email !== 'malnadu.admin.vault@malnadumedia.com') {
+                map.set(u.uid, u);
+              }
+            });
             firestoreUsers.forEach((u) => {
               const prevLocal = map.get(u.uid);
               map.set(u.uid, {
+                ...prevLocal,
                 ...u,
                 userId: u.userId || prevLocal?.userId,
                 loginPassword: u.loginPassword || prevLocal?.loginPassword,
@@ -908,10 +1017,7 @@ export default function App() {
           return next;
         });
         try {
-          updateDoc(doc(db, 'users', updatedProfile.uid), {
-            credits: latestCredits,
-            updatedAt: serverTimestamp(),
-          }).catch(() => {});
+          upsertUserInFirestoreAdmin(updatedProfile, latestCredits).catch(() => {});
         } catch {
           // ignore
         }
@@ -985,11 +1091,41 @@ export default function App() {
 
         const userRef = doc(db, 'users', user.uid);
         try {
-          const snap = await getDoc(userRef);
+          let snap = await getDoc(userRef);
           if (!snap.exists()) {
-            const localMatch = allUsers.find(
-              (u) => u.uid === user.uid || normalizeIdentityEmail(u.email) === normEmail
-            );
+            try {
+              const adminDb = await ensureAdminVaultSession();
+              snap = await getDoc(doc(adminDb, 'users', user.uid));
+            } catch {
+              // ignore
+            }
+          }
+
+          if (!snap.exists()) {
+            // Also check if Admin created a user document with matching email in Firestore under another doc ID
+            let matchedAdminDoc: UserProfile | null = null;
+            try {
+              const adminDb = await ensureAdminVaultSession();
+              const emailQuery = query(
+                collection(adminDb, 'users'),
+                where('email', '==', baseEmail.toLowerCase())
+              );
+              const qSnap = await getDocs(emailQuery);
+              if (!qSnap.empty) {
+                matchedAdminDoc = {
+                  ...(qSnap.docs[0].data() as UserProfile),
+                  uid: user.uid,
+                };
+              }
+            } catch {
+              // ignore
+            }
+
+            const localMatch =
+              matchedAdminDoc ||
+              allUsers.find(
+                (u) => u.uid === user.uid || normalizeIdentityEmail(u.email) === normEmail
+              );
             let initialCredits = 0;
             let deviceFp = '';
             if (localMatch && typeof localMatch.credits === 'number') {
@@ -1009,38 +1145,32 @@ export default function App() {
               initialCredits = grant.grantedCredits;
               deviceFp = grant.deviceFingerprint;
               setAdminCreditPool(grant.remainingAdminPool);
-              try {
-                updateDoc(doc(db, 'siteSettings', 'global'), {
-                  adminCreditPool: grant.remainingAdminPool,
-                  updatedAt: serverTimestamp(),
-                }).catch(() => {});
-              } catch {}
+              syncAdminPoolToFirestore(grant.remainingAdminPool).catch(() => {});
             }
 
             const defaultProfile: UserProfile = {
               uid: user.uid,
-              displayName: baseDisplayName,
+              userId: localMatch?.userId || baseEmail.split('@')[0],
+              loginPassword: localMatch?.loginPassword,
+              displayName: localMatch?.displayName || baseDisplayName,
               email: baseEmail,
-              phone: (user.phoneNumber || '').slice(0, 30),
-              role: isBootstrapAdmin ? 'admin' : 'user',
-              status: 'approved',
+              phone: (localMatch?.phone || user.phoneNumber || '').slice(0, 30),
+              role: isBootstrapAdmin ? 'admin' : localMatch?.role || 'user',
+              status: localMatch?.status || 'approved',
               credits: initialCredits,
               freeCreditsClaimed: true,
               deviceFingerprint: deviceFp.slice(0, 128),
               createdAt: new Date().toISOString(),
             };
 
-            await setDoc(userRef, {
-              ...defaultProfile,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
+            await upsertUserInFirestoreAdmin(defaultProfile, initialCredits);
             persistActiveUserSession(defaultProfile);
             upsertUserInLocalState(defaultProfile);
           } else {
             const existingData = snap.data() as UserProfile;
             const withCredits: UserProfile = {
               ...existingData,
+              uid: user.uid,
               credits: typeof existingData.credits === 'number' ? existingData.credits : 0,
             };
             syncExistingUsersIntoFreeCreditGuard([withCredits]);
@@ -2491,12 +2621,45 @@ export default function App() {
         const rawLoginInput = emailClean.trim();
         const lowerLoginInput = rawLoginInput.toLowerCase();
         const normLoginEmail = normalizeIdentityEmail(rawLoginInput);
-        const existingLocal = allUsers.find(
+        let existingLocal = allUsers.find(
           (u) =>
             (u.userId && u.userId.trim().toLowerCase() === lowerLoginInput) ||
             normalizeIdentityEmail(u.email) === normLoginEmail ||
             u.email.trim().toLowerCase() === `${lowerLoginInput}@studio.user`
         );
+
+        // Also query Firestore directly via Admin Vault so users logging in from another mobile/PC get their latest account & credits
+        try {
+          const adminDb = await ensureAdminVaultSession();
+          const allSnap = await getDocs(collection(adminDb, 'users'));
+          const firestoreMatchDoc = allSnap.docs.find((d) => {
+            const data = d.data() as UserProfile;
+            if (data.email === 'malnadu.admin.vault@malnadumedia.com') return false;
+            return (
+              (data.userId && data.userId.trim().toLowerCase() === lowerLoginInput) ||
+              (data.email && normalizeIdentityEmail(data.email) === normLoginEmail) ||
+              (data.email && data.email.trim().toLowerCase() === `${lowerLoginInput}@studio.user`)
+            );
+          });
+          if (firestoreMatchDoc) {
+            const fsUser: UserProfile = {
+              ...(firestoreMatchDoc.data() as UserProfile),
+              uid: firestoreMatchDoc.id,
+            };
+            existingLocal = {
+              ...existingLocal,
+              ...fsUser,
+              credits:
+                typeof fsUser.credits === 'number'
+                  ? fsUser.credits
+                  : typeof existingLocal?.credits === 'number'
+                  ? existingLocal.credits
+                  : 0,
+            };
+          }
+        } catch {
+          // ignore if offline
+        }
 
         if (existingLocal && (existingLocal.status === 'blocked' || existingLocal.status === 'removed')) {
           setAuthError('Your account has been blocked or deactivated by the Admin.');
@@ -2513,7 +2676,17 @@ export default function App() {
           (rawLoginInput.includes('@') ? rawLoginInput : `${lowerLoginInput}@studio.user`);
 
         try {
-          await signInWithEmailAndPassword(auth, resolvedFirebaseEmail, authPassword);
+          const signCred = await signInWithEmailAndPassword(auth, resolvedFirebaseEmail, authPassword);
+          // Immediately sync the latest Firestore credits into the active session
+          if (existingLocal) {
+            const mergedSession: UserProfile = {
+              ...existingLocal,
+              uid: signCred.user.uid || existingLocal.uid,
+              credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 0,
+            };
+            persistActiveUserSession(mergedSession);
+            upsertUserInLocalState(mergedSession);
+          }
         } catch {
           if (existingLocal) {
             if (existingLocal.loginPassword && authPassword !== existingLocal.loginPassword) {
@@ -2606,10 +2779,16 @@ export default function App() {
     }
 
     try {
-      await updateDoc(doc(db, 'users', uid), {
-        status,
-        updatedAt: serverTimestamp(),
-      });
+      const target = allUsers.find((u) => u.uid === uid);
+      if (target) {
+        await upsertUserInFirestoreAdmin({ ...target, status }, target.credits);
+      } else {
+        const adminDb = await ensureAdminVaultSession();
+        await updateDoc(doc(adminDb, 'users', uid), {
+          status,
+          updatedAt: serverTimestamp(),
+        });
+      }
     } catch {
       // persisted in local state & localStorage
     }
@@ -2632,20 +2811,63 @@ export default function App() {
     }
 
     try {
-      await updateDoc(doc(db, 'users', uid), {
-        role,
-        updatedAt: serverTimestamp(),
-      });
+      const target = allUsers.find((u) => u.uid === uid);
+      if (target) {
+        await upsertUserInFirestoreAdmin({ ...target, role }, target.credits);
+      } else {
+        const adminDb = await ensureAdminVaultSession();
+        await updateDoc(doc(adminDb, 'users', uid), {
+          role,
+          updatedAt: serverTimestamp(),
+        });
+      }
     } catch {
       // persisted in local state
     }
     showToast(`User role updated to ${role.toUpperCase()}`);
   };
 
-  const handleUpdateUserCredits = async (uid: string, newCredits: number) => {
+  const handleUpdateUserCredits = async (
+    uid: string,
+    newCredits: number
+  ): Promise<{ ok: boolean; verifiedCredits: number; error?: string }> => {
     const safeCredits = Math.max(0, Math.floor(Number(newCredits) || 0));
+    const targetUser = allUsers.find((u) => u.uid === uid);
+    if (!targetUser) {
+      return {
+        ok: false,
+        verifiedCredits: 0,
+        error: 'Target user account not found! Credits returned to Admin Pool.',
+      };
+    }
+
+    const previousUserCredits =
+      typeof targetUser.credits === 'number' ? targetUser.credits : 0;
+
+    // Sync to Firebase Firestore via Admin Vault and verify on the server
+    const syncRes = await upsertUserInFirestoreAdmin(
+      { ...targetUser, credits: safeCredits },
+      safeCredits
+    );
+
+    if (!syncRes.ok) {
+      // Revert local state if Firestore sync failed so Admin Pool can safely roll back
+      setAllUsers((prev) =>
+        prev.map((u) => (u.uid === uid ? { ...u, credits: previousUserCredits } : u))
+      );
+      return {
+        ok: false,
+        verifiedCredits: previousUserCredits,
+        error:
+          syncRes.error ||
+          'Failed to transfer credits to Firebase Realtime Database. Credits refunded to Admin Pool.',
+      };
+    }
+
     setAllUsers((prev) => {
-      const next = prev.map((u) => (u.uid === uid ? { ...u, credits: safeCredits } : u));
+      const next = prev.map((u) =>
+        u.uid === uid ? { ...u, credits: syncRes.verifiedCredits } : u
+      );
       try {
         localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(next));
       } catch {
@@ -2655,19 +2877,12 @@ export default function App() {
     });
 
     if (userProfile && userProfile.uid === uid) {
-      persistActiveUserSession({ ...userProfile, credits: safeCredits });
-      setAvailableCredits(saveWalletCredits(safeCredits));
+      persistActiveUserSession({ ...userProfile, credits: syncRes.verifiedCredits });
+      setAvailableCredits(saveWalletCredits(syncRes.verifiedCredits));
     }
 
-    try {
-      await updateDoc(doc(db, 'users', uid), {
-        credits: safeCredits,
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // persisted in local state & localStorage
-    }
-    showToast(`Updated user credit balance to ${safeCredits} Photos`);
+    showToast(`Transferred & Verified: ${targetUser.displayName} now has ${syncRes.verifiedCredits} Credits!`);
+    return { ok: true, verifiedCredits: syncRes.verifiedCredits };
   };
 
   const handleDeleteUserRecord = async (uid: string) => {
@@ -2682,7 +2897,8 @@ export default function App() {
     });
 
     try {
-      await deleteDoc(doc(db, 'users', uid));
+      const adminDb = await ensureAdminVaultSession();
+      await deleteDoc(doc(adminDb, 'users', uid));
     } catch {
       // persisted in local state
     }
@@ -2701,14 +2917,7 @@ export default function App() {
       }
       return updated;
     });
-    try {
-      await updateDoc(doc(db, 'siteSettings', 'global'), {
-        adminCreditPool: safePool,
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // persisted in local vault & localStorage
-    }
+    await syncAdminPoolToFirestore(safePool);
   };
 
   const handleCreateManagedUser = async (
@@ -2720,26 +2929,33 @@ export default function App() {
     initialCredits = 5,
     userId = '',
     loginPassword = ''
-  ) => {
+  ): Promise<{ ok: boolean; uid: string; verifiedCredits: number; error?: string }> => {
     const cleanUserId = (userId || email.split('@')[0] || `user${Date.now().toString().slice(-4)}`)
       .trim()
       .toLowerCase();
     const cleanEmail = (email.trim() || `${cleanUserId}@studio.user`).toLowerCase();
     const cleanPass = loginPassword.trim();
+    const safeCredits = Math.max(0, Math.floor(Number(initialCredits) || 0));
 
     let uid = `user-${Date.now()}`;
     if (cleanPass.length >= 6) {
       const fbRes = await createFirebaseAccountViaSecondaryApp(
         cleanEmail,
         cleanPass,
-        displayName.slice(0, 100)
+        displayName.slice(0, 100),
+        {
+          userId: cleanUserId.slice(0, 60),
+          phone: phone.slice(0, 30),
+          role,
+          status,
+          credits: safeCredits,
+        }
       );
       if (fbRes.uid) {
         uid = fbRes.uid;
       }
     }
 
-    const safeCredits = Math.max(0, Math.floor(Number(initialCredits) || 0));
     const newUser: UserProfile = {
       uid,
       userId: cleanUserId.slice(0, 60),
@@ -2750,22 +2966,27 @@ export default function App() {
       role,
       status,
       credits: safeCredits,
+      freeCreditsClaimed: true,
       createdAt: new Date().toISOString(),
     };
-    upsertUserInLocalState(newUser);
-    try {
-      const { userId: _omitUserId, loginPassword: _omitLoginPass, ...firestoreUser } = newUser;
-      await setDoc(doc(db, 'users', uid), {
-        ...firestoreUser,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // persisted locally
+
+    const syncRes = await upsertUserInFirestoreAdmin(newUser, safeCredits);
+    if (!syncRes.ok) {
+      return {
+        ok: false,
+        uid,
+        verifiedCredits: 0,
+        error:
+          syncRes.error ||
+          'Failed to save new user credits in Firebase. Credits returned to Admin Pool.',
+      };
     }
+
+    upsertUserInLocalState({ ...newUser, credits: syncRes.verifiedCredits });
     showToast(
-      `Created User ID "${cleanUserId}" for ${displayName} (${safeCredits} Credits · ${status})`
+      `Created User ID "${cleanUserId}" for ${displayName} (${syncRes.verifiedCredits} Credits Synced to Firebase)`
     );
+    return { ok: true, uid, verifiedCredits: syncRes.verifiedCredits };
   };
 
   const handleUpdateUserCredentials = async (
@@ -2777,14 +2998,35 @@ export default function App() {
     const cleanPass = loginPassword.trim().slice(0, 100);
     const targetUser = allUsers.find((u) => u.uid === uid);
 
+    let resolvedUid = uid;
     if (targetUser && cleanPass.length >= 6) {
       const targetEmail =
         targetUser.email?.trim() || `${cleanUserId || 'user'}@studio.user`;
-      await createFirebaseAccountViaSecondaryApp(
+      const fbRes = await createFirebaseAccountViaSecondaryApp(
         targetEmail,
         cleanPass,
-        targetUser.displayName
+        targetUser.displayName,
+        {
+          userId: cleanUserId || targetUser.userId,
+          phone: targetUser.phone,
+          role: targetUser.role,
+          status: targetUser.status,
+          credits: targetUser.credits,
+        }
       );
+      if (fbRes.uid) {
+        resolvedUid = fbRes.uid;
+      }
+    }
+
+    if (targetUser) {
+      const updatedUser: UserProfile = {
+        ...targetUser,
+        uid: resolvedUid,
+        userId: cleanUserId || targetUser.userId,
+        loginPassword: cleanPass || targetUser.loginPassword,
+      };
+      await upsertUserInFirestoreAdmin(updatedUser, targetUser.credits);
     }
 
     setAllUsers((prev) => {
@@ -2792,6 +3034,7 @@ export default function App() {
         u.uid === uid
           ? {
               ...u,
+              uid: resolvedUid,
               userId: cleanUserId || u.userId,
               loginPassword: cleanPass || u.loginPassword,
             }
@@ -2808,6 +3051,7 @@ export default function App() {
     if (userProfile && userProfile.uid === uid) {
       persistActiveUserSession({
         ...userProfile,
+        uid: resolvedUid,
         userId: cleanUserId || userProfile.userId,
         loginPassword: cleanPass || userProfile.loginPassword,
       });
@@ -3288,7 +3532,7 @@ export default function App() {
         className="sticky top-0 z-30 border-b border-cyan-500/25 shadow-lg"
         style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
       >
-        <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 h-16 flex items-center justify-between gap-3">
+        <div className="w-full max-w-full mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
           {/* Zone 1: MALNADU MEDIA Brand Logo & Wordmark */}
           <button
             onClick={() => setActiveRoute('studio')}
@@ -3692,7 +3936,7 @@ export default function App() {
 
       {/* ROUTE 1: PASSPORT PHOTO STUDIO WORKSPACE (REQUIRES LOGIN) */}
       {userProfile && activeRoute === 'studio' && (
-        <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
+        <main className="flex-1 w-full max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5">
           {/* 3 Main Platform Categories Launcher Strip (Studio Tools, Akshaya Tools, Media & Live Tools) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {siteSettings.enableStudioToolsCategory !== false && (
@@ -5511,7 +5755,7 @@ export default function App() {
 
       {/* ROUTE 1A: AURA AI PHOTO-TO-PHOTO POSTER GENERATOR */}
       {userProfile && activeRoute === 'poster-maker' && (
-        <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6">
+        <main className="flex-1 w-full max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
           <PosterTemplateMaker
             onSendToStudio={handleSendImageToStudio}
             showToast={showToast}
@@ -5668,7 +5912,7 @@ export default function App() {
         style={{ backgroundColor: siteSettings.secondaryColor || '#070a14' }}
       >
         <div className="h-[2px] w-full bg-gradient-to-r from-cyan-400 via-purple-500 to-amber-400"></div>
-        <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="w-full max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-center sm:text-left">
             {renderBrandLogo(false)}
           </div>

@@ -39,7 +39,10 @@ interface CreditQrAndOwnerPortalProps {
   onClose: () => void;
   onCreditsUpdated: (newBalance: number) => void;
   onAdminPoolUpdated?: (newPoolBalance: number) => void;
-  onUpdateUserCredits?: (uid: string, newCredits: number) => Promise<void>;
+  onUpdateUserCredits?: (
+    uid: string,
+    newCredits: number
+  ) => Promise<{ ok: boolean; verifiedCredits?: number; error?: string } | void>;
   showToast: (msg: string) => void;
 }
 
@@ -463,7 +466,7 @@ export const CreditQrAndOwnerPortal: React.FC<CreditQrAndOwnerPortalProps> = ({
     <div
       className={
         standalonePage
-          ? 'max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-6'
+          ? 'w-full max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-6'
           : 'fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto'
       }
     >

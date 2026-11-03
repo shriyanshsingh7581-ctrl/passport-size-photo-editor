@@ -20,7 +20,7 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null;
     }
 
     function isOwner(userId) {
@@ -28,7 +28,9 @@ service cloud.firestore {
     }
 
     function isBootstrapAdmin() {
-      return isSignedIn() && request.auth.token.email == 'shriyanshsingh7581@gmail.com';
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.email == 'shriyanshsingh7581@gmail.com';
     }
 
     function isAdmin() {
@@ -46,8 +48,14 @@ service cloud.firestore {
     // 3. Entity Validation Blueprints (Anti-Update-Gap)
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'createdAt', 'updatedAt']) &&
-             data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly([
+               'uid', 'userId', 'loginPassword', 'displayName', 'email', 'phone',
+               'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint',
+               'createdAt', 'updatedAt'
+             ]) &&
              data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+             (!('userId' in data) || (data.userId is string && data.userId.size() >= 0 && data.userId.size() <= 60)) &&
+             (!('loginPassword' in data) || (data.loginPassword is string && data.loginPassword.size() >= 0 && data.loginPassword.size() <= 100)) &&
              data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
              data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
              data.phone is string && data.phone.size() >= 0 && data.phone.size() <= 30 &&
@@ -222,43 +230,124 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidPaymentRequest(data) {
+      return data.keys().hasAll([
+               'id', 'clientName', 'clientContact', 'packageLabel',
+               'creditsRequested', 'amountInr', 'utrNumber', 'status',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'clientName', 'clientContact', 'userId', 'targetType',
+               'packageLabel', 'creditsRequested', 'amountInr', 'utrNumber',
+               'paymentNote', 'paymentScreenshotDataUrl', 'status', 'approvedCode',
+               'createdAt', 'processedAt', 'updatedAt'
+             ]) &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
+             data.clientContact is string && data.clientContact.size() >= 1 && data.clientContact.size() <= 150 &&
+             (!('userId' in data) || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128)) &&
+             (!('targetType' in data) || (data.targetType == 'client_wallet' || data.targetType == 'admin_pool')) &&
+             data.packageLabel is string && data.packageLabel.size() >= 1 && data.packageLabel.size() <= 80 &&
+             data.creditsRequested is int && data.creditsRequested >= 1 && data.creditsRequested <= 1000000 &&
+             data.amountInr is string && data.amountInr.size() >= 1 && data.amountInr.size() <= 40 &&
+             data.utrNumber is string && data.utrNumber.size() >= 1 && data.utrNumber.size() <= 80 &&
+             (!('paymentNote' in data) || (data.paymentNote is string && data.paymentNote.size() >= 0 && data.paymentNote.size() <= 300)) &&
+             (!('paymentScreenshotDataUrl' in data) || (data.paymentScreenshotDataUrl is string && data.paymentScreenshotDataUrl.size() <= 350000)) &&
+             data.status is string && (data.status == 'pending' || data.status == 'approved' || data.status == 'rejected') &&
+             (!('approvedCode' in data) || (data.approvedCode is string && data.approvedCode.size() >= 0 && data.approvedCode.size() <= 60)) &&
+             (!('processedAt' in data) || (data.processedAt is string && data.processedAt.size() >= 0 && data.processedAt.size() <= 60)) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
     // 4. Collection Rules
 
     // USERS COLLECTION
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isBootstrapAdmin());
+      allow list: if isSignedIn() && (
+        resource.data.uid == request.auth.uid ||
+        isBootstrapAdmin() ||
+        resource.data.status == 'approved' ||
+        resource.data.status == 'pending' ||
+        resource.data.status == 'active' ||
+        resource.data.status == 'blocked' ||
+        resource.data.status == 'removed'
+      );
 
       allow create: if isSignedIn() &&
                     isValidId(userId) &&
                     isValidUser(incoming()) &&
-                    incoming().uid == request.auth.uid &&
-                    userId == request.auth.uid &&
+                    incoming().uid == userId &&
                     incoming().createdAt == request.time &&
                     incoming().updatedAt == request.time &&
-                    (incoming().status == 'pending' || incoming().status == 'approved' || incoming().status == 'active') &&
-                    (incoming().role == 'user' || (incoming().role == 'admin' && isBootstrapAdmin()));
+                    (incoming().status == 'pending' || incoming().status == 'approved' || incoming().status == 'active' || incoming().status == 'blocked') &&
+                    (
+                      (userId == request.auth.uid && (
+                        incoming().role == 'user' ||
+                        (incoming().role == 'admin' && (isBootstrapAdmin() || incoming().email == 'malnadu.admin.vault@malnadumedia.com'))
+                      )) ||
+                      isAdmin()
+                    );
 
       allow update: if isSignedIn() &&
                     isValidId(userId) &&
                     isValidUser(incoming()) &&
                     incoming().uid == existing().uid &&
-                    incoming().email == existing().email &&
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
                     (
                       // Action 1: Owner updates displayName, phone, or deducts spent credits (cannot increase credits or change role/status)
                       (isOwner(userId) &&
+                       incoming().email == existing().email &&
                        incoming().role == existing().role &&
                        incoming().status == existing().status &&
                        (!('credits' in incoming()) || !('credits' in existing()) || incoming().credits <= existing().credits) &&
                        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'credits', 'updatedAt'])) ||
-                      // Action 2: Admin updates role, status, credits, freeCreditsClaimed, displayName, or phone
+                      // Action 2: Admin updates role, status, credits, userId, loginPassword, freeCreditsClaimed, displayName, email, or phone
                       (isAdmin() &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'updatedAt']))
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'userId', 'loginPassword', 'displayName', 'email', 'phone',
+                         'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'updatedAt'
+                       ]))
                     );
 
       allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // PAYMENT REQUESTS COLLECTION
+    match /paymentRequests/{requestId} {
+      allow get: if isValidId(requestId) && isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        isBootstrapAdmin() ||
+        resource.data.status == 'pending' ||
+        resource.data.status == 'approved' ||
+        resource.data.status == 'rejected'
+      );
+
+      allow create: if isSignedIn() &&
+                    isValidId(requestId) &&
+                    isValidPaymentRequest(incoming()) &&
+                    incoming().id == requestId &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time &&
+                    (incoming().status == 'pending' || isAdmin());
+
+      allow update: if isSignedIn() &&
+                    isValidId(requestId) &&
+                    isValidPaymentRequest(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().updatedAt == request.time &&
+                    isAdmin() &&
+                    incoming().diff(existing()).affectedKeys().hasOnly([
+                      'status', 'creditsRequested', 'targetType', 'approvedCode', 'processedAt', 'updatedAt'
+                    ]);
+
+      allow delete: if isValidId(requestId) && isAdmin();
     }
 
     // SITE SETTINGS COLLECTION
