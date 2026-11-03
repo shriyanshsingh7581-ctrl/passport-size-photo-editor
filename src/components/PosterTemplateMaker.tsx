@@ -6079,6 +6079,7 @@ interface PosterTemplateMakerProps {
   brandName?: string;
   onSendToStudio?: (dataUrl: string) => void;
   showToast: (msg: string) => void;
+  initialPhotoUrl?: string;
 }
 
 const CATEGORY_TABS: Array<{ id: PosterCategory; label: string; icon: string }> = [
@@ -6324,6 +6325,7 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
 export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   onSendToStudio,
   showToast,
+  initialPhotoUrl,
 }) => {
   const [customRawTemplates, setCustomRawTemplates] = useState<CustomPosterTemplate[]>(() =>
     loadCustomPosterTemplates()
@@ -6758,6 +6760,36 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   const auraPhoto2InputRef = useRef<HTMLInputElement | null>(null);
   const auraBgInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Sync initialPhotoUrl if user uploaded a photo on the main Studio page
+  useEffect(() => {
+    if (!initialPhotoUrl || auraPhoto1Url) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      auraPhoto1ImgRef.current = img;
+      setAuraPhoto1Url(initialPhotoUrl);
+      const targetSlot = activeTemplate.photoSlots[0];
+      if (targetSlot) {
+        setSlotTransforms((prev) => ({
+          ...prev,
+          [targetSlot.id]: {
+            imageUrl: initialPhotoUrl,
+            imageElement: img,
+            zoom: 100,
+            panX: 0,
+            panY: 0,
+            rotation: 0,
+            flipX: false,
+            brightness: 100,
+            contrast: 100,
+            cropInset: 0,
+          },
+        }));
+      }
+    };
+    img.src = initialPhotoUrl;
+  }, [initialPhotoUrl]);
+
   useEffect(() => {
     const syncCredits = () => {
       setWalletCredits(loadWalletCredits());
@@ -6867,9 +6899,11 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     const engineInfo = AURA_AI_ENGINES[auraEngineId];
 
     // Check if user has attached a photo either in Photo 1 box or in the active canvas slot
+    const activeSlotImg = slotTransforms[activeSlotId]?.imageElement || null;
     const primarySource =
       auraPhoto1ImgRef.current ||
-      (auraPhoto1Url ? auraPhoto1Url : null);
+      (auraPhoto1Url ? auraPhoto1Url : null) ||
+      activeSlotImg;
     const secondarySource =
       auraPhoto2ImgRef.current ||
       (auraPhoto2Url ? auraPhoto2Url : null);
@@ -7011,8 +7045,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       saveCustomPosterTemplates(updatedCustomList);
       setCustomRawTemplates(updatedCustomList);
 
-      // If AI Photo-to-Photo generated a full image, show the pure AI Photo-to-Photo poster by default
-      if (aiDesign.aiGeneratedImageDataUrl) {
+      // If AI Photo-to-Photo generated a full image containing the subject, show the pure AI Photo-to-Photo poster by default.
+      // Otherwise (if it generated a background artwork or layout), show the user's photo frame + text overlay.
+      if (aiDesign.aiGeneratedImageDataUrl && aiDesign.aiGeneratedImageIsFullPhotoToPhoto) {
         setShowOverlayOnAiPoster(false);
       } else {
         setShowOverlayOnAiPoster(true);

@@ -1,5 +1,11 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut,
+} from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
@@ -9,6 +15,42 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+/**
+ * Creates a Firebase Auth user account using an isolated secondary FirebaseApp instance
+ * so the currently logged-in Admin is NOT signed out.
+ */
+export async function createFirebaseAccountViaSecondaryApp(
+  email: string,
+  password: string,
+  displayName: string
+): Promise<{ uid: string | null; error?: string }> {
+  try {
+    const secondaryAppName = 'MalnaduAdminUserCreatorApp';
+    const existingSecondary = getApps().find((a) => a.name === secondaryAppName);
+    const secondaryApp = existingSecondary || initializeApp(firebaseConfig, secondaryAppName);
+    const secondaryAuth = getAuth(secondaryApp);
+
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    const createdUid = cred.user.uid;
+    try {
+      await updateProfile(cred.user, { displayName: displayName.slice(0, 100) });
+    } catch {
+      // ignore profile display name error
+    }
+    try {
+      await signOut(secondaryAuth);
+    } catch {
+      // ignore signOut error on secondary app
+    }
+    return { uid: createdUid };
+  } catch (err: any) {
+    return {
+      uid: null,
+      error: err?.code || err?.message || 'Could not create Firebase Auth user',
+    };
+  }
+}
 
 export enum OperationType {
   CREATE = 'create',

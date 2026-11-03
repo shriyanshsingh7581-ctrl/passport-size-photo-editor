@@ -40,9 +40,9 @@ export const AURA_AI_ENGINES: Record<AuraEngineId, AuraEngineOption> = {
     badge: 'Photo-to-Photo + Fast AI',
     tagline: 'Instant AI Photo-to-Photo transformation, studio portraits & vibrant poster creation',
     imageGenerationModels: [
+      'google/gemini-3.1-flash-image-preview',
       'google/gemini-2.5-flash-image',
       'openai/gpt-5-image-mini',
-      'google/gemini-3.1-flash-image-preview',
     ],
     openRouterModels: ['openai/gpt-4o-mini', 'openai/gpt-4o', 'google/gemini-2.5-flash-lite'],
     primaryModel: 'chatgpt',
@@ -124,8 +124,43 @@ export async function normalizeImageToBase64DataUrl(
 }
 
 /**
+ * Extracts a generated base64 image data URL from an OpenRouter multimodal chat completion message
+ */
+function extractGeneratedImageFromMessage(msg: any): string {
+  if (!msg) return '';
+
+  // 1. Standard OpenRouter multimodal image output array: message.images[0].image_url.url
+  const firstImageObj = msg?.images?.[0];
+  const extractedUrl =
+    firstImageObj?.image_url?.url ||
+    firstImageObj?.url ||
+    (typeof firstImageObj === 'string' ? firstImageObj : '');
+
+  if (typeof extractedUrl === 'string' && extractedUrl.startsWith('data:image/')) {
+    return extractedUrl;
+  }
+
+  // 2. Check if content itself contains a base64 data URL or array part
+  if (Array.isArray(msg?.content)) {
+    for (const part of msg.content) {
+      const partUrl = part?.image_url?.url || part?.url;
+      if (typeof partUrl === 'string' && partUrl.startsWith('data:image/')) {
+        return partUrl;
+      }
+    }
+  } else if (typeof msg?.content === 'string') {
+    const match = msg.content.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
+    if (match?.[0]) {
+      return match[0];
+    }
+  }
+
+  return '';
+}
+
+/**
  * Calls OpenRouter's real Photo-to-Photo / Image Generation models
- * (`google/gemini-2.5-flash-image`, `google/gemini-3.1-flash-image-preview`, `openai/gpt-5-image-mini`)
+ * (`google/gemini-3.1-flash-image-preview`, `google/gemini-2.5-flash-image`, `openai/gpt-5-image-mini`)
  * with `modalities: ["image", "text"]` and returns the generated base64 image data URL.
  */
 export async function generatePhotoToPhotoWithAuraAi(params: {
@@ -138,6 +173,7 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
   imageDataUrl: string;
   engineDisplayName: string;
   modelUsed: string;
+  isFullPhotoToPhoto: boolean;
 }> {
   const {
     prompt,
@@ -153,25 +189,24 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
 
   const hasInputPhoto = Boolean(photo1DataUrl);
 
-  const detailedPrompt = hasInputPhoto
-    ? `You are ${engine.displayName}, a professional Studio Photo-to-Photo & Poster Designer.
-Using the attached reference photo${photo2DataUrl ? 's' : ''}, create a stunning high-resolution ${
-        aspectHint === 'landscape-banner' ? '16:9 widescreen broadcast poster' : 'vertical studio poster / photo-to-photo masterpiece'
-      }.
-IMPORTANT PHOTO-TO-PHOTO RULES:
-1. Preserve the exact facial identity, features, and likeness of the person(s) from the uploaded reference photo${photo2DataUrl ? 's' : ''}.
-2. Seamlessly integrate and enhance the subject(s) into a professional studio design matching this request: "${prompt}".
-3. Include rich studio lighting, luxury color grading, ornamental framing, and clear, legible celebratory typography if text/names are mentioned in the request.`
-    : `You are ${engine.displayName}, a professional Studio Poster & Image Designer.
-Create a stunning, high-resolution ${
-        aspectHint === 'landscape-banner' ? '16:9 widescreen broadcast poster' : 'vertical studio poster'
-      } matching this request: "${prompt}".
-Include rich luxury lighting, festive ornamental borders, and clear, legible celebratory typography.`;
+  // IMPORTANT: Place reference image_url parts FIRST in content array, followed by text prompt.
+  // Avoid trigger phrases that cause text-only responses on Gemini image models.
+  const photoToPhotoPromptText = hasInputPhoto
+    ? `Generate a new high-resolution ${
+        aspectHint === 'landscape-banner'
+          ? '16:9 widescreen broadcast poster image'
+          : 'vertical celebratory studio poster image'
+      } based on this reference image and this prompt: "${prompt}". Include festive studio lighting, luxury royal framing, and clear poster title text. Output an image.`
+    : `Generate a new high-resolution ${
+        aspectHint === 'landscape-banner'
+          ? '16:9 widescreen broadcast poster image'
+          : 'vertical celebratory studio poster image'
+      } for this request: "${prompt}". Include rich luxury lighting, festive ornamental borders, and clear celebratory typography. Output an image.`;
 
   const contentParts: Array<
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } }
-  > = [{ type: 'text', text: detailedPrompt }];
+  > = [];
 
   if (photo1DataUrl) {
     contentParts.push({
@@ -187,6 +222,12 @@ Include rich luxury lighting, festive ornamental borders, and clear, legible cel
     });
   }
 
+  contentParts.push({
+    type: 'text',
+    text: photoToPhotoPromptText,
+  });
+
+  // Stage 1: True Photo-to-Photo (Image + Text -> Image) across OpenRouter multimodal image models
   for (const imgModel of engine.imageGenerationModels) {
     try {
       const response = await fetch(OPENROUTER_DIRECT_URL, {
@@ -215,47 +256,65 @@ Include rich luxury lighting, festive ornamental borders, and clear, legible cel
       }
 
       const data = await response.json();
-      const msg = data?.choices?.[0]?.message;
-
-      // 1. Standard OpenRouter multimodal image output array: message.images[0].image_url.url
-      const firstImageObj = msg?.images?.[0];
-      const extractedUrl =
-        firstImageObj?.image_url?.url ||
-        firstImageObj?.url ||
-        (typeof firstImageObj === 'string' ? firstImageObj : '');
-
-      if (typeof extractedUrl === 'string' && extractedUrl.startsWith('data:image/')) {
+      const extracted = extractGeneratedImageFromMessage(data?.choices?.[0]?.message);
+      if (extracted) {
         return {
-          imageDataUrl: extractedUrl,
+          imageDataUrl: extracted,
           engineDisplayName: engine.displayName,
           modelUsed: imgModel,
+          isFullPhotoToPhoto: true,
         };
-      }
-
-      // 2. Check if content itself contains a base64 data URL or array part
-      if (Array.isArray(msg?.content)) {
-        for (const part of msg.content) {
-          const partUrl = part?.image_url?.url || part?.url;
-          if (typeof partUrl === 'string' && partUrl.startsWith('data:image/')) {
-            return {
-              imageDataUrl: partUrl,
-              engineDisplayName: engine.displayName,
-              modelUsed: imgModel,
-            };
-          }
-        }
-      } else if (typeof msg?.content === 'string') {
-        const match = msg.content.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
-        if (match?.[0]) {
-          return {
-            imageDataUrl: match[0],
-            engineDisplayName: engine.displayName,
-            modelUsed: imgModel,
-          };
-        }
       }
     } catch {
       // Try next image generation model in list
+    }
+  }
+
+  // Stage 2: If an input photo was provided and all models declined direct face editing,
+  // generate a high-resolution AI studio poster background image from the prompt so the user's photo
+  // is composited seamlessly into a real AI-generated poster artwork.
+  if (hasInputPhoto) {
+    const bgPromptText = `Generate a high-resolution luxury ${
+      aspectHint === 'landscape-banner' ? '16:9 widescreen' : 'vertical'
+    } studio celebration poster artwork background for: "${prompt}". Include ornate golden borders, festive lighting, and royal Indian studio decor. Output an image.`;
+
+    for (const imgModel of engine.imageGenerationModels) {
+      try {
+        const response = await fetch(OPENROUTER_DIRECT_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer':
+              typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
+            'X-Title': 'Aura AI Photo-to-Photo Studio',
+          },
+          body: JSON.stringify({
+            model: imgModel,
+            modalities: ['image', 'text'],
+            messages: [
+              {
+                role: 'user',
+                content: [{ type: 'text', text: bgPromptText }],
+              },
+            ],
+          }),
+        });
+
+        if (!response.ok) continue;
+        const data = await response.json();
+        const extracted = extractGeneratedImageFromMessage(data?.choices?.[0]?.message);
+        if (extracted) {
+          return {
+            imageDataUrl: extracted,
+            engineDisplayName: engine.displayName,
+            modelUsed: imgModel,
+            isFullPhotoToPhoto: false,
+          };
+        }
+      } catch {
+        // continue
+      }
     }
   }
 
@@ -263,6 +322,7 @@ Include rich luxury lighting, festive ornamental borders, and clear, legible cel
     imageDataUrl: '',
     engineDisplayName: engine.displayName,
     modelUsed: '',
+    isFullPhotoToPhoto: false,
   };
 }
 
@@ -351,6 +411,7 @@ export interface AuraGeneratedPosterDesign {
   rsvp: string;
   engineUsed: string;
   aiGeneratedImageDataUrl?: string;
+  aiGeneratedImageIsFullPhotoToPhoto?: boolean;
 }
 
 /**
@@ -571,7 +632,12 @@ Return strictly a JSON object matching these exact keys and allowed values:
           secondaryPhotoSource,
           aspectHint: 'portrait-poster',
         })
-      : Promise.resolve({ imageDataUrl: '', engineDisplayName: engine.displayName, modelUsed: '' }),
+      : Promise.resolve({
+          imageDataUrl: '',
+          engineDisplayName: engine.displayName,
+          modelUsed: '',
+          isFullPhotoToPhoto: false,
+        }),
   ]);
 
   const { text, engineDisplayName } = completionRes;
@@ -731,6 +797,7 @@ Return strictly a JSON object matching these exact keys and allowed values:
     rsvp: (parsed.rsvp || 'With Best Compliments From Family & Friends').slice(0, 65),
     engineUsed: engineDisplayName,
     aiGeneratedImageDataUrl: photoToPhotoRes.imageDataUrl || undefined,
+    aiGeneratedImageIsFullPhotoToPhoto: Boolean(photoToPhotoRes.isFullPhotoToPhoto),
   };
 }
 

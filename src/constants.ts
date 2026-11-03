@@ -633,6 +633,8 @@ export type AccountStatus = 'pending' | 'approved' | 'active' | 'blocked' | 'rem
 
 export interface UserProfile {
   uid: string;
+  userId?: string;
+  loginPassword?: string;
   displayName: string;
   email: string;
   phone: string;

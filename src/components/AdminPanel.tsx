@@ -70,7 +70,14 @@ interface AdminPanelProps {
     phone: string,
     role: 'user' | 'admin',
     status: AccountStatus,
-    initialCredits?: number
+    initialCredits?: number,
+    userId?: string,
+    loginPassword?: string
+  ) => Promise<void>;
+  onUpdateUserCredentials?: (
+    uid: string,
+    userId: string,
+    loginPassword: string
   ) => Promise<void>;
   onSaveSiteSettings: (newSettings: SiteSettings) => Promise<void>;
   onToggleShortLinkStatus: (slug: string, currentActive: boolean) => Promise<void>;
@@ -106,6 +113,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateUserRole,
   onDeleteUserRecord,
   onCreateManagedUser,
+  onUpdateUserCredentials,
   onSaveSiteSettings,
   onToggleShortLinkStatus,
   onDeleteShortLink,
@@ -509,15 +517,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [userSearch, setUserSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | AccountStatus>('all');
   const [selectedUserModal, setSelectedUserModal] = useState<UserProfile | null>(null);
-  const [showAddUserForm, setShowAddUserForm] = useState(false);
+  const [showAddUserForm, setShowAddUserForm] = useState(true);
 
-  // Add User Form State
+  // Add User ID & Password Form State
   const [newUserName, setNewUserName] = useState('');
+  const [newUserCustomId, setNewUserCustomId] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [showNewUserPassword, setShowNewUserPassword] = useState(true);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
   const [newUserStatus, setNewUserStatus] = useState<AccountStatus>('approved');
   const [newUserInitialCredits, setNewUserInitialCredits] = useState('5');
+  const [isCreatingManagedUser, setIsCreatingManagedUser] = useState(false);
+
+  // Recently created user credentials card & per-row password visibility/edit state
+  const [lastCreatedUserCreds, setLastCreatedUserCreds] = useState<{
+    displayName: string;
+    userId: string;
+    email: string;
+    password: string;
+    phone: string;
+    credits: number;
+  } | null>(null);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+  const [modalEditUserId, setModalEditUserId] = useState('');
+  const [modalEditPassword, setModalEditPassword] = useState('');
+
+  const generateRandomUserPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let pass = 'St@';
+    for (let i = 0; i < 6; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewUserPassword(pass);
+    setShowNewUserPassword(true);
+  };
+
+  const generateAutoUserIdFromName = (nameVal = newUserName) => {
+    const base =
+      nameVal
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .slice(0, 10) || 'user';
+    const randNum = Math.floor(100 + Math.random() * 900);
+    setNewUserCustomId(`${base}${randNum}`);
+  };
 
   // Branding & Footer Credit Form State
   const [formSettings, setFormSettings] = useState<SiteSettings>(() => ({
@@ -552,6 +598,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     const matchesSearch =
       !q ||
       u.displayName?.toLowerCase().includes(q) ||
+      u.userId?.toLowerCase().includes(q) ||
       u.email?.toLowerCase().includes(q) ||
       u.phone?.toLowerCase().includes(q) ||
       u.uid?.toLowerCase().includes(q);
@@ -560,7 +607,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleAddUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserName.trim() || !newUserEmail.trim()) return;
+    const cleanName = newUserName.trim();
+    const cleanCustomId = newUserCustomId.trim().replace(/\s+/g, '');
+    const cleanPass = newUserPassword.trim();
+    const rawEmail = newUserEmail.trim();
+
+    if (!cleanName) {
+      showToast('Please enter the user Full Name.');
+      return;
+    }
+    if (!cleanCustomId && !rawEmail) {
+      showToast('Please enter a User ID or Email Address.');
+      return;
+    }
+    if (!cleanPass || cleanPass.length < 6) {
+      showToast('Password must be at least 6 characters long.');
+      return;
+    }
+
+    const resolvedUserId =
+      cleanCustomId || (rawEmail.includes('@') ? rawEmail.split('@')[0] : rawEmail);
+    const resolvedEmail = rawEmail
+      ? rawEmail.includes('@')
+        ? rawEmail
+        : `${rawEmail}@studio.user`
+      : cleanCustomId.includes('@')
+      ? cleanCustomId
+      : `${cleanCustomId.toLowerCase()}@studio.user`;
+
+    // Check duplicate User ID or Email
+    const duplicate = users.find(
+      (u) =>
+        u.email.toLowerCase() === resolvedEmail.toLowerCase() ||
+        (u.userId && u.userId.toLowerCase() === resolvedUserId.toLowerCase())
+    );
+    if (duplicate) {
+      showToast('This User ID or Email is already registered! Please choose another ID.');
+      return;
+    }
+
     const initCredits = Math.max(0, parseInt(newUserInitialCredits, 10) || 0);
     if (initCredits > adminCreditPool) {
       showToast(
@@ -568,33 +653,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       );
       return;
     }
-    if (initCredits > 0) {
-      const nextPool = saveAdminCreditPool(adminCreditPool - initCredits);
-      onUpdateAdminCreditPool(nextPool);
-      const updatedLogs = appendCreditRechargeLog({
-        targetName: `${newUserName.trim()} (New User Created)`,
-        targetEmail: `${newUserEmail.trim()} · Pool Left: ${nextPool}`,
-        action: 'add',
-        amount: initCredits,
-        balanceAfter: initCredits,
+
+    setIsCreatingManagedUser(true);
+    try {
+      if (initCredits > 0) {
+        const nextPool = saveAdminCreditPool(adminCreditPool - initCredits);
+        onUpdateAdminCreditPool(nextPool);
+        const updatedLogs = appendCreditRechargeLog({
+          targetName: `${cleanName} (ID: ${resolvedUserId})`,
+          targetEmail: `${resolvedEmail} · Pool Left: ${nextPool}`,
+          action: 'add',
+          amount: initCredits,
+          balanceAfter: initCredits,
+        });
+        setCreditLogs(updatedLogs);
+      }
+
+      await onCreateManagedUser(
+        cleanName,
+        resolvedEmail,
+        newUserPhone.trim(),
+        newUserRole,
+        newUserStatus,
+        initCredits,
+        resolvedUserId,
+        cleanPass
+      );
+
+      setLastCreatedUserCreds({
+        displayName: cleanName,
+        userId: resolvedUserId,
+        email: resolvedEmail,
+        password: cleanPass,
+        phone: newUserPhone.trim(),
+        credits: initCredits,
       });
-      setCreditLogs(updatedLogs);
+
+      setNewUserName('');
+      setNewUserCustomId('');
+      setNewUserPassword('');
+      setNewUserEmail('');
+      setNewUserPhone('');
+      setNewUserRole('user');
+      setNewUserStatus('approved');
+      setNewUserInitialCredits('5');
+    } finally {
+      setIsCreatingManagedUser(false);
     }
-    await onCreateManagedUser(
-      newUserName.trim(),
-      newUserEmail.trim(),
-      newUserPhone.trim(),
-      newUserRole,
-      newUserStatus,
-      initCredits
-    );
-    setNewUserName('');
-    setNewUserEmail('');
-    setNewUserPhone('');
-    setNewUserRole('user');
-    setNewUserStatus('approved');
-    setNewUserInitialCredits('5');
-    setShowAddUserForm(false);
   };
 
   // Custom Poster Templates State (Website Admin Panel)
@@ -2063,7 +2168,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* =====================================================================
-          TAB 1: USER MANAGEMENT & ACCOUNT APPROVAL SYSTEM
+          TAB 1: USER MANAGEMENT, CREATE USER ID & PASSWORD, & CREDIT DISTRIBUTION
          ===================================================================== */}
       {adminTab === 'users' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 space-y-5 shadow-xs">
@@ -2071,23 +2176,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
-                  User Account Approval & Credit Distribution
+                  Create User ID &amp; Password · Account &amp; Credit Management
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 font-mono text-xs font-extrabold">
                   Admin Pool Available: {adminCreditPool} Credits
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Approve pending registrations, give credits to users from your Admin Pool, or manage user access.
+                Create custom User ID &amp; Password for customers/operators, assign credits from your Admin Pool, or update existing user passwords.
               </p>
             </div>
 
             <button
+              type="button"
               onClick={() => setShowAddUserForm((v) => !v)}
-              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-bold transition flex items-center gap-2 self-start sm:self-auto"
+              className="min-h-[42px] px-4 py-2 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-extrabold transition flex items-center gap-2 self-start sm:self-auto shadow-xs"
             >
-              <i className="fa-solid fa-user-plus"></i>
-              <span>{showAddUserForm ? 'Close Form' : 'Add User Account'}</span>
+              <i className={`fa-solid ${showAddUserForm ? 'fa-chevron-up' : 'fa-user-plus'}`}></i>
+              <span>
+                {showAddUserForm ? 'Hide Create ID & Password Form' : '+ Create User ID & Password'}
+              </span>
             </button>
           </div>
 
@@ -2110,68 +2218,292 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* Add New User Form */}
+          {/* CREATE NEW USER ID & PASSWORD FORM */}
           {showAddUserForm && (
             <form
               onSubmit={handleAddUserSubmit}
-              className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end"
+              className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-[#070a14] via-slate-900 to-[#130d26] text-white border border-cyan-500/40 space-y-4 shadow-lg"
             >
-              <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={newUserName}
-                  onChange={(e) => setNewUserName(e.target.value)}
-                  placeholder="Ramesh Gowda"
-                  className="w-full min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold">
+                    <i className="fa-solid fa-id-badge"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white">
+                      Create New User ID &amp; Password
+                    </h3>
+                    <p className="text-[11px] text-slate-300">
+                      Set a custom User ID (or Email) and Password. The user can immediately log in on the website using these credentials.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      generateAutoUserIdFromName();
+                      generateRandomUserPassword();
+                    }}
+                    className="min-h-[34px] px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-cyan-300 text-[11px] font-extrabold transition flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Auto-Generate ID &amp; Password</span>
+                  </button>
+                </div>
               </div>
-              <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Email Address</label>
-                <input
-                  type="email"
-                  required
-                  value={newUserEmail}
-                  onChange={(e) => setNewUserEmail(e.target.value)}
-                  placeholder="ramesh@malnadumedia.com"
-                  className="w-full min-h-[42px] px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
-                />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* 1. Full Name */}
+                <div>
+                  <label className="block text-[11px] font-extrabold text-cyan-300 mb-1">
+                    1. User Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newUserName}
+                    onChange={(e) => {
+                      setNewUserName(e.target.value);
+                      if (!newUserCustomId) {
+                        const slug = e.target.value
+                          .trim()
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]/g, '')
+                          .slice(0, 12);
+                        if (slug.length >= 3) {
+                          setNewUserCustomId(`${slug}01`);
+                        }
+                      }
+                    }}
+                    placeholder="e.g. Ramesh Kumar"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs bg-slate-950 border border-slate-700 text-white rounded-xl focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                {/* 2. User ID / Username */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-extrabold text-amber-300">
+                      2. User ID (Login ID) *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => generateAutoUserIdFromName()}
+                      className="text-[10px] font-bold text-cyan-300 hover:underline"
+                    >
+                      Auto ID
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    required={!newUserEmail}
+                    value={newUserCustomId}
+                    onChange={(e) => setNewUserCustomId(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="e.g. ramesh01"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono font-bold bg-slate-950 border border-amber-400/50 text-amber-200 rounded-xl focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                {/* 3. Password */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-extrabold text-emerald-300">
+                      3. Login Password (Min 6 chars) *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={generateRandomUserPassword}
+                      className="text-[10px] font-bold text-emerald-300 hover:underline"
+                    >
+                      Generate Pass
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showNewUserPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      placeholder="e.g. Studio@2026"
+                      className="w-full min-h-[42px] pl-3.5 pr-9 py-2 text-xs font-mono font-bold bg-slate-950 border border-emerald-400/50 text-emerald-200 rounded-xl focus:outline-none focus:border-emerald-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewUserPassword((v) => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                      title="Show / Hide Password"
+                    >
+                      <i className={`fa-solid ${showNewUserPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Email Address (Optional if User ID is provided) */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    4. Email Address (Optional)
+                  </label>
+                  <input
+                    type="email"
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    placeholder={
+                      newUserCustomId
+                        ? `${newUserCustomId.toLowerCase()}@studio.user`
+                        : 'ramesh@gmail.com'
+                    }
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs bg-slate-950 border border-slate-700 text-white rounded-xl focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  Give Credits (Pool: {adminCreditPool})
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={adminCreditPool}
-                  value={newUserInitialCredits}
-                  onChange={(e) => setNewUserInitialCredits(e.target.value)}
-                  className="w-full min-h-[42px] px-3 py-2 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Initial Status</label>
-                <select
-                  value={newUserStatus}
-                  onChange={(e) => setNewUserStatus(e.target.value as AccountStatus)}
-                  className="w-full min-h-[42px] px-2.5 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="blocked">Blocked</option>
-                </select>
-              </div>
-              <div>
-                <button
-                  type="submit"
-                  className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-[#070a14] text-cyan-300 text-xs font-bold hover:bg-slate-800 transition"
-                >
-                  Create User
-                </button>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 items-end pt-1">
+                {/* 5. Mobile / WhatsApp Number */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    5. Mobile / WhatsApp
+                  </label>
+                  <input
+                    type="tel"
+                    value={newUserPhone}
+                    onChange={(e) => setNewUserPhone(e.target.value)}
+                    placeholder="+91 98765 43210"
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs bg-slate-950 border border-slate-700 text-white rounded-xl focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                {/* 6. Give Credits */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    6. Initial Credits (Pool: {adminCreditPool})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={adminCreditPool}
+                    value={newUserInitialCredits}
+                    onChange={(e) => setNewUserInitialCredits(e.target.value)}
+                    className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono font-bold bg-slate-950 border border-slate-700 text-cyan-300 rounded-xl focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                {/* 7. Account Role */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    7. Account Role
+                  </label>
+                  <select
+                    value={newUserRole}
+                    onChange={(e) => setNewUserRole(e.target.value as 'user' | 'admin')}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-950 border border-slate-700 text-white rounded-xl"
+                  >
+                    <option value="user">Standard User</option>
+                    <option value="admin">Studio Admin</option>
+                  </select>
+                </div>
+
+                {/* 8. Initial Status */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    8. Account Status
+                  </label>
+                  <select
+                    value={newUserStatus}
+                    onChange={(e) => setNewUserStatus(e.target.value as AccountStatus)}
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-bold bg-slate-950 border border-slate-700 text-white rounded-xl"
+                  >
+                    <option value="approved">Approved (Active)</option>
+                    <option value="pending">Pending Approval</option>
+                    <option value="blocked">Blocked</option>
+                  </select>
+                </div>
+
+                {/* Submit Button */}
+                <div>
+                  <button
+                    type="submit"
+                    disabled={isCreatingManagedUser}
+                    className="w-full min-h-[42px] px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-50 text-slate-950 text-xs font-extrabold transition shadow-md flex items-center justify-center gap-1.5"
+                  >
+                    <i
+                      className={`fa-solid ${
+                        isCreatingManagedUser ? 'fa-spinner fa-spin' : 'fa-user-check'
+                      }`}
+                    ></i>
+                    <span>
+                      {isCreatingManagedUser
+                        ? 'Creating Account...'
+                        : 'Create User ID & Password'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </form>
+          )}
+
+          {/* NEWLY CREATED USER CREDENTIALS SHARE BANNER */}
+          {lastCreatedUserCreds && (
+            <div className="p-4 rounded-2xl bg-emerald-950 text-white border-2 border-emerald-400/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-md">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-md bg-emerald-500 text-slate-950 text-[10px] font-extrabold uppercase">
+                    ✓ New User ID &amp; Password Created
+                  </span>
+                  <span className="text-sm font-extrabold text-white">
+                    {lastCreatedUserCreds.displayName}
+                  </span>
+                  <span className="text-xs font-mono text-emerald-300">
+                    ({lastCreatedUserCreds.credits} Credits Active)
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs font-mono pt-1">
+                  <span className="px-3 py-1 rounded-lg bg-white/10 border border-white/15 text-amber-300 font-bold">
+                    User ID: {lastCreatedUserCreds.userId}
+                  </span>
+                  <span className="px-3 py-1 rounded-lg bg-white/10 border border-white/15 text-cyan-300 font-bold">
+                    Email: {lastCreatedUserCreds.email}
+                  </span>
+                  <span className="px-3 py-1 rounded-lg bg-white/10 border border-white/15 text-emerald-300 font-bold">
+                    Password: {lastCreatedUserCreds.password}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const msg = `Studio Login Credentials for ${lastCreatedUserCreds.displayName}:\nWebsite: ${baseOrigin}\nUser ID: ${lastCreatedUserCreds.userId}\nEmail: ${lastCreatedUserCreds.email}\nPassword: ${lastCreatedUserCreds.password}\nCredits: ${lastCreatedUserCreds.credits}`;
+                    navigator.clipboard?.writeText(msg);
+                    showToast('Copied User ID & Password to clipboard!');
+                  }}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-white text-slate-950 hover:bg-slate-100 text-xs font-extrabold transition flex items-center gap-1.5"
+                >
+                  <i className="fa-regular fa-copy"></i>
+                  <span>Copy ID &amp; Password</span>
+                </button>
+                <a
+                  href={`https://wa.me/${(lastCreatedUserCreds.phone || '').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                    `Hello ${lastCreatedUserCreds.displayName},\nYour Studio Account is ready!\n\nLogin URL: ${baseOrigin}\nUser ID: ${lastCreatedUserCreds.userId}\nEmail: ${lastCreatedUserCreds.email}\nPassword: ${lastCreatedUserCreds.password}\nAvailable Credits: ${lastCreatedUserCreds.credits}`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5"
+                >
+                  <i className="fa-brands fa-whatsapp"></i>
+                  <span>Send on WhatsApp</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setLastCreatedUserCreds(null)}
+                  className="min-h-[38px] px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-slate-300"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Search & Status Filter Bar */}
@@ -2182,7 +2514,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 type="text"
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
-                placeholder="Search users by name, email, phone, or UID..."
+                placeholder="Search users by name, User ID, email, phone, or UID..."
                 className="w-full min-h-[44px] pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
             </div>
@@ -2212,156 +2544,216 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredUsers.map((u) => (
-                <div
-                  key={u.uid}
-                  className="p-4 rounded-2xl border border-slate-200 hover:border-cyan-300 transition bg-slate-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                >
-                  <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 via-blue-600 to-purple-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0">
-                      {(u.displayName || u.email || 'U').charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-extrabold text-slate-900 truncate">
-                          {u.displayName || 'Unnamed User'}
-                        </span>
-                        {getStatusBadge(u.status)}
-                        <span
-                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                            u.role === 'admin'
-                              ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {u.role}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[10px] font-extrabold">
-                          <i className="fa-solid fa-coins mr-1 text-amber-600"></i>
-                          {typeof u.credits === 'number' ? u.credits : 5} Credits
-                        </span>
+              {filteredUsers.map((u) => {
+                const resolvedUidLogin =
+                  u.userId || (u.email.includes('@') ? u.email.split('@')[0] : u.email);
+                const isPassRevealed = Boolean(revealedPasswords[u.uid]);
+
+                return (
+                  <div
+                    key={u.uid}
+                    className="p-4 rounded-2xl border border-slate-200 hover:border-cyan-300 transition bg-slate-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                  >
+                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 via-blue-600 to-purple-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                        {(u.displayName || u.email || 'U').charAt(0).toUpperCase()}
                       </div>
-                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span>
-                          <i className="fa-regular fa-envelope mr-1 text-slate-400"></i>
-                          {u.email}
-                        </span>
-                        {u.phone && (
-                          <span>
-                            <i className="fa-solid fa-phone mr-1 text-slate-400"></i>
-                            {u.phone}
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-extrabold text-slate-900 truncate">
+                            {u.displayName || 'Unnamed User'}
                           </span>
-                        )}
-                        <span className="font-mono text-[11px] text-slate-400">
-                          Joined: {formatDateString(u.createdAt)}
-                        </span>
+                          {getStatusBadge(u.status)}
+                          <span
+                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                              u.role === 'admin'
+                                ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {u.role}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[10px] font-extrabold">
+                            <i className="fa-solid fa-coins mr-1 text-amber-600"></i>
+                            {typeof u.credits === 'number' ? u.credits : 5} Credits
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 font-mono text-[11px] font-bold">
+                            ID: {resolvedUidLogin}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-900 text-emerald-300 font-mono text-[11px] font-bold inline-flex items-center gap-1.5">
+                            <span>
+                              Pass:{' '}
+                              {u.loginPassword
+                                ? isPassRevealed
+                                  ? u.loginPassword
+                                  : '••••••••'
+                                : 'Not Set'}
+                            </span>
+                            {u.loginPassword && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRevealedPasswords((prev) => ({
+                                    ...prev,
+                                    [u.uid]: !prev[u.uid],
+                                  }))
+                                }
+                                className="text-slate-300 hover:text-white"
+                                title="Show / Hide Password"
+                              >
+                                <i
+                                  className={`fa-solid ${
+                                    isPassRevealed ? 'fa-eye-slash' : 'fa-eye'
+                                  } text-[10px]`}
+                                ></i>
+                              </button>
+                            )}
+                          </span>
+                          <span>
+                            <i className="fa-regular fa-envelope mr-1 text-slate-400"></i>
+                            {u.email}
+                          </span>
+                          {u.phone && (
+                            <span>
+                              <i className="fa-solid fa-phone mr-1 text-slate-400"></i>
+                              {u.phone}
+                            </span>
+                          )}
+                          <span className="font-mono text-[11px] text-slate-400">
+                            Joined: {formatDateString(u.createdAt)}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
+                    {/* Admin Account Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {u.loginPassword && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = `Studio Login\nUser ID: ${resolvedUidLogin}\nEmail: ${u.email}\nPassword: ${u.loginPassword}`;
+                            navigator.clipboard?.writeText(text);
+                            showToast(`Copied ID & Password for ${u.displayName}!`);
+                          }}
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 text-xs font-extrabold transition flex items-center gap-1.5"
+                          title="Copy User ID & Password"
+                        >
+                          <i className="fa-regular fa-copy"></i>
+                          <span>Copy ID/Pass</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedUserModal(u);
+                          setModalEditUserId(resolvedUidLogin);
+                          setModalEditPassword(u.loginPassword || '');
+                        }}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-extrabold transition flex items-center gap-1.5"
+                        title="Set or Change User ID & Password"
+                      >
+                        <i className="fa-solid fa-key"></i>
+                        <span>Set ID / Pass</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={adminCreditPool < 25}
+                        onClick={() => handleAdjustUserCredits(u, 'add', 25)}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
+                        title="Give +25 Credits from Website Admin Pool"
+                      >
+                        <i className="fa-solid fa-plus text-[10px]"></i>
+                        <span>Give 25</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={adminCreditPool < 100}
+                        onClick={() => handleAdjustUserCredits(u, 'add', 100)}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
+                        title="Give +100 Credits from Website Admin Pool"
+                      >
+                        <i className="fa-solid fa-plus text-[10px]"></i>
+                        <span>Give 100</span>
+                      </button>
+
+                      <button
+                        onClick={() => setAdminTab('credits')}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5"
+                        title="Open Full Credit Pool Distributor"
+                      >
+                        <i className="fa-solid fa-coins"></i>
+                        <span>Custom Credits</span>
+                      </button>
+
+                      {u.status !== 'approved' && (
+                        <button
+                          onClick={() => onUpdateUserStatus(u.uid, 'approved')}
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                          title="Approve User Account"
+                        >
+                          <i className="fa-solid fa-check"></i>
+                          <span>Approve</span>
+                        </button>
+                      )}
+
+                      {u.status === 'pending' && (
+                        <button
+                          onClick={() => onUpdateUserStatus(u.uid, 'removed')}
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold transition flex items-center gap-1.5"
+                          title="Reject User Registration"
+                        >
+                          <i className="fa-solid fa-xmark"></i>
+                          <span>Reject</span>
+                        </button>
+                      )}
+
+                      {u.status !== 'blocked' ? (
+                        <button
+                          onClick={() => onUpdateUserStatus(u.uid, 'blocked')}
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold transition flex items-center gap-1.5"
+                          title="Block User Account"
+                        >
+                          <i className="fa-solid fa-ban"></i>
+                          <span>Block</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onUpdateUserStatus(u.uid, 'approved')}
+                          className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-100 hover:bg-cyan-200 text-cyan-900 text-xs font-bold transition flex items-center gap-1.5"
+                          title="Unblock User Account"
+                        >
+                          <i className="fa-solid fa-unlock"></i>
+                          <span>Unblock</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() =>
+                          onUpdateUserRole(u.uid, u.role === 'admin' ? 'user' : 'admin')
+                        }
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition"
+                        title="Toggle Admin / User Role"
+                      >
+                        {u.role === 'admin' ? 'Make User' : 'Make Admin'}
+                      </button>
+
+                      <button
+                        onClick={() => onDeleteUserRecord(u.uid)}
+                        className="min-h-[38px] min-w-[38px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center transition"
+                        title="Remove / Delete User Account"
+                      >
+                        <i className="fa-solid fa-trash-can text-xs"></i>
+                      </button>
+                    </div>
                   </div>
-
-                  {/* Admin Account Action Buttons */}
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={adminCreditPool < 25}
-                      onClick={() => handleAdjustUserCredits(u, 'add', 25)}
-                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
-                      title="Give +25 Credits from Website Admin Pool"
-                    >
-                      <i className="fa-solid fa-plus text-[10px]"></i>
-                      <span>Give 25</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={adminCreditPool < 100}
-                      onClick={() => handleAdjustUserCredits(u, 'add', 100)}
-                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-extrabold transition flex items-center gap-1"
-                      title="Give +100 Credits from Website Admin Pool"
-                    >
-                      <i className="fa-solid fa-plus text-[10px]"></i>
-                      <span>Give 100</span>
-                    </button>
-
-                    <button
-                      onClick={() => setAdminTab('credits')}
-                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5"
-                      title="Open Full Credit Pool Distributor"
-                    >
-                      <i className="fa-solid fa-coins"></i>
-                      <span>Custom Credits</span>
-                    </button>
-
-                    {u.status !== 'approved' && (
-                      <button
-                        onClick={() => onUpdateUserStatus(u.uid, 'approved')}
-                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
-                        title="Approve User Account"
-                      >
-                        <i className="fa-solid fa-check"></i>
-                        <span>Approve</span>
-                      </button>
-                    )}
-
-                    {u.status === 'pending' && (
-                      <button
-                        onClick={() => onUpdateUserStatus(u.uid, 'removed')}
-                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold transition flex items-center gap-1.5"
-                        title="Reject User Registration"
-                      >
-                        <i className="fa-solid fa-xmark"></i>
-                        <span>Reject</span>
-                      </button>
-                    )}
-
-                    {u.status !== 'blocked' ? (
-                      <button
-                        onClick={() => onUpdateUserStatus(u.uid, 'blocked')}
-                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold transition flex items-center gap-1.5"
-                        title="Block User Account"
-                      >
-                        <i className="fa-solid fa-ban"></i>
-                        <span>Block</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onUpdateUserStatus(u.uid, 'approved')}
-                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-cyan-100 hover:bg-cyan-200 text-cyan-900 text-xs font-bold transition flex items-center gap-1.5"
-                        title="Unblock User Account"
-                      >
-                        <i className="fa-solid fa-unlock"></i>
-                        <span>Unblock</span>
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() =>
-                        onUpdateUserRole(u.uid, u.role === 'admin' ? 'user' : 'admin')
-                      }
-                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition"
-                      title="Toggle Admin / User Role"
-                    >
-                      {u.role === 'admin' ? 'Make User' : 'Make Admin'}
-                    </button>
-
-                    <button
-                      onClick={() => setSelectedUserModal(u)}
-                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition"
-                      title="View Full User Details"
-                    >
-                      Details
-                    </button>
-
-                    <button
-                      onClick={() => onDeleteUserRecord(u.uid)}
-                      className="min-h-[38px] min-w-[38px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center transition"
-                      title="Remove / Delete User Account"
-                    >
-                      <i className="fa-solid fa-trash-can text-xs"></i>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -3448,12 +3840,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* User Details Modal */}
+      {/* User Details & Set ID / Password Modal */}
       {selectedUserModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-extrabold text-slate-900">User Account Details</h3>
+              <h3 className="text-base font-extrabold text-slate-900">
+                User Account &amp; ID / Password Settings
+              </h3>
               <button
                 onClick={() => setSelectedUserModal(null)}
                 className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center"
@@ -3479,17 +3873,91 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span className="text-slate-500">User UID:</span>
                 <span className="font-mono text-[11px] text-slate-500">{selectedUserModal.uid}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-slate-100">
-                <span className="text-slate-500">Registered Date:</span>
-                <span className="font-mono text-slate-900">{formatDateString(selectedUserModal.createdAt)}</span>
-              </div>
               <div className="flex justify-between items-center py-1.5">
                 <span className="text-slate-500">Current Status:</span>
                 {getStatusBadge(selectedUserModal.status)}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            {/* Set / Update User ID & Password Box */}
+            <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-3 border border-cyan-500/30">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-cyan-300 flex items-center gap-1.5">
+                  <i className="fa-solid fa-key text-amber-300"></i>
+                  <span>Set / Change User ID &amp; Password</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+                    let pass = 'St@';
+                    for (let i = 0; i < 6; i++) {
+                      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+                    }
+                    setModalEditPassword(pass);
+                  }}
+                  className="text-[10px] font-bold text-emerald-300 hover:underline"
+                >
+                  Auto-Generate Pass
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                    User ID (Login ID)
+                  </label>
+                  <input
+                    type="text"
+                    value={modalEditUserId}
+                    onChange={(e) => setModalEditUserId(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="e.g. ramesh01"
+                    className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono font-bold bg-slate-950 border border-slate-700 text-amber-300 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                    New Password (Min 6 chars)
+                  </label>
+                  <input
+                    type="text"
+                    value={modalEditPassword}
+                    onChange={(e) => setModalEditPassword(e.target.value)}
+                    placeholder="Enter new password"
+                    className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono font-bold bg-slate-950 border border-slate-700 text-emerald-300 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const cleanId = modalEditUserId.trim();
+                  const cleanPass = modalEditPassword.trim();
+                  if (!cleanId) {
+                    showToast('Please enter a valid User ID.');
+                    return;
+                  }
+                  if (cleanPass.length < 6) {
+                    showToast('Password must be at least 6 characters.');
+                    return;
+                  }
+                  if (onUpdateUserCredentials) {
+                    await onUpdateUserCredentials(selectedUserModal.uid, cleanId, cleanPass);
+                  }
+                  setSelectedUserModal({
+                    ...selectedUserModal,
+                    userId: cleanId,
+                    loginPassword: cleanPass,
+                  });
+                }}
+                className="w-full min-h-[40px] rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white text-xs font-extrabold transition shadow-xs"
+              >
+                Save User ID &amp; Password
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 onClick={async () => {
                   await onUpdateUserStatus(selectedUserModal.uid, 'approved');

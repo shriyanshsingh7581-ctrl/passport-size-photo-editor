@@ -31,6 +31,7 @@ import {
   auth,
   db,
   googleProvider,
+  createFirebaseAccountViaSecondaryApp,
 } from './firebase';
 import {
   COUNTRY_PRESETS,
@@ -822,7 +823,14 @@ export default function App() {
           setAllUsers((prev) => {
             const map = new Map<string, UserProfile>();
             prev.forEach((u) => map.set(u.uid, u));
-            firestoreUsers.forEach((u) => map.set(u.uid, u));
+            firestoreUsers.forEach((u) => {
+              const prevLocal = map.get(u.uid);
+              map.set(u.uid, {
+                ...u,
+                userId: u.userId || prevLocal?.userId,
+                loginPassword: u.loginPassword || prevLocal?.loginPassword,
+              });
+            });
             const merged = Array.from(map.values());
             syncExistingUsersIntoFreeCreditGuard(merged);
             try {
@@ -2415,15 +2423,39 @@ export default function App() {
           );
         }
       } else {
-        // LOGIN MODE: Never grants free signup credits; only restores existing account balance
-        const normLoginEmail = normalizeIdentityEmail(emailClean);
+        // LOGIN MODE: Supports either Admin-created User ID (e.g. ramesh01) OR Email Address + Password
+        const rawLoginInput = emailClean.trim();
+        const lowerLoginInput = rawLoginInput.toLowerCase();
+        const normLoginEmail = normalizeIdentityEmail(rawLoginInput);
         const existingLocal = allUsers.find(
-          (u) => normalizeIdentityEmail(u.email) === normLoginEmail
+          (u) =>
+            (u.userId && u.userId.trim().toLowerCase() === lowerLoginInput) ||
+            normalizeIdentityEmail(u.email) === normLoginEmail ||
+            u.email.trim().toLowerCase() === `${lowerLoginInput}@studio.user`
         );
+
+        if (existingLocal && (existingLocal.status === 'blocked' || existingLocal.status === 'removed')) {
+          setAuthError('Your account has been blocked or deactivated by the Admin.');
+          return;
+        }
+
+        if (existingLocal?.loginPassword && authPassword !== existingLocal.loginPassword) {
+          setAuthError('Invalid User ID / Email or Password. Please check your credentials.');
+          return;
+        }
+
+        const resolvedFirebaseEmail =
+          existingLocal?.email ||
+          (rawLoginInput.includes('@') ? rawLoginInput : `${lowerLoginInput}@studio.user`);
+
         try {
-          await signInWithEmailAndPassword(auth, emailClean, authPassword);
+          await signInWithEmailAndPassword(auth, resolvedFirebaseEmail, authPassword);
         } catch {
           if (existingLocal) {
+            if (existingLocal.loginPassword && authPassword !== existingLocal.loginPassword) {
+              setAuthError('Invalid User ID / Email or Password. Please check your credentials.');
+              return;
+            }
             const sessionProfile: UserProfile = {
               ...existingLocal,
               credits: typeof existingLocal.credits === 'number' ? existingLocal.credits : 0,
@@ -2432,7 +2464,7 @@ export default function App() {
             upsertUserInLocalState(sessionProfile);
           } else {
             setAuthError(
-              'No account found with this email address. Please switch to "Register Account" to sign up as a new user.'
+              'No account found with this User ID or Email. Please check your ID/Password or switch to "Register Account".'
             );
             return;
           }
@@ -2621,14 +2653,35 @@ export default function App() {
     phone: string,
     role: 'user' | 'admin',
     status: AccountStatus,
-    initialCredits = 5
+    initialCredits = 5,
+    userId = '',
+    loginPassword = ''
   ) => {
-    const uid = `user-${Date.now()}`;
+    const cleanUserId = (userId || email.split('@')[0] || `user${Date.now().toString().slice(-4)}`)
+      .trim()
+      .toLowerCase();
+    const cleanEmail = (email.trim() || `${cleanUserId}@studio.user`).toLowerCase();
+    const cleanPass = loginPassword.trim();
+
+    let uid = `user-${Date.now()}`;
+    if (cleanPass.length >= 6) {
+      const fbRes = await createFirebaseAccountViaSecondaryApp(
+        cleanEmail,
+        cleanPass,
+        displayName.slice(0, 100)
+      );
+      if (fbRes.uid) {
+        uid = fbRes.uid;
+      }
+    }
+
     const safeCredits = Math.max(0, Math.floor(Number(initialCredits) || 0));
     const newUser: UserProfile = {
       uid,
+      userId: cleanUserId.slice(0, 60),
+      loginPassword: cleanPass.slice(0, 100),
       displayName: displayName.slice(0, 100),
-      email: email.slice(0, 150),
+      email: cleanEmail.slice(0, 150),
       phone: phone.slice(0, 30),
       role,
       status,
@@ -2637,15 +2690,64 @@ export default function App() {
     };
     upsertUserInLocalState(newUser);
     try {
+      const { userId: _omitUserId, loginPassword: _omitLoginPass, ...firestoreUser } = newUser;
       await setDoc(doc(db, 'users', uid), {
-        ...newUser,
+        ...firestoreUser,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } catch {
       // persisted locally
     }
-    showToast(`Added user ${displayName} (${safeCredits} Credits · ${status})`);
+    showToast(
+      `Created User ID "${cleanUserId}" for ${displayName} (${safeCredits} Credits · ${status})`
+    );
+  };
+
+  const handleUpdateUserCredentials = async (
+    uid: string,
+    userId: string,
+    loginPassword: string
+  ) => {
+    const cleanUserId = userId.trim().toLowerCase().slice(0, 60);
+    const cleanPass = loginPassword.trim().slice(0, 100);
+    const targetUser = allUsers.find((u) => u.uid === uid);
+
+    if (targetUser && cleanPass.length >= 6) {
+      const targetEmail =
+        targetUser.email?.trim() || `${cleanUserId || 'user'}@studio.user`;
+      await createFirebaseAccountViaSecondaryApp(
+        targetEmail,
+        cleanPass,
+        targetUser.displayName
+      );
+    }
+
+    setAllUsers((prev) => {
+      const next = prev.map((u) =>
+        u.uid === uid
+          ? {
+              ...u,
+              userId: cleanUserId || u.userId,
+              loginPassword: cleanPass || u.loginPassword,
+            }
+          : u
+      );
+      try {
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+
+    if (userProfile && userProfile.uid === uid) {
+      persistActiveUserSession({
+        ...userProfile,
+        userId: cleanUserId || userProfile.userId,
+        loginPassword: cleanPass || userProfile.loginPassword,
+      });
+    }
   };
 
   const handleSaveSiteSettings = async (newSettings: SiteSettings) => {
@@ -3189,7 +3291,7 @@ export default function App() {
                 }`}
               >
                 <i className="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
-                <span>Poster Maker (48+)</span>
+                <span>AI Photo-to-Photo Poster</span>
               </button>
 
               {siteSettings.enableMediaLiveToolsCategory !== false && (
@@ -3420,14 +3522,18 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Email Address *
+                  {authMode === 'login' ? 'User ID or Email Address *' : 'Email Address *'}
                 </label>
                 <input
-                  type="email"
+                  type={authMode === 'login' ? 'text' : 'email'}
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="you@example.com"
+                  placeholder={
+                    authMode === 'login'
+                      ? 'Enter User ID (e.g. ramesh01) or Email'
+                      : 'you@example.com'
+                  }
                   className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-950 border border-slate-700 text-white rounded-2xl focus:outline-none focus:border-cyan-400"
                 />
               </div>
@@ -3677,7 +3783,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Featured 48+ Wedding, Anniversary, Birthday & Memorial Poster Template Maker Banner */}
+          {/* Featured Aura AI + & Aura AI Pro Photo-to-Photo Poster Creator Banner */}
           <div className="bg-gradient-to-r from-[#070a14] via-purple-950 to-slate-900 text-white rounded-3xl border border-amber-400/40 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3.5">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-md shrink-0">
@@ -3686,17 +3792,17 @@ export default function App() {
               <div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300">
-                    New · 48 Editable Templates Across 8 Categories
+                    Aura AI + & Aura AI Pro · Photo-to-Photo AI Model
                   </span>
                   <span className="text-[10px] font-bold text-slate-400">
-                    Wedding · Anniversary · Engagement · Birthday · Memorial · Festival · Housewarming · Baby Shower
+                    Upload Your Photo + Prompt → Instant AI Photo-to-Photo Poster
                   </span>
                 </div>
                 <h2 className="text-sm sm:text-base font-extrabold text-white mt-0.5">
-                  Premium Wedding, Anniversary, Birthday, Housewarming & Memorial Poster Maker
+                  AI Photo-to-Photo Poster Generator (Wedding, Birthday, Anniversary, Festival & Studio Posters)
                 </h2>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  Upload single or multiple photos into predefined arch, circle, oval & royal frames. Drag, zoom, crop & customize all text fields with HD PNG/JPG download.
+                  Attach your photo, enter your prompt, and create a custom Photo-to-Photo poster using Aura AI + or Aura AI Pro with HD PNG/JPG download.
                 </p>
               </div>
             </div>
@@ -3704,8 +3810,8 @@ export default function App() {
               onClick={() => setActiveRoute('poster-maker')}
               className="min-h-[44px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-md active:scale-95 transition flex items-center gap-2 whitespace-nowrap shrink-0 w-full sm:w-auto justify-center"
             >
-              <i className="fa-solid fa-palette"></i>
-              <span>Open Poster Template Maker →</span>
+              <i className="fa-solid fa-wand-magic-sparkles"></i>
+              <span>Create Photo-to-Photo Poster →</span>
             </button>
           </div>
 
@@ -3726,6 +3832,16 @@ export default function App() {
                 className="hidden"
                 onChange={handleFileUpload}
               />
+
+              <button
+                type="button"
+                onClick={() => setActiveRoute('poster-maker')}
+                className="min-h-[46px] px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-extrabold text-xs shadow-sm active:scale-[0.98] transition flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                title="Use uploaded photo in Aura AI Photo-to-Photo Poster Maker"
+              >
+                <i className="fa-solid fa-wand-magic-sparkles text-xs"></i>
+                <span>Photo-to-Photo Poster</span>
+              </button>
 
               <div className="h-6 w-px bg-slate-200 mx-1 shrink-0"></div>
 
@@ -5214,12 +5330,13 @@ export default function App() {
         </main>
       )}
 
-      {/* ROUTE 1A: PREMIUM 48+ WEDDING, ANNIVERSARY & MEMORIAL POSTER TEMPLATE MAKER */}
+      {/* ROUTE 1A: AURA AI PHOTO-TO-PHOTO POSTER GENERATOR */}
       {userProfile && activeRoute === 'poster-maker' && (
         <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6">
           <PosterTemplateMaker
             onSendToStudio={handleSendImageToStudio}
             showToast={showToast}
+            initialPhotoUrl={compareOriginalSrc || undefined}
           />
         </main>
       )}
@@ -5332,6 +5449,7 @@ export default function App() {
             onUpdateUserRole={handleUpdateUserRole}
             onDeleteUserRecord={handleDeleteUserRecord}
             onCreateManagedUser={handleCreateManagedUser}
+            onUpdateUserCredentials={handleUpdateUserCredentials}
             onSaveSiteSettings={handleSaveSiteSettings}
             onToggleShortLinkStatus={handleToggleShortLinkStatus}
             onDeleteShortLink={handleDeleteShortLink}
@@ -5713,14 +5831,18 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Email Address
+                  {authMode === 'login' ? 'User ID or Email Address' : 'Email Address'}
                 </label>
                 <input
-                  type="email"
+                  type={authMode === 'login' ? 'text' : 'email'}
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="you@example.com"
+                  placeholder={
+                    authMode === 'login'
+                      ? 'Enter User ID (e.g. ramesh01) or Email'
+                      : 'you@example.com'
+                  }
                   className="w-full min-h-[46px] px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>
