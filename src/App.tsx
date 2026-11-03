@@ -354,6 +354,10 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiLoadingMsg, setAiLoadingMsg] = useState('Removing Background via remove.bg API...');
   const [aiProgress, setAiProgress] = useState(20);
+  const [studioExportQuality, setStudioExportQuality] = useState<'hd' | 'normal' | 'low'>('hd');
+  const [studioPhotoStyle, setStudioPhotoStyle] = useState<
+    'passport-formal' | 'studio-vivid' | 'natural-soft' | 'high-contrast' | 'bw-classic'
+  >('passport-formal');
 
   // Built-in Credit & Wallet System State (Tamper-Resistant LocalStorage + Strong Master Password)
   // Unauthenticated guests have 0 credits; credits are loaded only from an authenticated user's profile
@@ -1842,8 +1846,40 @@ export default function App() {
       wMm = (rawW / dpiVal) * 25.4;
       hMm = (rawH / dpiVal) * 25.4;
     }
-    setWidthMm(Math.max(15, Math.min(150, wMm)));
-    setHeightMm(Math.max(15, Math.min(150, hMm)));
+    setWidthMm(Math.max(15, Math.min(250, wMm)));
+    setHeightMm(Math.max(15, Math.min(250, hMm)));
+  };
+
+  const applyStudioPhotoStylePreset = (
+    styleId: 'passport-formal' | 'studio-vivid' | 'natural-soft' | 'high-contrast' | 'bw-classic'
+  ) => {
+    setStudioPhotoStyle(styleId);
+    let b = 100;
+    let c = 100;
+    let s = 100;
+    if (styleId === 'studio-vivid') {
+      b = 104;
+      c = 108;
+      s = 118;
+    } else if (styleId === 'natural-soft') {
+      b = 103;
+      c = 96;
+      s = 95;
+    } else if (styleId === 'high-contrast') {
+      b = 102;
+      c = 116;
+      s = 108;
+    } else if (styleId === 'bw-classic') {
+      b = 104;
+      c = 112;
+      s = 0;
+    }
+    setBrightness(b);
+    setContrast(c);
+    setSaturate(s);
+    applyPixelColorGrading(b, c, s);
+    renderAll();
+    showToast(`Applied Photo Style: ${styleId.replace('-', ' ').toUpperCase()}`);
   };
 
   const applyPassportHeadshotZoom = () => {
@@ -1874,14 +1910,35 @@ export default function App() {
     setBrightness(100);
     setContrast(100);
     setSaturate(100);
+    setStudioPhotoStyle('passport-formal');
     showToast('Reset all adjustments & rotation');
   };
 
-  const downloadSinglePhoto = (format: 'png' | 'jpeg' = 'png') => {
-    const exportCanvas = document.createElement('canvas');
-    renderPassportToCanvas(exportCanvas, false);
+  const downloadSinglePhoto = (
+    format: 'png' | 'jpeg' = 'png',
+    qualityOverride?: 'hd' | 'normal' | 'low'
+  ) => {
+    const qLevel = qualityOverride || studioExportQuality;
+    const jpegQual = qLevel === 'hd' ? 0.98 : qLevel === 'normal' ? 0.85 : 0.65;
+    const scaleFactor = qLevel === 'low' ? 0.75 : 1;
+
+    const fullCanvas = document.createElement('canvas');
+    renderPassportToCanvas(fullCanvas, false);
+
+    let exportCanvas = fullCanvas;
+    if (scaleFactor < 1) {
+      const scaled = document.createElement('canvas');
+      scaled.width = Math.max(1, Math.round(fullCanvas.width * scaleFactor));
+      scaled.height = Math.max(1, Math.round(fullCanvas.height * scaleFactor));
+      const sCtx = scaled.getContext('2d');
+      if (sCtx) {
+        sCtx.drawImage(fullCanvas, 0, 0, scaled.width, scaled.height);
+        exportCanvas = scaled;
+      }
+    }
+
     const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
-    const dataUrl = exportCanvas.toDataURL(mime, 0.96);
+    const dataUrl = exportCanvas.toDataURL(mime, jpegQual);
     const parts = dataUrl.split(',');
     const byteString = atob(parts[1] || '');
     const ab = new ArrayBuffer(byteString.length);
@@ -1893,19 +1950,26 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `malnadu-media-passport.${format === 'jpeg' ? 'jpg' : 'png'}`;
+    link.download = `malnadu-media-photo-${exportCanvas.width}x${exportCanvas.height}-${qLevel}.${format === 'jpeg' ? 'jpg' : 'png'}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     setShowExportModal(false);
-    showToast('Downloaded HD Passport Photo!');
+    showToast(
+      `Downloaded ${exportCanvas.width}×${exportCanvas.height} (${qLevel.toUpperCase()} Quality) Photo!`
+    );
   };
 
-  const downloadPrintSheet = () => {
+  const downloadPrintSheet = (qualityOverride?: 'hd' | 'normal' | 'low' | any) => {
+    const qLevel: 'hd' | 'normal' | 'low' =
+      qualityOverride === 'hd' || qualityOverride === 'normal' || qualityOverride === 'low'
+        ? qualityOverride
+        : studioExportQuality;
+    const jpegQual = qLevel === 'hd' ? 0.98 : qLevel === 'normal' ? 0.85 : 0.65;
     const tempSheet = document.createElement('canvas');
     renderPrintableSheet(tempSheet);
-    const dataUrl = tempSheet.toDataURL('image/jpeg', 0.96);
+    const dataUrl = tempSheet.toDataURL('image/jpeg', jpegQual);
     const parts = dataUrl.split(',');
     const byteString = atob(parts[1] || '');
     const ab = new ArrayBuffer(byteString.length);
@@ -1917,13 +1981,13 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'malnadu-media-6x4-sheet-300dpi.jpg';
+    link.download = `malnadu-media-6x4-sheet-${qLevel}.jpg`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     setShowExportModal(false);
-    showToast('Downloaded 6×4" Print Sheet!');
+    showToast(`Downloaded 6×4" Print Sheet (${qLevel.toUpperCase()} Quality)!`);
   };
 
   const printSinglePhotoDirect = () => {
@@ -4690,6 +4754,121 @@ export default function App() {
                         </select>
                       </div>
                     </div>
+
+                    {/* Quick 16:9 Ratio & Resolution Buttons (1920×1080 & 1280×720) */}
+                    <div className="pt-2 border-t border-slate-200 space-y-2">
+                      <div className="text-[11px] font-extrabold text-slate-800 flex items-center justify-between">
+                        <span>Quick Ratio & HD Resolution (16:9 / Passport):</span>
+                        <span className="font-mono text-cyan-700">
+                          {pxW} × {pxH} px
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewMode('single');
+                            setCustomUnit('px');
+                            setDpi(300);
+                            setCustomWidthInput('1920');
+                            setCustomHeightInput('1080');
+                            applyCustomSize('px', '1920', '1080', 300);
+                            showToast('Selected 16:9 · 1080p Full HD (1920 × 1080)');
+                          }}
+                          className={`min-h-[38px] px-2.5 py-1.5 rounded-xl border text-[11px] font-extrabold transition ${
+                            pxW === 1920 && pxH === 1080
+                              ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          16:9 · 1080p (1920 × 1080)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewMode('single');
+                            setCustomUnit('px');
+                            setDpi(300);
+                            setCustomWidthInput('1280');
+                            setCustomHeightInput('720');
+                            applyCustomSize('px', '1280', '720', 300);
+                            showToast('Selected 16:9 · 720p HD (1280 × 720)');
+                          }}
+                          className={`min-h-[38px] px-2.5 py-1.5 rounded-xl border text-[11px] font-extrabold transition ${
+                            pxW === 1280 && pxH === 720
+                              ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          16:9 · 720p (1280 × 720)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* "Photo Kaisa Hai" (Photo Style) & Quality Selector (HD / Normal / Low) */}
+                    <div className="pt-2 border-t border-slate-200 space-y-2.5">
+                      <div>
+                        <div className="text-[11px] font-extrabold text-slate-800 mb-1.5">
+                          Photo Kaisa Hai? (Select Photo Look):
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                          {(
+                            [
+                              { id: 'passport-formal', label: 'Passport Formal' },
+                              { id: 'studio-vivid', label: 'Studio HD Vivid' },
+                              { id: 'natural-soft', label: 'Natural Soft' },
+                              { id: 'high-contrast', label: 'High Contrast' },
+                              { id: 'bw-classic', label: 'Classic B&W' },
+                            ] as const
+                          ).map((st) => (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => applyStudioPhotoStylePreset(st.id)}
+                              className={`min-h-[34px] px-2 py-1 rounded-xl border text-[10px] font-extrabold transition ${
+                                studioPhotoStyle === st.id
+                                  ? 'bg-purple-600 text-white border-purple-600'
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {st.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-extrabold text-slate-800 mb-1.5">
+                          Select Output Quality (HD / Normal / Low):
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(
+                            [
+                              { id: 'hd', label: 'HD Quality', sub: '1080p Max · 100%' },
+                              { id: 'normal', label: 'Normal Quality', sub: '720p Std · 85%' },
+                              { id: 'low', label: 'Low Quality', sub: 'Fast Light · 65%' },
+                            ] as const
+                          ).map((qOpt) => (
+                            <button
+                              key={qOpt.id}
+                              type="button"
+                              onClick={() => {
+                                setStudioExportQuality(qOpt.id);
+                                showToast(`Selected ${qOpt.label} (${qOpt.sub})`);
+                              }}
+                              className={`min-h-[38px] px-2 py-1 rounded-xl border text-center transition flex flex-col items-center justify-center ${
+                                studioExportQuality === qOpt.id
+                                  ? 'bg-emerald-600 text-white border-emerald-600 font-extrabold'
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 font-semibold'
+                              }`}
+                            >
+                              <span className="text-[11px] leading-tight">{qOpt.label}</span>
+                              <span className="text-[9px] opacity-80 font-mono">{qOpt.sub}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -5606,13 +5785,46 @@ export default function App() {
               </button>
             </div>
             <div className="space-y-3 pb-2">
+              {/* Quality Selector inside Export Modal: HD Quality / Normal Quality / Low Quality */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-extrabold text-slate-800">
+                  <span>Select Photo Quality:</span>
+                  <span className="font-mono text-emerald-700 uppercase">
+                    {studioExportQuality} Quality
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(
+                    [
+                      { id: 'hd', label: 'HD Quality', sub: 'Ultra 100%' },
+                      { id: 'normal', label: 'Normal Quality', sub: 'Standard 85%' },
+                      { id: 'low', label: 'Low Quality', sub: 'Fast 65%' },
+                    ] as const
+                  ).map((qOpt) => (
+                    <button
+                      key={qOpt.id}
+                      type="button"
+                      onClick={() => setStudioExportQuality(qOpt.id)}
+                      className={`min-h-[40px] px-2 py-1.5 rounded-xl border text-center transition flex flex-col items-center justify-center ${
+                        studioExportQuality === qOpt.id
+                          ? 'bg-[#070a14] text-cyan-300 border-cyan-500 font-extrabold'
+                          : 'bg-white border-slate-200 text-slate-700 font-semibold'
+                      }`}
+                    >
+                      <span className="text-[11px] leading-tight">{qOpt.label}</span>
+                      <span className="text-[9px] opacity-80 font-mono">{qOpt.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 onClick={() => downloadSinglePhoto('jpeg')}
                 className="w-full min-h-[56px] p-3.5 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex items-center justify-between active:scale-[0.99] transition"
               >
                 <div className="text-left">
                   <div className="text-xs sm:text-sm font-bold text-slate-900">
-                    Single Passport Photo (JPG)
+                    Single Photo (JPG · {studioExportQuality.toUpperCase()} Quality)
                   </div>
                   <div className="text-[11px] text-slate-500">
                     {pxW} × {pxH} px @ {dpi} DPI Studio Quality

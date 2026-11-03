@@ -9,6 +9,12 @@ import { loadWalletCredits, deductWalletCredit } from '../creditWallet';
 import {
   AURA_AI_ENGINES,
   AuraEngineId,
+  POSTER_RESOLUTION_PRESETS,
+  PosterResolutionPresetId,
+  POSTER_PHOTO_STYLE_OPTIONS,
+  PosterPhotoStyleId,
+  POSTER_QUALITY_OPTIONS,
+  PosterQualityLevel,
   generatePosterDesignWithAuraAi,
   warmUpAuraBackend,
 } from '../auraAiService';
@@ -6095,32 +6101,81 @@ const CATEGORY_TABS: Array<{ id: PosterCategory; label: string; icon: string }> 
 ];
 
 function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSpec {
+  const canvasW = ct.canvasWidth || 1920;
+  const canvasH = ct.canvasHeight || 1080;
+  const isWidescreen = canvasW > canvasH;
   const isLeftLayout = ct.layoutPreset === 'left-photo-right-text';
   const isDualLayout = ct.layoutPreset === 'dual-couple-photos';
 
-  const photoSlots: PhotoSlotSpec[] = isDualLayout
+  const sx = canvasW / (isWidescreen ? 1920 : 1080);
+  const sy = canvasH / (isWidescreen ? 1080 : 1350);
+  const sFont = Math.min(sx, sy);
+
+  const photoSlots: PhotoSlotSpec[] = isWidescreen
+    ? isDualLayout
+      ? [
+          {
+            id: `${ct.id}-photo-1`,
+            label: 'Left Portrait Frame',
+            x: Math.round(90 * sx),
+            y: Math.round(200 * sy),
+            width: Math.round(360 * sx),
+            height: Math.round(620 * sy),
+            shape: ct.slotShape || 'arch',
+            frameStyle: ct.photoFrameStyle || 'gold-double',
+            accentColor: ct.primaryAccent || '#fbbf24',
+            defaultSampleIndex: 0,
+          },
+          {
+            id: `${ct.id}-photo-2`,
+            label: 'Second Portrait Frame',
+            x: Math.round(490 * sx),
+            y: Math.round(200 * sy),
+            width: Math.round(360 * sx),
+            height: Math.round(620 * sy),
+            shape: ct.slotShape || 'arch',
+            frameStyle: ct.photoFrameStyle || 'gold-double',
+            accentColor: ct.primaryAccent || '#fbbf24',
+            defaultSampleIndex: 1,
+          },
+        ]
+      : [
+          {
+            id: `${ct.id}-photo-1`,
+            label: 'Main Subject Photo',
+            x: Math.round(120 * sx),
+            y: Math.round(170 * sy),
+            width: Math.round(520 * sx),
+            height: Math.round(740 * sy),
+            shape: ct.slotShape || 'arch',
+            frameStyle: ct.photoFrameStyle || 'gold-double',
+            accentColor: ct.primaryAccent || '#fbbf24',
+            defaultSampleIndex: 0,
+          },
+        ]
+    : isDualLayout
     ? [
         {
           id: `${ct.id}-photo-1`,
           label: 'Left Portrait Frame',
-          x: 100,
-          y: 260,
-          width: 400,
-          height: 500,
+          x: Math.round(100 * sx),
+          y: Math.round(260 * sy),
+          width: Math.round(400 * sx),
+          height: Math.round(500 * sy),
           shape: ct.slotShape || 'arch',
-          frameStyle: 'gold-double',
+          frameStyle: ct.photoFrameStyle || 'gold-double',
           accentColor: ct.primaryAccent || '#fbbf24',
           defaultSampleIndex: 0,
         },
         {
           id: `${ct.id}-photo-2`,
           label: 'Right Portrait Frame',
-          x: 580,
-          y: 260,
-          width: 400,
-          height: 500,
+          x: Math.round(580 * sx),
+          y: Math.round(260 * sy),
+          width: Math.round(400 * sx),
+          height: Math.round(500 * sy),
           shape: ct.slotShape || 'arch',
-          frameStyle: 'gold-double',
+          frameStyle: ct.photoFrameStyle || 'gold-double',
           accentColor: ct.primaryAccent || '#fbbf24',
           defaultSampleIndex: 1,
         },
@@ -6129,27 +6184,27 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
         {
           id: `${ct.id}-photo-1`,
           label: 'Main Subject Photo',
-          x: ct.slotX || (isLeftLayout ? 65 : 310),
-          y: ct.slotY || (isLeftLayout ? 270 : 230),
-          width: ct.slotWidth || (isLeftLayout ? 430 : 460),
-          height: ct.slotHeight || (isLeftLayout ? 680 : 540),
+          x: Math.round((ct.slotX || (isLeftLayout ? 65 : 310)) * sx),
+          y: Math.round((ct.slotY || (isLeftLayout ? 270 : 230)) * sy),
+          width: Math.round((ct.slotWidth || (isLeftLayout ? 430 : 460)) * sx),
+          height: Math.round((ct.slotHeight || (isLeftLayout ? 680 : 540)) * sy),
           shape: ct.slotShape || 'arch',
-          frameStyle: 'gold-double',
+          frameStyle: ct.photoFrameStyle || 'gold-double',
           accentColor: ct.primaryAccent || '#fbbf24',
           defaultSampleIndex: 0,
         },
       ];
 
-  const textFields: TextFieldSpec[] = isLeftLayout
+  const textFields: TextFieldSpec[] = isWidescreen
     ? [
         {
           id: 'headline',
           label: 'Top Header / Blessing',
-          defaultValue: ct.headlineText || 'AUSPICIOUS CELEBRATION',
-          x: 785,
-          y: 310,
-          maxWidth: 480,
-          fontSize: 28,
+          defaultValue: ct.headlineText || '✦ AUSPICIOUS CELEBRATION ✦',
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(180 * sy),
+          maxWidth: Math.round((isDualLayout ? 920 : 1080) * sx),
+          fontSize: Math.max(18, Math.round(32 * sFont)),
           fontFamily: 'serif',
           fontWeight: '700',
           color: ct.primaryAccent || '#fbbf24',
@@ -6161,10 +6216,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'mainNames',
           label: 'Main Title / Names',
           defaultValue: ct.namesText || 'Aarav & Ananya',
-          x: 785,
-          y: 440,
-          maxWidth: 490,
-          fontSize: 54,
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(310 * sy),
+          maxWidth: Math.round((isDualLayout ? 940 : 1100) * sx),
+          fontSize: Math.max(28, Math.round(68 * sFont)),
           fontFamily: 'serif',
           fontWeight: '800',
           color: '#ffffff',
@@ -6175,10 +6230,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           label: 'Invitation / Tribute Message',
           defaultValue:
             ct.subText || 'Cordially invite you and your family to grace this joyous occasion',
-          x: 785,
-          y: 590,
-          maxWidth: 470,
-          fontSize: 25,
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(470 * sy),
+          maxWidth: Math.round((isDualLayout ? 900 : 1040) * sx),
+          fontSize: Math.max(16, Math.round(28 * sFont)),
           fontFamily: 'sans',
           fontWeight: '600',
           color: ct.secondaryAccent || '#fef3c7',
@@ -6189,10 +6244,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'eventDate',
           label: 'Date & Time',
           defaultValue: ct.dateTimeText || 'Sunday, 24th November · 6:30 PM Onwards',
-          x: 785,
-          y: 780,
-          maxWidth: 470,
-          fontSize: 26,
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(650 * sy),
+          maxWidth: Math.round((isDualLayout ? 860 : 960) * sx),
+          fontSize: Math.max(16, Math.round(30 * sFont)),
           fontFamily: 'sans',
           fontWeight: '800',
           color: '#1e1b4b',
@@ -6203,10 +6258,98 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'venue',
           label: 'Venue / Location',
           defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
-          x: 785,
-          y: 910,
-          maxWidth: 470,
-          fontSize: 24,
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(775 * sy),
+          maxWidth: Math.round((isDualLayout ? 900 : 1040) * sx),
+          fontSize: Math.max(15, Math.round(26 * sFont)),
+          fontFamily: 'sans',
+          fontWeight: '700',
+          color: '#ffffff',
+          align: 'center',
+          maxLines: 2,
+        },
+        {
+          id: 'rsvp',
+          label: 'RSVP / Family Footer',
+          defaultValue: ct.footerMessageText || 'With Best Compliments From Family & Friends',
+          x: Math.round((isDualLayout ? 1360 : 1260) * sx),
+          y: Math.round(895 * sy),
+          maxWidth: Math.round((isDualLayout ? 900 : 1040) * sx),
+          fontSize: Math.max(14, Math.round(22 * sFont)),
+          fontFamily: 'serif',
+          fontWeight: '700',
+          color: ct.primaryAccent || '#fbbf24',
+          align: 'center',
+          maxLines: 1,
+        },
+      ]
+    : isLeftLayout
+    ? [
+        {
+          id: 'headline',
+          label: 'Top Header / Blessing',
+          defaultValue: ct.headlineText || 'AUSPICIOUS CELEBRATION',
+          x: Math.round(785 * sx),
+          y: Math.round(310 * sy),
+          maxWidth: Math.round(480 * sx),
+          fontSize: Math.round(28 * sFont),
+          fontFamily: 'serif',
+          fontWeight: '700',
+          color: ct.primaryAccent || '#fbbf24',
+          align: 'center',
+          uppercase: true,
+          letterSpacing: 3,
+        },
+        {
+          id: 'mainNames',
+          label: 'Main Title / Names',
+          defaultValue: ct.namesText || 'Aarav & Ananya',
+          x: Math.round(785 * sx),
+          y: Math.round(440 * sy),
+          maxWidth: Math.round(490 * sx),
+          fontSize: Math.round(54 * sFont),
+          fontFamily: 'serif',
+          fontWeight: '800',
+          color: '#ffffff',
+          align: 'center',
+        },
+        {
+          id: 'subMessage',
+          label: 'Invitation / Tribute Message',
+          defaultValue:
+            ct.subText || 'Cordially invite you and your family to grace this joyous occasion',
+          x: Math.round(785 * sx),
+          y: Math.round(590 * sy),
+          maxWidth: Math.round(470 * sx),
+          fontSize: Math.round(25 * sFont),
+          fontFamily: 'sans',
+          fontWeight: '600',
+          color: ct.secondaryAccent || '#fef3c7',
+          align: 'center',
+          maxLines: 3,
+        },
+        {
+          id: 'eventDate',
+          label: 'Date & Time',
+          defaultValue: ct.dateTimeText || 'Sunday, 24th November · 6:30 PM Onwards',
+          x: Math.round(785 * sx),
+          y: Math.round(780 * sy),
+          maxWidth: Math.round(470 * sx),
+          fontSize: Math.round(26 * sFont),
+          fontFamily: 'sans',
+          fontWeight: '800',
+          color: '#1e1b4b',
+          align: 'center',
+          pillBgColor: ct.primaryAccent || '#fbbf24',
+        },
+        {
+          id: 'venue',
+          label: 'Venue / Location',
+          defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
+          x: Math.round(785 * sx),
+          y: Math.round(910 * sy),
+          maxWidth: Math.round(470 * sx),
+          fontSize: Math.round(24 * sFont),
           fontFamily: 'sans',
           fontWeight: '700',
           color: '#ffffff',
@@ -6219,10 +6362,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'headline',
           label: 'Top Header / Blessing',
           defaultValue: ct.headlineText || 'AUSPICIOUS CELEBRATION',
-          x: 540,
-          y: 135,
-          maxWidth: 900,
-          fontSize: 30,
+          x: Math.round(540 * sx),
+          y: Math.round(135 * sy),
+          maxWidth: Math.round(900 * sx),
+          fontSize: Math.round(30 * sFont),
           fontFamily: 'serif',
           fontWeight: '700',
           color: ct.primaryAccent || '#fbbf24',
@@ -6234,10 +6377,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'mainNames',
           label: 'Main Title / Names',
           defaultValue: ct.namesText || 'Aarav & Ananya',
-          x: 540,
-          y: 865,
-          maxWidth: 920,
-          fontSize: 64,
+          x: Math.round(540 * sx),
+          y: Math.round(865 * sy),
+          maxWidth: Math.round(920 * sx),
+          fontSize: Math.round(64 * sFont),
           fontFamily: 'serif',
           fontWeight: '800',
           color: '#ffffff',
@@ -6248,10 +6391,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           label: 'Invitation / Tribute Message',
           defaultValue:
             ct.subText || 'Cordially invite you and your family to grace this joyous occasion',
-          x: 540,
-          y: 965,
-          maxWidth: 880,
-          fontSize: 26,
+          x: Math.round(540 * sx),
+          y: Math.round(965 * sy),
+          maxWidth: Math.round(880 * sx),
+          fontSize: Math.round(26 * sFont),
           fontFamily: 'sans',
           fontWeight: '600',
           color: ct.secondaryAccent || '#fef3c7',
@@ -6262,10 +6405,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'eventDate',
           label: 'Date & Time',
           defaultValue: ct.dateTimeText || 'Sunday, 24th November · 6:30 PM Onwards',
-          x: 540,
-          y: 1085,
-          maxWidth: 820,
-          fontSize: 28,
+          x: Math.round(540 * sx),
+          y: Math.round(1085 * sy),
+          maxWidth: Math.round(820 * sx),
+          fontSize: Math.round(28 * sFont),
           fontFamily: 'sans',
           fontWeight: '800',
           color: '#1e1b4b',
@@ -6276,10 +6419,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'venue',
           label: 'Venue / Location',
           defaultValue: ct.venueText || 'Grand Royal Convention Hall, Main Road',
-          x: 540,
-          y: 1170,
-          maxWidth: 880,
-          fontSize: 24,
+          x: Math.round(540 * sx),
+          y: Math.round(1170 * sy),
+          maxWidth: Math.round(880 * sx),
+          fontSize: Math.round(24 * sFont),
           fontFamily: 'sans',
           fontWeight: '700',
           color: '#ffffff',
@@ -6290,10 +6433,10 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
           id: 'rsvp',
           label: 'RSVP / Family Footer',
           defaultValue: ct.footerMessageText || 'With Best Compliments From Family & Friends',
-          x: 540,
-          y: 1255,
-          maxWidth: 880,
-          fontSize: 20,
+          x: Math.round(540 * sx),
+          y: Math.round(1255 * sy),
+          maxWidth: Math.round(880 * sx),
+          fontSize: Math.round(20 * sFont),
           fontFamily: 'serif',
           fontWeight: '700',
           color: ct.primaryAccent || '#fbbf24',
@@ -6308,8 +6451,8 @@ function convertCustomTemplateToSpec(ct: CustomPosterTemplate): PosterTemplateSp
     category: ct.category,
     categoryLabel: ct.categoryLabel || 'Custom Admin Template',
     badge: ct.badge || 'Admin Custom',
-    canvasWidth: 1080,
-    canvasHeight: 1350,
+    canvasWidth: canvasW,
+    canvasHeight: canvasH,
     bgColors: ct.bgColors || ['#3b0764', '#4c0519', '#1e1b4b'],
     bgPattern: ct.bgPattern || 'mandala',
     outerBorderStyle: ct.outerBorderStyle || 'royal-gold',
@@ -6346,11 +6489,23 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     };
   }, []);
 
+  const [auraResolutionPreset, setAuraResolutionPreset] =
+    useState<PosterResolutionPresetId>('16:9-1080p');
+  const [auraPhotoStyle, setAuraPhotoStyle] = useState<PosterPhotoStyleId>('auto-smart');
+  const [auraQualityLevel, setAuraQualityLevel] = useState<PosterQualityLevel>('hd');
+
+  const activeResPresetSpec = useMemo(
+    () =>
+      POSTER_RESOLUTION_PRESETS.find((r) => r.id === auraResolutionPreset) ||
+      POSTER_RESOLUTION_PRESETS[0],
+    [auraResolutionPreset]
+  );
+
   const aiStarterCanvasSpec: PosterTemplateSpec = useMemo(
     () =>
       convertCustomTemplateToSpec({
         id: 'aura-ai-blank-starter',
-        name: 'Aura AI Custom Poster Canvas',
+        name: 'Aura AI Custom 16:9 HD Poster Canvas',
         category: 'wedding',
         categoryLabel: 'Aura AI Studio',
         badge: 'AI Poster Canvas',
@@ -6362,20 +6517,22 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         decorMotif: 'royal-mandala-arch',
         slotShape: 'arch',
         photoFrameStyle: 'gold-double',
-        layoutPreset: 'center-arch-photo',
-        slotX: 310,
-        slotY: 230,
-        slotWidth: 460,
-        slotHeight: 540,
+        layoutPreset: 'left-photo-right-text',
+        slotX: 120,
+        slotY: 170,
+        slotWidth: 520,
+        slotHeight: 740,
+        canvasWidth: activeResPresetSpec.width,
+        canvasHeight: activeResPresetSpec.height,
         headlineText: '✦ AURA AI STUDIO POSTER ✦',
         namesText: 'Enter Prompt Above & Click Generate',
-        subText: 'Attach your photo and describe your event to create a custom AI poster',
-        dateTimeText: 'AURA AI + & AURA AI PRO',
-        venueText: 'Instant Custom Poster Design',
+        subText: 'Attach your photo, choose Photo Style & Quality, and create your AI poster',
+        dateTimeText: `${activeResPresetSpec.shortLabel} · AURA AI + & PRO`,
+        venueText: '16:9 Full HD (1920×1080) & HD (1280×720) Supported',
         footerMessageText: 'Powered by Aura AI Engine',
         createdAt: '',
       }),
-    []
+    [activeResPresetSpec]
   );
 
   const allTemplates = useMemo(() => {
@@ -6891,12 +7048,34 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
   const [lastAuraSuccessBanner, setLastAuraSuccessBanner] = useState<string>('');
 
+  const handleSelectResolutionPreset = (presetId: PosterResolutionPresetId) => {
+    setAuraResolutionPreset(presetId);
+    const preset =
+      POSTER_RESOLUTION_PRESETS.find((r) => r.id === presetId) || POSTER_RESOLUTION_PRESETS[0];
+
+    if (customRawTemplates.length > 0) {
+      const updated = customRawTemplates.map((ct) =>
+        ct.id === selectedTemplateId
+          ? { ...ct, canvasWidth: preset.width, canvasHeight: preset.height }
+          : ct
+      );
+      setCustomRawTemplates(updated);
+      saveCustomPosterTemplates(updated);
+    }
+    showToast(`Switched Poster Size to ${preset.label}`);
+  };
+
   const handleGeneratePosterWithAuraAi = async (
     overridePrompt?: string,
     overrideLayout?: typeof auraPreferredLayout
   ) => {
     const rawPrompt = (overridePrompt !== undefined ? overridePrompt : auraPrompt).trim();
     const engineInfo = AURA_AI_ENGINES[auraEngineId];
+    const selectedStyleObj =
+      POSTER_PHOTO_STYLE_OPTIONS.find((s) => s.id === auraPhotoStyle) ||
+      POSTER_PHOTO_STYLE_OPTIONS[0];
+    const selectedQualityObj =
+      POSTER_QUALITY_OPTIONS[auraQualityLevel] || POSTER_QUALITY_OPTIONS.hd;
 
     // Check if user has attached a photo either in Photo 1 box or in the active canvas slot
     const activeSlotImg = slotTransforms[activeSlotId]?.imageElement || null;
@@ -6908,11 +7087,11 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       auraPhoto2ImgRef.current ||
       (auraPhoto2Url ? auraPhoto2Url : null);
 
-    // If user attached a photo and clicked Generate without typing text, provide a default Photo-to-Photo studio prompt
+    // If user attached a photo and clicked Generate without typing text, provide a default Photo-to-Photo studio prompt based on selected Photo Style
     const promptToUse =
       rawPrompt ||
       (primarySource
-        ? 'Create a luxury royal Indian studio celebration poster featuring the person in this attached photo with studio portrait lighting, royal golden framing, and festive bokeh background'
+        ? `Create a ${selectedStyleObj.label} studio celebration poster (${activeResPresetSpec.label}) featuring the person in this attached photo. ${selectedStyleObj.aiDirective}`
         : '');
 
     if (!promptToUse) {
@@ -6943,6 +7122,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         primaryPhotoSource: primarySource,
         secondaryPhotoSource: secondarySource,
         runPhotoToPhotoModel: true,
+        resolutionPresetId: auraResolutionPreset,
+        photoStyleId: auraPhotoStyle,
+        qualityLevel: auraQualityLevel,
       });
 
       // Deduct 1 Credit from Wallet on successful AI Poster creation
@@ -6951,6 +7133,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
       const newTplId = `aura-ai-${Date.now()}`;
       paidPosterIdsRef.current.add(newTplId);
+
+      const targetW = activeResPresetSpec.width;
+      const targetH = activeResPresetSpec.height;
 
       // Determine final background image (AI Photo-to-Photo generated image takes priority, or user custom BG)
       let finalBgDataUrl = aiDesign.aiGeneratedImageDataUrl || auraCustomBgDataUrl || undefined;
@@ -6964,17 +7149,17 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
             customBgImagesRef.current[newTplId] = bgImg;
             try {
               const compCanvas = document.createElement('canvas');
-              compCanvas.width = 1080;
-              compCanvas.height = 1350;
+              compCanvas.width = targetW;
+              compCanvas.height = targetH;
               const compCtx = compCanvas.getContext('2d');
               if (compCtx) {
-                const iw = bgImg.naturalWidth || 1080;
-                const ih = bgImg.naturalHeight || 1350;
-                const sc = Math.max(1080 / iw, 1350 / ih);
+                const iw = bgImg.naturalWidth || targetW;
+                const ih = bgImg.naturalHeight || targetH;
+                const sc = Math.max(targetW / iw, targetH / ih);
                 const dw = iw * sc;
                 const dh = ih * sc;
-                compCtx.drawImage(bgImg, (1080 - dw) / 2, (1350 - dh) / 2, dw, dh);
-                finalBgDataUrl = compCanvas.toDataURL('image/jpeg', 0.82);
+                compCtx.drawImage(bgImg, (targetW - dw) / 2, (targetH - dh) / 2, dw, dh);
+                finalBgDataUrl = compCanvas.toDataURL('image/jpeg', selectedQualityObj.jpegQuality);
               }
             } catch {
               // keep original dataUrl
@@ -7015,8 +7200,8 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         id: newTplId,
         name: aiDesign.name,
         category: aiDesign.category,
-        categoryLabel: `${aiDesign.engineUsed} · ${aiDesign.categoryLabel}`,
-        badge: aiDesign.badge,
+        categoryLabel: `${aiDesign.engineUsed} · ${selectedStyleObj.label}`,
+        badge: `${aiDesign.badge} · ${activeResPresetSpec.shortLabel} · ${selectedQualityObj.label}`,
         bgImageDataUrl: finalBgDataUrl,
         bgColors: aiDesign.bgColors,
         primaryAccent: aiDesign.primaryAccent,
@@ -7031,6 +7216,10 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         slotY,
         slotWidth: slotW,
         slotHeight: slotH,
+        canvasWidth: targetW,
+        canvasHeight: targetH,
+        photoStyleType: auraPhotoStyle,
+        qualityLevel: auraQualityLevel,
         headlineText: aiDesign.headline,
         namesText: aiDesign.mainNames,
         subText: aiDesign.subMessage,
@@ -7046,7 +7235,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       setCustomRawTemplates(updatedCustomList);
 
       // If AI Photo-to-Photo generated a full image containing the subject, show the pure AI Photo-to-Photo poster by default.
-      // Otherwise (if it generated a background artwork or layout), show the user's photo frame + text overlay.
       if (aiDesign.aiGeneratedImageDataUrl && aiDesign.aiGeneratedImageIsFullPhotoToPhoto) {
         setShowOverlayOnAiPoster(false);
       } else {
@@ -7092,7 +7280,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       setLastAuraSuccessBanner(
         `✅ ${aiDesign.engineUsed} ${
           aiDesign.aiGeneratedImageDataUrl ? 'Photo-to-Photo AI Poster' : 'Poster'
-        } "${aiDesign.name}" Created! (-1 Credit · ${deduction.remaining} Credits Left)`
+        } "${aiDesign.name}" (${targetW}×${targetH} · ${selectedQualityObj.label}) Created! (-1 Credit · ${deduction.remaining} Credits Left)`
       );
 
       setTimeout(() => {
@@ -7100,7 +7288,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       }, 150);
 
       showToast(
-        `✨ ${aiDesign.engineUsed} Photo-to-Photo Poster Created! (-1 Credit · ${deduction.remaining} Credits Remaining)`
+        `✨ ${aiDesign.engineUsed} Poster (${targetW}×${targetH} · ${selectedQualityObj.label}) Created! (-1 Credit · ${deduction.remaining} Credits Left)`
       );
     } catch (err) {
       console.error('Aura AI poster generation error:', err);
@@ -7110,14 +7298,14 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     }
   };
 
-  // Reliable Blob-based export for PNG and JPG with Credit System enforcement
-  const handleExportPoster = (format: 'png' | 'jpeg') => {
+  // Reliable Blob-based export for PNG and JPG with Quality Level (HD / Normal / Low) & Credit System enforcement
+  const handleExportPoster = (format: 'png' | 'jpeg', qualityOverride?: PosterQualityLevel) => {
     const alreadyPaidForThisPoster = paidPosterIdsRef.current.has(activeTemplate.id);
     if (!alreadyPaidForThisPoster) {
       const currentCredits = loadWalletCredits();
       if (currentCredits <= 0) {
         triggerOpenAddCreditsModal();
-        showToast('0 Credits Remaining! Please scan UPI QR to add credits to download HD Poster.');
+        showToast('0 Credits Remaining! Please scan UPI QR to add credits to download Poster.');
         return;
       }
       const deduction = deductWalletCredit();
@@ -7125,10 +7313,26 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       paidPosterIdsRef.current.add(activeTemplate.id);
     }
 
-    const exportCanvas = document.createElement('canvas');
-    renderPosterCanvas(exportCanvas, false);
+    const qKey = qualityOverride || auraQualityLevel;
+    const qSpec = POSTER_QUALITY_OPTIONS[qKey] || POSTER_QUALITY_OPTIONS.hd;
+
+    const fullCanvas = document.createElement('canvas');
+    renderPosterCanvas(fullCanvas, false);
+
+    let exportCanvas = fullCanvas;
+    if (qSpec.exportScale < 1) {
+      const scaledCanvas = document.createElement('canvas');
+      scaledCanvas.width = Math.max(1, Math.round(fullCanvas.width * qSpec.exportScale));
+      scaledCanvas.height = Math.max(1, Math.round(fullCanvas.height * qSpec.exportScale));
+      const sCtx = scaledCanvas.getContext('2d');
+      if (sCtx) {
+        sCtx.drawImage(fullCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+        exportCanvas = scaledCanvas;
+      }
+    }
+
     const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
-    const dataUrl = exportCanvas.toDataURL(mime, 0.96);
+    const dataUrl = exportCanvas.toDataURL(mime, qSpec.jpegQuality);
     const parts = dataUrl.split(',');
     const bstr = atob(parts[1] || '');
     let n = bstr.length;
@@ -7137,7 +7341,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     const blob = new Blob([u8arr], { type: mime });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.download = `${activeTemplate.id}-poster.${format === 'jpeg' ? 'jpg' : 'png'}`;
+    link.download = `${activeTemplate.id}-${exportCanvas.width}x${exportCanvas.height}-${qKey}.${format === 'jpeg' ? 'jpg' : 'png'}`;
     link.href = url;
     document.body.appendChild(link);
     link.click();
@@ -7146,7 +7350,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       URL.revokeObjectURL(url);
     }, 4000);
     showToast(
-      `Downloaded High-Resolution ${format.toUpperCase()} Poster! (${loadWalletCredits()} Credits Left)`
+      `Downloaded ${exportCanvas.width}×${exportCanvas.height} (${qSpec.label}) ${format.toUpperCase()} Poster! (${loadWalletCredits()} Credits Left)`
     );
   };
 
@@ -7302,6 +7506,137 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                 {lyt.label}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Row 2: Aspect Ratio & Resolution (16:9 1080p 1920×1080, 1280×720) + Quality Selector (HD / Normal / Low) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 bg-slate-950/75 rounded-2xl border border-white/10 p-3.5">
+          {/* Aspect Ratio & Resolution Selector */}
+          <div className="lg:col-span-7 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-cyan-300 flex items-center gap-1.5">
+                <i className="fa-solid fa-expand text-amber-300"></i>
+                <span>Select Poster Ratio & Resolution (16:9 · 1920×1080 / 1280×720):</span>
+              </span>
+              <span className="text-[11px] font-mono font-bold text-emerald-300">
+                Active: {activeTemplate.canvasWidth} × {activeTemplate.canvasHeight} px
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {POSTER_RESOLUTION_PRESETS.map((resOpt) => {
+                const isSelected = auraResolutionPreset === resOpt.id;
+                return (
+                  <button
+                    key={resOpt.id}
+                    type="button"
+                    onClick={() => handleSelectResolutionPreset(resOpt.id)}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-xl border text-left transition flex items-center gap-2 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-300 text-white font-extrabold shadow-sm'
+                        : 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-300 font-semibold'
+                    }`}
+                  >
+                    <i
+                      className={`fa-solid ${
+                        resOpt.isLandscape ? 'fa-tv text-amber-300' : 'fa-mobile-screen text-cyan-300'
+                      } text-xs`}
+                    ></i>
+                    <div>
+                      <div className="text-[11px] leading-tight">{resOpt.shortLabel}</div>
+                      <div className="text-[9px] text-white/75 font-mono">
+                        {resOpt.width} × {resOpt.height}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Quality Option Selector: HD Quality / Normal Quality / Low Quality */}
+          <div className="lg:col-span-5 space-y-2 border-t lg:border-t-0 lg:border-l border-white/10 pt-2.5 lg:pt-0 lg:pl-3.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-amber-300 flex items-center gap-1.5">
+                <i className="fa-solid fa-sliders text-cyan-300"></i>
+                <span>Select Photo & Poster Quality:</span>
+              </span>
+              <span className="text-[10px] font-mono text-purple-300">
+                {POSTER_QUALITY_OPTIONS[auraQualityLevel].badge}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['hd', 'normal', 'low'] as PosterQualityLevel[]).map((qKey) => {
+                const qOpt = POSTER_QUALITY_OPTIONS[qKey];
+                const isSelected = auraQualityLevel === qKey;
+                return (
+                  <button
+                    key={qKey}
+                    type="button"
+                    onClick={() => {
+                      setAuraQualityLevel(qKey);
+                      showToast(`Selected ${qOpt.label} (${qOpt.badge})`);
+                    }}
+                    className={`min-h-[38px] px-2.5 py-1.5 rounded-xl border text-center transition flex flex-col items-center justify-center ${
+                      isSelected
+                        ? qKey === 'hd'
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 border-emerald-300 text-white font-extrabold shadow-sm'
+                          : qKey === 'normal'
+                          ? 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-300 text-white font-extrabold shadow-sm'
+                          : 'bg-gradient-to-r from-amber-500 to-orange-600 border-amber-300 text-white font-extrabold shadow-sm'
+                        : 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-300 font-semibold'
+                    }`}
+                  >
+                    <span className="text-[11px] leading-tight">{qOpt.label}</span>
+                    <span className="text-[9px] text-white/80 font-mono">{qOpt.badge}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3: "Photo Kaisa Hai" — Select Photo / Poster Style Type */}
+        <div className="bg-slate-950/60 rounded-2xl border border-white/10 p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-extrabold text-purple-300 flex items-center gap-1.5">
+              <i className="fa-solid fa-palette text-amber-300"></i>
+              <span>Photo Kaisa Hai? (Select Photo / Poster Look & Style):</span>
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Selected:{' '}
+              <strong className="text-cyan-300">
+                {POSTER_PHOTO_STYLE_OPTIONS.find((s) => s.id === auraPhotoStyle)?.label}
+              </strong>
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-1.5">
+            {POSTER_PHOTO_STYLE_OPTIONS.map((styleOpt) => {
+              const isSelected = auraPhotoStyle === styleOpt.id;
+              return (
+                <button
+                  key={styleOpt.id}
+                  type="button"
+                  onClick={() => {
+                    setAuraPhotoStyle(styleOpt.id);
+                    if (styleOpt.id === 'youtube-live-16x9') {
+                      handleSelectResolutionPreset('16:9-1080p');
+                    }
+                    showToast(`Selected Photo Style: ${styleOpt.label} (${styleOpt.hindiHint})`);
+                  }}
+                  className={`min-h-[46px] px-2.5 py-1.5 rounded-xl border text-left transition flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-gradient-to-br from-purple-600 via-indigo-600 to-cyan-600 border-cyan-300 text-white font-extrabold shadow-sm'
+                      : 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 text-[11px] font-extrabold leading-tight">
+                    <i className={`fa-solid ${styleOpt.icon} text-amber-300 text-[10px]`}></i>
+                    <span className="truncate">{styleOpt.label}</span>
+                  </div>
+                  <div className="text-[9px] text-white/75 truncate">{styleOpt.hindiHint}</div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -7695,20 +8030,41 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
               className="hidden"
             />
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-white/5 border border-white/15 rounded-xl p-1">
+                {(['hd', 'normal', 'low'] as PosterQualityLevel[]).map((qKey) => {
+                  const qOpt = POSTER_QUALITY_OPTIONS[qKey];
+                  const active = auraQualityLevel === qKey;
+                  return (
+                    <button
+                      key={qKey}
+                      type="button"
+                      onClick={() => setAuraQualityLevel(qKey)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition ${
+                        active
+                          ? 'bg-emerald-500 text-slate-950'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {qOpt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button
                 type="button"
                 onClick={() => handleExportPoster('png')}
                 className="min-h-[42px] px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold transition"
               >
-                Save PNG
+                Save PNG ({POSTER_QUALITY_OPTIONS[auraQualityLevel].label})
               </button>
               <button
                 type="button"
                 onClick={() => handleExportPoster('jpeg')}
                 className="min-h-[42px] px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition"
               >
-                Save JPG
+                Save JPG ({POSTER_QUALITY_OPTIONS[auraQualityLevel].label})
               </button>
             </div>
           </div>

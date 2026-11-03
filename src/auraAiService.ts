@@ -70,6 +70,217 @@ export function warmUpAuraBackend(): void {
   });
 }
 
+export type PosterResolutionPresetId =
+  | '16:9-1080p'
+  | '16:9-720p'
+  | '4:5-portrait'
+  | '1:1-square'
+  | '9:16-story';
+
+export interface PosterResolutionPreset {
+  id: PosterResolutionPresetId;
+  label: string;
+  shortLabel: string;
+  ratioLabel: string;
+  width: number;
+  height: number;
+  isLandscape: boolean;
+}
+
+export const POSTER_RESOLUTION_PRESETS: PosterResolutionPreset[] = [
+  {
+    id: '16:9-1080p',
+    label: '16:9 · 1080p Full HD (1920 × 1080)',
+    shortLabel: '16:9 · 1080p (1920×1080)',
+    ratioLabel: '16:9',
+    width: 1920,
+    height: 1080,
+    isLandscape: true,
+  },
+  {
+    id: '16:9-720p',
+    label: '16:9 · 720p HD (1280 × 720)',
+    shortLabel: '16:9 · 720p (1280×720)',
+    ratioLabel: '16:9',
+    width: 1280,
+    height: 720,
+    isLandscape: true,
+  },
+  {
+    id: '4:5-portrait',
+    label: '4:5 · Studio Portrait (1080 × 1350)',
+    shortLabel: '4:5 Portrait (1080×1350)',
+    ratioLabel: '4:5',
+    width: 1080,
+    height: 1350,
+    isLandscape: false,
+  },
+  {
+    id: '1:1-square',
+    label: '1:1 · Square Poster (1080 × 1080)',
+    shortLabel: '1:1 Square (1080×1080)',
+    ratioLabel: '1:1',
+    width: 1080,
+    height: 1080,
+    isLandscape: false,
+  },
+  {
+    id: '9:16-story',
+    label: '9:16 · Vertical Reel / Status (1080 × 1920)',
+    shortLabel: '9:16 Vertical (1080×1920)',
+    ratioLabel: '9:16',
+    width: 1080,
+    height: 1920,
+    isLandscape: false,
+  },
+];
+
+export type PosterPhotoStyleId =
+  | 'auto-smart'
+  | 'royal-wedding'
+  | 'vip-birthday'
+  | 'cinematic-hd'
+  | 'political-neta'
+  | 'festival-puja'
+  | 'youtube-live-16x9'
+  | 'memorial-tribute'
+  | 'anniversary-family';
+
+export interface PosterPhotoStyleOption {
+  id: PosterPhotoStyleId;
+  label: string;
+  hindiHint: string;
+  icon: string;
+  aiDirective: string;
+  defaultCategory?:
+    | 'wedding'
+    | 'anniversary'
+    | 'engagement'
+    | 'birthday'
+    | 'memorial'
+    | 'festival'
+    | 'housewarming'
+    | 'baby-congrats';
+}
+
+export const POSTER_PHOTO_STYLE_OPTIONS: PosterPhotoStyleOption[] = [
+  {
+    id: 'auto-smart',
+    label: 'Auto Smart Style',
+    hindiHint: 'Prompt Se Automatic',
+    icon: 'fa-wand-magic-sparkles',
+    aiDirective: 'Professional studio portrait lighting, balanced luxury celebratory framing, and rich color grading.',
+  },
+  {
+    id: 'royal-wedding',
+    label: 'Royal Wedding / Shaadi',
+    hindiHint: 'Shahi Shaadi Look',
+    icon: 'fa-ring',
+    aiDirective: 'Royal Indian palace wedding aesthetic with ornate gold arches, crimson velvet ambiance, marigold garlands, and regal studio portrait lighting.',
+    defaultCategory: 'wedding',
+  },
+  {
+    id: 'vip-birthday',
+    label: 'VIP Birthday / Celebration',
+    hindiHint: 'Birthday Banner Look',
+    icon: 'fa-cake-candles',
+    aiDirective: 'Vibrant VIP birthday celebration banner style with golden confetti, luxury spotlight glow, dynamic modern typography, and heroic portrait framing.',
+    defaultCategory: 'birthday',
+  },
+  {
+    id: 'cinematic-hd',
+    label: 'Cinematic 3D / Studio HD',
+    hindiHint: 'DSLR Studio Look',
+    icon: 'fa-camera-retro',
+    aiDirective: 'Ultra-sharp DSLR 85mm studio portrait look with cinematic rim lighting, dramatic depth of field, rich color contrast, and glossy magazine poster finish.',
+  },
+  {
+    id: 'political-neta',
+    label: 'Political / Yuva Neta Banner',
+    hindiHint: 'Chunav / Neta Banner',
+    icon: 'fa-bullhorn',
+    aiDirective: 'Bold Indian public leader / Yuva Neta flex banner style with saffron-gold-royal accents, authoritative portrait lighting, and impactful headline ribbons.',
+    defaultCategory: 'festival',
+  },
+  {
+    id: 'festival-puja',
+    label: 'Festival / Puja Greeting',
+    hindiHint: 'Tyohar / Dharmik Poster',
+    icon: 'fa-dharmachakra',
+    aiDirective: 'Auspicious Indian festival and devotional greeting poster with glowing diyas, temple kalash motifs, warm golden rays, and traditional toran borders.',
+    defaultCategory: 'festival',
+  },
+  {
+    id: 'youtube-live-16x9',
+    label: 'YouTube Thumbnail / Live 16:9',
+    hindiHint: '16:9 YouTube / Live Look',
+    icon: 'fa-youtube',
+    aiDirective: 'High-contrast 16:9 widescreen YouTube thumbnail & live broadcast banner look with bold glowing edges, expressive subject highlight, and broadcast graphics.',
+  },
+  {
+    id: 'memorial-tribute',
+    label: 'Shradhanjali / Memorial',
+    hindiHint: 'Shradhanjali / Tribute',
+    icon: 'fa-dove',
+    aiDirective: 'Dignified, serene floral memorial tribute (Shradhanjali) poster with soft warm candlelight, white & marigold garland frame, and peaceful respectful tone.',
+    defaultCategory: 'memorial',
+  },
+  {
+    id: 'anniversary-family',
+    label: 'Anniversary / Family Event',
+    hindiHint: 'Anniversary / Griha Pravesh',
+    icon: 'fa-heart',
+    aiDirective: 'Warm golden jubilee anniversary and family celebration poster with floral botanical corners, soft champagne gold bokeh, and elegant couple/family framing.',
+    defaultCategory: 'anniversary',
+  },
+];
+
+export type PosterQualityLevel = 'hd' | 'normal' | 'low';
+
+export interface PosterQualityOption {
+  id: PosterQualityLevel;
+  label: string;
+  badge: string;
+  desc: string;
+  inputMaxDim: number;
+  jpegQuality: number;
+  exportScale: number;
+  aiQualityDirective: string;
+}
+
+export const POSTER_QUALITY_OPTIONS: Record<PosterQualityLevel, PosterQualityOption> = {
+  hd: {
+    id: 'hd',
+    label: 'HD Quality',
+    badge: '1080p Ultra HD · 100%',
+    desc: 'Maximum studio sharpness, 1080p Full HD resolution & lossless print clarity',
+    inputMaxDim: 1280,
+    jpegQuality: 0.98,
+    exportScale: 1,
+    aiQualityDirective: 'Ultra-HD 1080p/4K razor-sharp studio print quality with fine facial detail and crisp typography.',
+  },
+  normal: {
+    id: 'normal',
+    label: 'Normal Quality',
+    badge: '720p Standard · 85%',
+    desc: 'Balanced HD clarity & fast social media sharing quality',
+    inputMaxDim: 1024,
+    jpegQuality: 0.85,
+    exportScale: 1,
+    aiQualityDirective: 'Clean standard 720p HD quality with balanced lighting and clear details.',
+  },
+  low: {
+    id: 'low',
+    label: 'Low Quality',
+    badge: 'Fast / Light · 65%',
+    desc: 'Lightweight file size for quick WhatsApp & low-data preview',
+    inputMaxDim: 720,
+    jpegQuality: 0.65,
+    exportScale: 0.75,
+    aiQualityDirective: 'Fast lightweight web preview poster quality.',
+  },
+};
+
 /**
  * Converts any HTMLImageElement, blob: URL, or data: URL into a clean compressed
  * base64 JPEG data URL suitable for OpenRouter Photo-to-Photo multimodal input.
@@ -169,6 +380,9 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
   primaryPhotoSource?: string | HTMLImageElement | null;
   secondaryPhotoSource?: string | HTMLImageElement | null;
   aspectHint?: 'portrait-poster' | 'landscape-banner';
+  resolutionPresetId?: PosterResolutionPresetId;
+  photoStyleId?: PosterPhotoStyleId;
+  qualityLevel?: PosterQualityLevel;
 }): Promise<{
   imageDataUrl: string;
   engineDisplayName: string;
@@ -181,27 +395,39 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
     primaryPhotoSource,
     secondaryPhotoSource,
     aspectHint = 'portrait-poster',
+    resolutionPresetId = '16:9-1080p',
+    photoStyleId = 'auto-smart',
+    qualityLevel = 'hd',
   } = params;
   const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
+  const resSpec =
+    POSTER_RESOLUTION_PRESETS.find((r) => r.id === resolutionPresetId) ||
+    POSTER_RESOLUTION_PRESETS[0];
+  const styleSpec =
+    POSTER_PHOTO_STYLE_OPTIONS.find((s) => s.id === photoStyleId) ||
+    POSTER_PHOTO_STYLE_OPTIONS[0];
+  const qualitySpec = POSTER_QUALITY_OPTIONS[qualityLevel] || POSTER_QUALITY_OPTIONS.hd;
 
-  const photo1DataUrl = await normalizeImageToBase64DataUrl(primaryPhotoSource, 1024);
-  const photo2DataUrl = await normalizeImageToBase64DataUrl(secondaryPhotoSource, 1024);
+  const isWidescreen = resSpec.isLandscape || aspectHint === 'landscape-banner';
+  const ratioDescription = isWidescreen
+    ? `16:9 widescreen (${resSpec.width}×${resSpec.height} horizontal landscape)`
+    : `${resSpec.ratioLabel} (${resSpec.width}×${resSpec.height})`;
+
+  const photo1DataUrl = await normalizeImageToBase64DataUrl(
+    primaryPhotoSource,
+    qualitySpec.inputMaxDim
+  );
+  const photo2DataUrl = await normalizeImageToBase64DataUrl(
+    secondaryPhotoSource,
+    qualitySpec.inputMaxDim
+  );
 
   const hasInputPhoto = Boolean(photo1DataUrl);
 
   // IMPORTANT: Place reference image_url parts FIRST in content array, followed by text prompt.
-  // Avoid trigger phrases that cause text-only responses on Gemini image models.
   const photoToPhotoPromptText = hasInputPhoto
-    ? `Generate a new high-resolution ${
-        aspectHint === 'landscape-banner'
-          ? '16:9 widescreen broadcast poster image'
-          : 'vertical celebratory studio poster image'
-      } based on this reference image and this prompt: "${prompt}". Include festive studio lighting, luxury royal framing, and clear poster title text. Output an image.`
-    : `Generate a new high-resolution ${
-        aspectHint === 'landscape-banner'
-          ? '16:9 widescreen broadcast poster image'
-          : 'vertical celebratory studio poster image'
-      } for this request: "${prompt}". Include rich luxury lighting, festive ornamental borders, and clear celebratory typography. Output an image.`;
+    ? `Generate a new ${ratioDescription} poster image based on this reference image and this prompt: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include festive studio lighting, luxury framing, and clear poster title text. Output an image.`
+    : `Generate a new ${ratioDescription} poster image for this request: "${prompt}". Photo Style: ${styleSpec.label} (${styleSpec.aiDirective}). Quality: ${qualitySpec.aiQualityDirective} Include rich luxury lighting, festive ornamental borders, and clear celebratory typography. Output an image.`;
 
   const contentParts: Array<
     | { type: 'text'; text: string }
@@ -274,9 +500,7 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
   // generate a high-resolution AI studio poster background image from the prompt so the user's photo
   // is composited seamlessly into a real AI-generated poster artwork.
   if (hasInputPhoto) {
-    const bgPromptText = `Generate a high-resolution luxury ${
-      aspectHint === 'landscape-banner' ? '16:9 widescreen' : 'vertical'
-    } studio celebration poster artwork background for: "${prompt}". Include ornate golden borders, festive lighting, and royal Indian studio decor. Output an image.`;
+    const bgPromptText = `Generate a luxury ${ratioDescription} studio celebration poster artwork background for: "${prompt}". Style: ${styleSpec.aiDirective} Quality: ${qualitySpec.aiQualityDirective} Include ornate golden borders, festive lighting, and royal studio decor. Output an image.`;
 
     for (const imgModel of engine.imageGenerationModels) {
       try {
@@ -583,6 +807,9 @@ export async function generatePosterDesignWithAuraAi(params: {
   primaryPhotoSource?: string | HTMLImageElement | null;
   secondaryPhotoSource?: string | HTMLImageElement | null;
   runPhotoToPhotoModel?: boolean;
+  resolutionPresetId?: PosterResolutionPresetId;
+  photoStyleId?: PosterPhotoStyleId;
+  qualityLevel?: PosterQualityLevel;
 }): Promise<AuraGeneratedPosterDesign> {
   const {
     prompt,
@@ -592,12 +819,25 @@ export async function generatePosterDesignWithAuraAi(params: {
     primaryPhotoSource,
     secondaryPhotoSource,
     runPhotoToPhotoModel = true,
+    resolutionPresetId = '16:9-1080p',
+    photoStyleId = 'auto-smart',
+    qualityLevel = 'hd',
   } = params;
   const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
+  const resSpec =
+    POSTER_RESOLUTION_PRESETS.find((r) => r.id === resolutionPresetId) ||
+    POSTER_RESOLUTION_PRESETS[0];
+  const styleSpec =
+    POSTER_PHOTO_STYLE_OPTIONS.find((s) => s.id === photoStyleId) ||
+    POSTER_PHOTO_STYLE_OPTIONS[0];
+  const qualitySpec = POSTER_QUALITY_OPTIONS[qualityLevel] || POSTER_QUALITY_OPTIONS.hd;
 
   const systemInstruction = `You are "${engine.displayName}", an elite luxury Indian & International Studio Poster Designer.
 Convert the user's poster request into ONLY a valid JSON object (no markdown fences, no extra explanation).
 User Request: "${prompt}"
+Selected Photo Style ("Photo Kaisa Hai"): "${styleSpec.label} — ${styleSpec.aiDirective}"
+Target Aspect Ratio & Resolution: "${resSpec.label} (${resSpec.width}x${resSpec.height})"
+Selected Quality: "${qualitySpec.label} (${qualitySpec.badge})"
 
 Return strictly a JSON object matching these exact keys and allowed values:
 {
@@ -612,7 +852,7 @@ Return strictly a JSON object matching these exact keys and allowed values:
   "decorMotif": "royal-mandala-arch" | "temple-kalash-gold" | "floral-botanical-corners" | "silver-jubilee-sparkles" | "golden-jubilee-crest" | "ring-ceremony-geometric" | "birthday-confetti-crown" | "kids-carnival-bunting" | "memorial-lotus-diya" | "memorial-garland-pillar" | "memorial-dove-cross" | "festival-diwali-diyas" | "festival-eid-crescent" | "festival-christmas-wreath" | "festival-traditional-toran",
   "slotShape": "arch" | "circle" | "oval" | "octagon" | "rounded" | "rect",
   "frameStyle": "gold-double" | "floral-wreath" | "ornate-corner" | "garland-tribute" | "silver-luxury" | "polaroid-white" | "rose-gold",
-  "layoutPreset": "${hasSecondaryPhoto ? 'dual-couple-photos' : preferredLayout || 'center-arch-photo'}",
+  "layoutPreset": "${hasSecondaryPhoto ? 'dual-couple-photos' : preferredLayout || (resSpec.isLandscape ? 'left-photo-right-text' : 'center-arch-photo')}",
   "headline": "Top auspicious header or blessing line in UPPERCASE (max 42 chars)",
   "mainNames": "Main person / couple / event title from prompt (max 36 chars)",
   "subMessage": "Warm cordial invitation or tribute message (max 95 chars)",
@@ -630,7 +870,10 @@ Return strictly a JSON object matching these exact keys and allowed values:
           engineId,
           primaryPhotoSource,
           secondaryPhotoSource,
-          aspectHint: 'portrait-poster',
+          aspectHint: resSpec.isLandscape ? 'landscape-banner' : 'portrait-poster',
+          resolutionPresetId,
+          photoStyleId,
+          qualityLevel,
         })
       : Promise.resolve({
           imageDataUrl: '',

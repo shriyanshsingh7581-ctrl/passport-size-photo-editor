@@ -358,6 +358,10 @@ export interface CustomPosterTemplate {
   slotY: number;
   slotWidth: number;
   slotHeight: number;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  photoStyleType?: string;
+  qualityLevel?: 'hd' | 'normal' | 'low';
   headlineText: string;
   namesText?: string;
   mainNamesText?: string;
@@ -582,6 +586,28 @@ export const COUNTRY_PRESETS: CountryPreset[] = [
     cols: 2,
     rows: 1,
     desc: '50 × 70 mm • Exact 2 Photos (2×1) on 6×4" Sheet',
+  },
+  {
+    id: '16x9-1080p',
+    country: '16:9 Widescreen Full HD 1080p (1920 × 1080 px)',
+    flag: '🖥️',
+    widthMm: 162.56,
+    heightMm: 91.44,
+    sheetCount: 1,
+    cols: 1,
+    rows: 1,
+    desc: '16:9 Ratio • 1920 × 1080 px (Full HD 1080p Widescreen)',
+  },
+  {
+    id: '16x9-720p',
+    country: '16:9 Widescreen HD 720p (1280 × 720 px)',
+    flag: '📺',
+    widthMm: 108.37,
+    heightMm: 60.96,
+    sheetCount: 1,
+    cols: 1,
+    rows: 1,
+    desc: '16:9 Ratio • 1280 × 720 px (Standard HD 720p Widescreen)',
   },
 ];
 
