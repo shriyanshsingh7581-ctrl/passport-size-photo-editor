@@ -10,6 +10,11 @@
  *   with support for changing the master password inside the Credit Admin Vault.
  */
 
+import {
+  upsertPaymentRequestInFirestore,
+  syncAdminPoolToFirestore,
+} from './firebase';
+
 const WALLET_STORAGE_KEY = 'malnadu_studio_wallet_vault_v2';
 const ADMIN_POOL_STORAGE_KEY = 'malnadu_studio_admin_pool_vault_v1';
 const ADMIN_PASS_VAULT_KEY = 'malnadu_studio_admin_pass_vault_v1';
@@ -105,22 +110,7 @@ export interface PaymentCreditRequest {
   processedAt?: string;
 }
 
-const DEFAULT_DEMO_PAYMENT_REQUESTS: PaymentCreditRequest[] = [
-  {
-    id: 'req-demo-101',
-    clientName: 'Arjun Nair (Studio Client)',
-    clientContact: 'arjun.nair@gmail.com',
-    userId: 'user-arjun-02',
-    targetType: 'client_wallet',
-    packageLabel: 'Starter Pack',
-    creditsRequested: 100,
-    amountInr: '₹99',
-    utrNumber: '431289450112',
-    paymentNote: 'Paid ₹99 via Google Pay QR (T T). Please confirm and add 100 credits to my account.',
-    status: 'pending',
-    createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-  },
-];
+const DEFAULT_DEMO_PAYMENT_REQUESTS: PaymentCreditRequest[] = [];
 
 /**
  * Computes a deterministic salted 64-bit integrity signature (dual FNV-1a 32-bit rounds)
@@ -595,6 +585,7 @@ export function submitClientPaymentRequest(input: {
 
   const next = [newReq, ...current].slice(0, 100);
   savePaymentCreditRequests(next);
+  upsertPaymentRequestInFirestore(newReq).catch(() => {});
   return newReq;
 }
 
@@ -656,8 +647,10 @@ export function approveClientPaymentRequest(
 
   if (destination === 'admin_pool') {
     nextAdminPoolCredits = saveAdminCreditPool(nextAdminPoolCredits + addAmount);
+    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits).catch(() => {});
   } else {
     nextWalletCredits = saveWalletCredits(nextWalletCredits + addAmount);
+    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits).catch(() => {});
   }
 
   const codeGen = generateSignedRechargeCode(passwordInput, addAmount);
@@ -672,6 +665,7 @@ export function approveClientPaymentRequest(
 
   const nextList = all.map((r) => (r.id === requestId ? updatedReq : r));
   savePaymentCreditRequests(nextList);
+  upsertPaymentRequestInFirestore(updatedReq).catch(() => {});
 
   appendCreditRechargeLog({
     targetName:
@@ -709,12 +703,18 @@ export function rejectClientPaymentRequest(
   }
 
   const all = loadPaymentCreditRequests();
-  const nextList = all.map((r) =>
-    r.id === requestId
-      ? { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() }
-      : r
-  );
+  let rejectedItem: PaymentCreditRequest | undefined;
+  const nextList = all.map((r) => {
+    if (r.id === requestId) {
+      rejectedItem = { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() };
+      return rejectedItem;
+    }
+    return r;
+  });
   savePaymentCreditRequests(nextList);
+  if (rejectedItem) {
+    upsertPaymentRequestInFirestore(rejectedItem).catch(() => {});
+  }
   return { ok: true };
 }
 
@@ -770,6 +770,7 @@ export function approveUserPaymentFromAdminPool(
   }
 
   const nextPool = saveAdminCreditPool(currentPool - creditsToGrant);
+  syncAdminPoolToFirestore(nextPool).catch(() => {});
 
   const updatedReq: PaymentCreditRequest = {
     ...target,
@@ -780,6 +781,7 @@ export function approveUserPaymentFromAdminPool(
 
   const nextList = all.map((r) => (r.id === requestId ? updatedReq : r));
   savePaymentCreditRequests(nextList);
+  upsertPaymentRequestInFirestore(updatedReq).catch(() => {});
 
   appendCreditRechargeLog({
     targetName: `${target.clientName} (User QR Payment Approved)`,
@@ -799,12 +801,18 @@ export function approveUserPaymentFromAdminPool(
 
 export function rejectUserPaymentByWebsiteAdmin(requestId: string): { ok: boolean } {
   const all = loadPaymentCreditRequests();
-  const nextList = all.map((r) =>
-    r.id === requestId
-      ? { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() }
-      : r
-  );
+  let rejectedItem: PaymentCreditRequest | undefined;
+  const nextList = all.map((r) => {
+    if (r.id === requestId) {
+      rejectedItem = { ...r, status: 'rejected' as const, processedAt: new Date().toISOString() };
+      return rejectedItem;
+    }
+    return r;
+  });
   savePaymentCreditRequests(nextList);
+  if (rejectedItem) {
+    upsertPaymentRequestInFirestore(rejectedItem).catch(() => {});
+  }
   return { ok: true };
 }
 

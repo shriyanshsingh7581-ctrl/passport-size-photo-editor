@@ -58,6 +58,9 @@ interface AdminPanelProps {
   availableCredits: number;
   adminCreditPool: number;
   initialAdminTab?: AdminTab;
+  isCloudSyncing?: boolean;
+  lastCloudSyncedAt?: string;
+  onForceCloudSync?: () => Promise<void> | void;
   onUpdateWalletCredits: (newCredits: number) => void;
   onUpdateAdminCreditPool: (newPoolCredits: number) => void;
   onUpdateUserCredits: (
@@ -109,6 +112,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   availableCredits,
   adminCreditPool,
   initialAdminTab,
+  isCloudSyncing = false,
+  lastCloudSyncedAt = 'Live',
+  onForceCloudSync,
   onUpdateWalletCredits,
   onUpdateAdminCreditPool,
   onUpdateUserCredits,
@@ -342,7 +348,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsCreditVaultUnlocked(true);
     setVaultPasswordInput('');
     setCreditLogs(loadCreditRechargeLogs());
-    showToast('Website Admin Panel Unlocked!');
+    if (onForceCloudSync) {
+      onForceCloudSync();
+    }
+    showToast('Website Admin Panel Unlocked & Synced with Realtime Database!');
   };
 
   const handleLockCreditVault = () => {
@@ -1153,6 +1162,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* 1-Click Real-Time Database Sync Button (Ensures all Admin Panels show identical credits & users) */}
+          {onForceCloudSync && (
+            <button
+              type="button"
+              onClick={() => onForceCloudSync()}
+              disabled={isCloudSyncing}
+              className="min-h-[42px] px-3.5 py-2 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-2 shadow-md active:scale-95 cursor-pointer"
+              title="Force sync all Admin Pool credits, Studio Wallet, and User Credits directly from Firebase Realtime Database"
+            >
+              <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin' : ''}`}></i>
+              <span>{isCloudSyncing ? 'Syncing Database...' : 'Sync Live Database'}</span>
+              <span className="px-1.5 py-0.5 rounded bg-slate-950/20 font-mono text-[10px]">
+                {lastCloudSyncedAt}
+              </span>
+            </button>
+          )}
+
           {/* 1-Click Free Signup Credit Enable / Disable Toggle right on Admin Banner */}
           <button
             type="button"
@@ -1351,8 +1377,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
-          {/* Quick Top-Up Admin Pool Bar */}
+          {/* Quick Top-Up Admin Pool Bar + 1-Click Realtime Sync Button */}
           <div className="flex flex-wrap items-center gap-1.5 bg-white/5 border border-white/10 p-2 rounded-2xl">
+            {onForceCloudSync && (
+              <button
+                type="button"
+                onClick={() => onForceCloudSync()}
+                disabled={isCloudSyncing}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5 active:scale-95 shadow-sm"
+                title="Click to sync all credits and users across all devices from Firebase Realtime Database"
+              >
+                <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin' : ''}`}></i>
+                <span>{isCloudSyncing ? 'Syncing...' : 'Sync Credits Now'}</span>
+              </button>
+            )}
             <span className="text-[11px] font-extrabold text-amber-300 px-1.5">
               + Add to Admin Pool:
             </span>
@@ -2230,15 +2268,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   Every credit you give to a user is deducted from your Website Admin Credit Pool ({adminCreditPool} available). Reclaiming credits from a user returns them to your pool.
                 </p>
               </div>
-              <div className="relative w-full sm:w-72">
-                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-                <input
-                  type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search user by name or email..."
-                  className="w-full min-h-[40px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-                />
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                {onForceCloudSync && (
+                  <button
+                    type="button"
+                    onClick={() => onForceCloudSync()}
+                    disabled={isCloudSyncing}
+                    className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold transition flex items-center gap-1.5 shrink-0 active:scale-95 shadow-xs"
+                  >
+                    <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin' : ''}`}></i>
+                    <span>{isCloudSyncing ? 'Syncing...' : 'Sync Users & Credits'}</span>
+                  </button>
+                )}
+                <div className="relative flex-1 sm:w-64">
+                  <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                  <input
+                    type="text"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search user by name or email..."
+                    className="w-full min-h-[40px] pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
               </div>
             </div>
 

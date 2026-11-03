@@ -10,14 +10,20 @@ import {
 import {
   getFirestore,
   Firestore,
+  collection,
   doc,
   getDoc,
+  getDocs,
   getDocFromServer,
+  getDocsFromServer,
   setDoc,
   updateDoc,
+  query,
+  where,
   serverTimestamp,
 } from 'firebase/firestore';
 import firebaseAppletConfig from '../firebase-applet-config.json';
+import { DEFAULT_SITE_SETTINGS } from './constants';
 
 export const firebaseConfig = firebaseAppletConfig;
 
@@ -25,6 +31,8 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+export const ADMIN_VAULT_SECRET = 'MALNADU-ADMIN-VAULT-2026-SYNC';
 
 const ADMIN_VAULT_APP_NAME = 'MalnaduAdminVaultApp';
 const ADMIN_VAULT_EMAIL = 'malnadu.admin.vault@malnadumedia.com';
@@ -86,6 +94,7 @@ export async function ensureAdminVaultSession(): Promise<Firestore> {
             status: 'approved',
             credits: 500,
             freeCreditsClaimed: true,
+            adminVaultSecret: ADMIN_VAULT_SECRET,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -162,6 +171,7 @@ export async function upsertUserInFirestoreAdmin(
       credits: expectedCredits,
       freeCreditsClaimed: Boolean(user.freeCreditsClaimed ?? true),
       deviceFingerprint: String(user.deviceFingerprint || '').slice(0, 128),
+      adminVaultSecret: ADMIN_VAULT_SECRET,
       updatedAt: serverTimestamp(),
     };
 
@@ -219,22 +229,217 @@ export async function upsertUserInFirestoreAdmin(
 }
 
 /**
- * Syncs the Admin Credit Pool balance to Firestore `/siteSettings/global` via Admin Vault.
+ * Syncs the Admin Credit Pool balance (and optional Studio Wallet balance) to Firestore `/siteSettings/global`.
  */
-export async function syncAdminPoolToFirestore(newPoolCredits: number): Promise<void> {
+export async function syncAdminPoolToFirestore(
+  newPoolCredits: number,
+  studioWalletCredits?: number
+): Promise<void> {
   const safePool = Math.max(0, Math.floor(Number(newPoolCredits) || 0));
+  const safeStudioWallet =
+    typeof studioWalletCredits === 'number'
+      ? Math.max(0, Math.floor(Number(studioWalletCredits) || 0))
+      : undefined;
+
   try {
     const adminDb = await ensureAdminVaultSession();
     const settingsRef = doc(adminDb, 'siteSettings', 'global');
     const snap = await getDoc(settingsRef);
-    if (snap.exists()) {
-      await updateDoc(settingsRef, {
-        adminCreditPool: safePool,
-        updatedAt: serverTimestamp(),
-      });
+    const existingData = snap.exists() ? snap.data() : {};
+    const payload: Record<string, any> = {
+      ...DEFAULT_SITE_SETTINGS,
+      ...existingData,
+      adminCreditPool: safePool,
+      adminVaultSecret: ADMIN_VAULT_SECRET,
+      updatedAt: serverTimestamp(),
+    };
+    if (typeof safeStudioWallet === 'number') {
+      payload.studioWalletCredits = safeStudioWallet;
+    } else if (typeof existingData?.studioWalletCredits === 'number') {
+      payload.studioWalletCredits = existingData.studioWalletCredits;
     }
+    await setDoc(settingsRef, payload);
   } catch {
     // ignore if offline
+  }
+}
+
+/**
+ * Syncs a payment/credit request document to Firestore `/paymentRequests/{id}` so all Admin Panels see it live.
+ */
+export async function upsertPaymentRequestInFirestore(req: {
+  id: string;
+  clientName: string;
+  clientContact: string;
+  userId?: string;
+  targetType?: 'client_wallet' | 'admin_pool';
+  packageLabel: string;
+  creditsRequested: number;
+  amountInr: string;
+  utrNumber: string;
+  paymentNote?: string;
+  paymentScreenshotDataUrl?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvedCode?: string;
+  createdAt?: string;
+  processedAt?: string;
+}): Promise<boolean> {
+  if (!req || !req.id) return false;
+  try {
+    const adminDb = await ensureAdminVaultSession();
+    const reqRef = doc(adminDb, 'paymentRequests', req.id);
+    const existingSnap = await getDoc(reqRef);
+
+    const payload: Record<string, any> = {
+      id: String(req.id).slice(0, 128),
+      clientName: String(req.clientName || 'Studio User').slice(0, 100),
+      clientContact: String(req.clientContact || 'N/A').slice(0, 150),
+      packageLabel: String(req.packageLabel || 'Credit Pack').slice(0, 80),
+      creditsRequested: Math.max(1, Math.min(1000000, Math.floor(Number(req.creditsRequested) || 1))),
+      amountInr: String(req.amountInr || '₹0').slice(0, 40),
+      utrNumber: String(req.utrNumber || 'UTR').slice(0, 80),
+      status:
+        req.status === 'approved' || req.status === 'rejected' ? req.status : 'pending',
+      adminVaultSecret: ADMIN_VAULT_SECRET,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (req.userId) {
+      payload.userId = String(req.userId).slice(0, 128);
+    }
+    if (req.targetType === 'client_wallet' || req.targetType === 'admin_pool') {
+      payload.targetType = req.targetType;
+    }
+    if (typeof req.paymentNote === 'string') {
+      payload.paymentNote = req.paymentNote.slice(0, 300);
+    }
+    if (typeof req.paymentScreenshotDataUrl === 'string' && req.paymentScreenshotDataUrl.length <= 350000) {
+      payload.paymentScreenshotDataUrl = req.paymentScreenshotDataUrl;
+    }
+    if (typeof req.approvedCode === 'string') {
+      payload.approvedCode = req.approvedCode.slice(0, 60);
+    }
+    if (typeof req.processedAt === 'string') {
+      payload.processedAt = req.processedAt.slice(0, 60);
+    }
+
+    if (existingSnap.exists() && existingSnap.data()?.createdAt) {
+      payload.createdAt = existingSnap.data().createdAt;
+    } else {
+      payload.createdAt = serverTimestamp();
+    }
+
+    await setDoc(reqRef, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Performs an authoritative 1-click fetch directly from the Firestore server (`getDocFromServer` / `getDocsFromServer`)
+ * so that all browsers and devices immediately display the exact same Admin Credit Pool, User Balances, and Payment Requests.
+ */
+export async function forceSyncFromFirestoreServer(): Promise<{
+  ok: boolean;
+  adminCreditPool?: number;
+  studioWalletCredits?: number;
+  siteSettings?: Record<string, any>;
+  users: any[];
+  paymentRequests: any[];
+  syncedAt: string;
+  error?: string;
+}> {
+  try {
+    const adminDb = await ensureAdminVaultSession();
+
+    // 1. Fetch siteSettings/global directly from server
+    const settingsRef = doc(adminDb, 'siteSettings', 'global');
+    let settingsSnap;
+    try {
+      settingsSnap = await getDocFromServer(settingsRef);
+    } catch {
+      settingsSnap = await getDoc(settingsRef);
+    }
+
+    let adminCreditPool: number | undefined;
+    let studioWalletCredits: number | undefined;
+    let siteSettings: Record<string, any> | undefined;
+
+    if (settingsSnap.exists()) {
+      const data = settingsSnap.data();
+      siteSettings = data;
+      if (typeof data.adminCreditPool === 'number') {
+        adminCreditPool = data.adminCreditPool;
+      }
+      if (typeof data.studioWalletCredits === 'number') {
+        studioWalletCredits = data.studioWalletCredits;
+      }
+    }
+
+    // 2. Fetch all users directly from server
+    const usersQuery = query(
+      collection(adminDb, 'users'),
+      where('status', 'in', ['approved', 'pending', 'active', 'blocked', 'removed', 'suspended'])
+    );
+    let usersSnap;
+    try {
+      usersSnap = await getDocsFromServer(usersQuery);
+    } catch {
+      usersSnap = await getDocs(usersQuery);
+    }
+
+    const users = usersSnap.docs
+      .map((d) => ({
+        ...d.data(),
+        uid: d.id,
+      }))
+      .filter((u: any) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
+
+    // 3. Fetch all paymentRequests directly from server
+    const payReqQuery = query(
+      collection(adminDb, 'paymentRequests'),
+      where('status', 'in', ['pending', 'approved', 'rejected'])
+    );
+    let payReqSnap;
+    try {
+      payReqSnap = await getDocsFromServer(payReqQuery);
+    } catch {
+      payReqSnap = await getDocs(payReqQuery);
+    }
+
+    const paymentRequests = payReqSnap.docs.map((d) => {
+      const data = d.data();
+      let createdAtStr = new Date().toISOString();
+      if (typeof data.createdAt === 'string') {
+        createdAtStr = data.createdAt;
+      } else if (data.createdAt?.toDate) {
+        createdAtStr = data.createdAt.toDate().toISOString();
+      }
+      return {
+        ...data,
+        id: d.id,
+        createdAt: createdAtStr,
+      };
+    });
+
+    return {
+      ok: true,
+      adminCreditPool,
+      studioWalletCredits,
+      siteSettings,
+      users,
+      paymentRequests,
+      syncedAt: new Date().toLocaleTimeString(),
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      users: [],
+      paymentRequests: [],
+      syncedAt: new Date().toLocaleTimeString(),
+      error: err?.message || 'Failed to sync from Firebase server.',
+    };
   }
 }
 

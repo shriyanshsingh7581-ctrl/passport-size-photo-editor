@@ -32,10 +32,12 @@ import {
   auth,
   db,
   googleProvider,
+  ADMIN_VAULT_SECRET,
   createFirebaseAccountViaSecondaryApp,
   ensureAdminVaultSession,
   upsertUserInFirestoreAdmin,
   syncAdminPoolToFirestore,
+  forceSyncFromFirestoreServer,
 } from './firebase';
 import {
   COUNTRY_PRESETS,
@@ -73,6 +75,7 @@ import {
   deductWalletCredit,
   rechargeWalletWithPin,
   loadPaymentCreditRequests,
+  savePaymentCreditRequests,
   allocateNewUserSignupCredits,
   normalizeIdentityEmail,
   syncExistingUsersIntoFreeCreditGuard,
@@ -380,6 +383,8 @@ export default function App() {
     return saveWalletCredits(0);
   });
   const [adminCreditPool, setAdminCreditPool] = useState<number>(() => loadAdminCreditPool());
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [lastCloudSyncedAt, setLastCloudSyncedAt] = useState<string>('Live');
   const [pendingPaymentRequestsCount, setPendingPaymentRequestsCount] = useState<number>(
     () => loadPaymentCreditRequests().filter((r) => r.status === 'pending').length
   );
@@ -754,8 +759,120 @@ export default function App() {
   // =========================================================================
   // 2. SYNC SITE SETTINGS, SHORT LINKS & USERS WITH FIRESTORE + LOCAL STORAGE
   // =========================================================================
+  const handleForceCloudSync = useCallback(
+    async (silent = false) => {
+      setIsCloudSyncing(true);
+      try {
+        const res = await forceSyncFromFirestoreServer();
+        if (res.ok) {
+          if (typeof res.adminCreditPool === 'number') {
+            const syncedPool = saveAdminCreditPool(res.adminCreditPool);
+            setAdminCreditPool(syncedPool);
+          } else {
+            // Initialize /siteSettings/global on Firestore if not yet created
+            syncAdminPoolToFirestore(loadAdminCreditPool(), loadWalletCredits()).catch(() => {});
+          }
+
+          if (res.siteSettings) {
+            setSiteSettings((prev) => {
+              const nextSettings: SiteSettings = {
+                ...prev,
+                ...(res.siteSettings as Partial<SiteSettings>),
+                logoType: res.siteSettings?.logoUrl
+                  ? res.siteSettings.logoType || 'url'
+                  : prev.logoType,
+                logoUrl:
+                  res.siteSettings?.logoUrl || prev.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+              };
+              try {
+                localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(nextSettings));
+              } catch {}
+              return nextSettings;
+            });
+          }
+
+          if (res.users.length > 0) {
+            const firestoreUsers = res.users as UserProfile[];
+            setAllUsers((prev) => {
+              const prevMap = new Map<string, UserProfile>();
+              prev.forEach((u) => prevMap.set(u.uid, u));
+              const authoritative = firestoreUsers.map((u) => {
+                const prevLocal = prevMap.get(u.uid);
+                return {
+                  ...prevLocal,
+                  ...u,
+                  credits: typeof u.credits === 'number' ? u.credits : 0,
+                  userId: u.userId || prevLocal?.userId,
+                  loginPassword: u.loginPassword || prevLocal?.loginPassword,
+                };
+              });
+              syncExistingUsersIntoFreeCreditGuard(authoritative);
+              try {
+                localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(authoritative));
+              } catch {}
+              return authoritative;
+            });
+
+            setUserProfile((curr) => {
+              if (!curr) {
+                if (typeof res.studioWalletCredits === 'number') {
+                  setAvailableCredits(saveWalletCredits(res.studioWalletCredits));
+                }
+                return curr;
+              }
+              const matched = firestoreUsers.find(
+                (u) =>
+                  u.uid === curr.uid ||
+                  (curr.userId &&
+                    u.userId &&
+                    u.userId.toLowerCase() === curr.userId.toLowerCase()) ||
+                  (curr.email && u.email && u.email.toLowerCase() === curr.email.toLowerCase())
+              );
+              if (!matched) return curr;
+              const liveCredits =
+                typeof matched.credits === 'number' ? matched.credits : curr.credits ?? 0;
+              const nextProfile: UserProfile = {
+                ...curr,
+                ...matched,
+                credits: liveCredits,
+                userId: matched.userId || curr.userId,
+                loginPassword: matched.loginPassword || curr.loginPassword,
+              };
+              setAvailableCredits(saveWalletCredits(liveCredits));
+              try {
+                localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(nextProfile));
+              } catch {}
+              return nextProfile;
+            });
+          }
+
+          if (res.paymentRequests.length > 0) {
+            savePaymentCreditRequests(res.paymentRequests);
+          }
+
+          setLastCloudSyncedAt(res.syncedAt);
+          if (!silent) {
+            showToast(
+              `Synced with Firebase Realtime Database! Admin Pool: ${
+                res.adminCreditPool ?? loadAdminCreditPool()
+              } Cr · ${res.users.length} Users Synced`
+            );
+          }
+        } else if (!silent) {
+          showToast(res.error || 'Could not reach Firebase server — please check internet.');
+        }
+      } finally {
+        setIsCloudSyncing(false);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
-    // Listen to global siteSettings (publicly readable)
+    // Immediate server sync on startup so every device/browser gets identical live state
+    handleForceCloudSync(true);
+
+    // 1. Listen to global siteSettings (publicly readable across all devices)
     const unsubSettings = onSnapshot(
       doc(db, 'siteSettings', 'global'),
       (snap) => {
@@ -765,121 +882,148 @@ export default function App() {
             const syncedPool = saveAdminCreditPool(data.adminCreditPool);
             setAdminCreditPool(syncedPool);
           }
+          if (typeof data.studioWalletCredits === 'number') {
+            setUserProfile((curr) => {
+              if (!curr) {
+                setAvailableCredits(saveWalletCredits(data.studioWalletCredits!));
+              }
+              return curr;
+            });
+          }
           setSiteSettings((prev) => ({
             ...prev,
             ...data,
             logoType: data.logoUrl ? (data.logoType || 'url') : prev.logoType,
             logoUrl: data.logoUrl || prev.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
           }));
+          setLastCloudSyncedAt(new Date().toLocaleTimeString());
+        } else {
+          // Initialize /siteSettings/global on Firestore so all devices share the same pool
+          syncAdminPoolToFirestore(loadAdminCreditPool(), loadWalletCredits()).catch(() => {});
         }
       },
-      () => {
-        // Keep localStorage settings if external Firestore rules restrict global read
-      }
+      () => {}
     );
 
-    // Real-time global Firestore listener via Admin Vault so all users & live credits sync across devices
-    let unsubVaultUsers: (() => void) | null = null;
-    let isMounted = true;
-    ensureAdminVaultSession()
-      .then((adminDb) => {
-        if (!isMounted) return;
-        unsubVaultUsers = onSnapshot(
-          collection(adminDb, 'users'),
-          (snap) => {
-            if (!snap.empty) {
-              const firestoreUsers: UserProfile[] = snap.docs
-                .map((d) => ({
-                  ...(d.data() as UserProfile),
-                  uid: d.id,
-                }))
-                .filter((u) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
+    // 2. Real-time global Firestore listener for ALL users (with status filter matching firestore.rules)
+    const allUsersQuery = query(
+      collection(db, 'users'),
+      where('status', 'in', ['approved', 'pending', 'active', 'blocked', 'removed', 'suspended'])
+    );
+    const unsubGlobalUsers = onSnapshot(
+      allUsersQuery,
+      (snap) => {
+        if (!snap.empty) {
+          const firestoreUsers: UserProfile[] = snap.docs
+            .map((d) => ({
+              ...(d.data() as UserProfile),
+              uid: d.id,
+            }))
+            .filter((u) => u.email !== 'malnadu.admin.vault@malnadumedia.com');
 
-              setAllUsers((prev) => {
-                const map = new Map<string, UserProfile>();
-                prev.forEach((u) => {
-                  if (u.email !== 'malnadu.admin.vault@malnadumedia.com') {
-                    map.set(u.uid, u);
-                  }
-                });
-                firestoreUsers.forEach((u) => {
-                  const prevLocal = map.get(u.uid);
-                  const resolvedCredits =
-                    typeof u.credits === 'number'
-                      ? u.credits
-                      : typeof prevLocal?.credits === 'number'
-                      ? prevLocal.credits
-                      : 0;
-                  map.set(u.uid, {
-                    ...prevLocal,
-                    ...u,
-                    credits: resolvedCredits,
-                    userId: u.userId || prevLocal?.userId,
-                    loginPassword: u.loginPassword || prevLocal?.loginPassword,
-                  });
-                });
-                const merged = Array.from(map.values());
-                syncExistingUsersIntoFreeCreditGuard(merged);
-                try {
-                  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(merged));
-                } catch {
-                  // ignore
-                }
-                return merged;
-              });
+          setAllUsers((prev) => {
+            const prevMap = new Map<string, UserProfile>();
+            prev.forEach((u) => prevMap.set(u.uid, u));
+            const authoritative = firestoreUsers.map((u) => {
+              const prevLocal = prevMap.get(u.uid);
+              return {
+                ...prevLocal,
+                ...u,
+                credits: typeof u.credits === 'number' ? u.credits : 0,
+                userId: u.userId || prevLocal?.userId,
+                loginPassword: u.loginPassword || prevLocal?.loginPassword,
+              };
+            });
+            syncExistingUsersIntoFreeCreditGuard(authoritative);
+            try {
+              localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(authoritative));
+            } catch {}
+            return authoritative;
+          });
 
-              // Immediately update the currently logged-in user's live credits if matched by UID, User ID, or Email
-              setUserProfile((curr) => {
-                if (!curr) return curr;
-                const matched = firestoreUsers.find(
-                  (u) =>
-                    u.uid === curr.uid ||
-                    (curr.userId &&
-                      u.userId &&
-                      u.userId.toLowerCase() === curr.userId.toLowerCase()) ||
-                    (curr.email && u.email && u.email.toLowerCase() === curr.email.toLowerCase())
-                );
-                if (!matched) return curr;
-                const liveCredits =
-                  typeof matched.credits === 'number' ? matched.credits : curr.credits ?? 0;
-                if (
-                  liveCredits !== curr.credits ||
-                  matched.status !== curr.status ||
-                  matched.role !== curr.role ||
-                  matched.uid !== curr.uid
-                ) {
-                  const nextProfile: UserProfile = {
-                    ...curr,
-                    ...matched,
-                    credits: liveCredits,
-                    userId: matched.userId || curr.userId,
-                    loginPassword: matched.loginPassword || curr.loginPassword,
-                  };
-                  setAvailableCredits(saveWalletCredits(liveCredits));
-                  try {
-                    localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(nextProfile));
-                  } catch {
-                    // ignore
-                  }
-                  return nextProfile;
-                }
-                return curr;
-              });
+          // Immediately update the currently logged-in user's live credits if matched by UID, User ID, or Email
+          setUserProfile((curr) => {
+            if (!curr) return curr;
+            const matched = firestoreUsers.find(
+              (u) =>
+                u.uid === curr.uid ||
+                (curr.userId &&
+                  u.userId &&
+                  u.userId.toLowerCase() === curr.userId.toLowerCase()) ||
+                (curr.email && u.email && u.email.toLowerCase() === curr.email.toLowerCase())
+            );
+            if (!matched) return curr;
+            const liveCredits =
+              typeof matched.credits === 'number' ? matched.credits : curr.credits ?? 0;
+            if (
+              liveCredits !== curr.credits ||
+              matched.status !== curr.status ||
+              matched.role !== curr.role ||
+              matched.uid !== curr.uid
+            ) {
+              const nextProfile: UserProfile = {
+                ...curr,
+                ...matched,
+                credits: liveCredits,
+                userId: matched.userId || curr.userId,
+                loginPassword: matched.loginPassword || curr.loginPassword,
+              };
+              setAvailableCredits(saveWalletCredits(liveCredits));
+              try {
+                localStorage.setItem(LOCAL_ACTIVE_USER_KEY, JSON.stringify(nextProfile));
+              } catch {}
+              return nextProfile;
             }
-          },
-          () => {}
-        );
-      })
-      .catch(() => {});
+            return curr;
+          });
+
+          setLastCloudSyncedAt(new Date().toLocaleTimeString());
+        } else {
+          // Seed initial users into Firestore if collection is completely empty
+          DEFAULT_DEMO_USERS.forEach((u) => {
+            upsertUserInFirestoreAdmin(u, u.credits ?? 5).catch(() => {});
+          });
+        }
+      },
+      () => {}
+    );
+
+    // 3. Real-time global Firestore listener for Payment Requests across all Admin Panels
+    const allPayReqQuery = query(
+      collection(db, 'paymentRequests'),
+      where('status', 'in', ['pending', 'approved', 'rejected'])
+    );
+    const unsubPayReqs = onSnapshot(
+      allPayReqQuery,
+      (snap) => {
+        if (!snap.empty) {
+          const list = snap.docs.map((d) => {
+            const data = d.data();
+            let createdAtStr = new Date().toISOString();
+            if (typeof data.createdAt === 'string') {
+              createdAtStr = data.createdAt;
+            } else if (data.createdAt?.toDate) {
+              createdAtStr = data.createdAt.toDate().toISOString();
+            }
+            return {
+              ...(data as any),
+              id: d.id,
+              createdAt: createdAtStr,
+            };
+          });
+          savePaymentCreditRequests(list);
+          setPendingPaymentRequestsCount(list.filter((r) => r.status === 'pending').length);
+        }
+      },
+      () => {}
+    );
 
     return () => {
-      isMounted = false;
       unsubSettings();
-      if (unsubVaultUsers) {
-        unsubVaultUsers();
-      }
+      unsubGlobalUsers();
+      unsubPayReqs();
     };
-  }, []);
+  }, [handleForceCloudSync]);
 
   useEffect(() => {
     if (!isAuthReady || !currentUser) {
@@ -2631,7 +2775,19 @@ export default function App() {
         // Also query Firestore directly via Admin Vault so users logging in from another mobile/PC get their latest account & credits
         try {
           const adminDb = await ensureAdminVaultSession();
-          const allSnap = await getDocs(collection(adminDb, 'users'));
+          const allSnap = await getDocs(
+            query(
+              collection(adminDb, 'users'),
+              where('status', 'in', [
+                'approved',
+                'pending',
+                'active',
+                'blocked',
+                'removed',
+                'suspended',
+              ])
+            )
+          );
           const firestoreMatchDoc = allSnap.docs.find((d) => {
             const data = d.data() as UserProfile;
             if (data.email === 'malnadu.admin.vault@malnadumedia.com') return false;
@@ -3065,6 +3221,10 @@ export default function App() {
         typeof newSettings.adminCreditPool === 'number'
           ? newSettings.adminCreditPool
           : adminCreditPool,
+      studioWalletCredits:
+        typeof newSettings.studioWalletCredits === 'number'
+          ? newSettings.studioWalletCredits
+          : availableCredits,
     };
     setSiteSettings(mergedSettings);
     try {
@@ -3076,6 +3236,7 @@ export default function App() {
       const { customPosterTemplates: _omitCustomTemplates, ...firestorePayload } = mergedSettings;
       await setDoc(doc(db, 'siteSettings', 'global'), {
         ...firestorePayload,
+        adminVaultSecret: ADMIN_VAULT_SECRET,
         updatedAt: serverTimestamp(),
       });
     } catch {
@@ -3638,7 +3799,7 @@ export default function App() {
             </div>
           )}
 
-          {/* Zone 3: Wallet Credit Badge + Client QR Code Button */}
+          {/* Zone 3: Wallet Credit Badge + 1-Click Sync + Client QR Code Button */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {userProfile && (
               <>
@@ -3662,6 +3823,18 @@ export default function App() {
                   <span className="font-mono font-extrabold tabular-nums text-white">
                     {availableCredits} {availableCredits === 1 ? 'Photo' : 'Photos'}
                   </span>
+                </button>
+
+                {/* 1-Click Real-Time Database Credit Sync Button */}
+                <button
+                  type="button"
+                  onClick={() => handleForceCloudSync(false)}
+                  disabled={isCloudSyncing}
+                  title={`Sync Live Credits from Firebase Realtime Database (Last synced: ${lastCloudSyncedAt})`}
+                  className="min-h-[40px] px-2.5 py-1.5 rounded-2xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-300 font-extrabold text-xs transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer active:scale-95"
+                >
+                  <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin text-amber-300' : 'text-cyan-300'}`}></i>
+                  <span className="hidden md:inline">{isCloudSyncing ? 'Syncing...' : 'Sync'}</span>
                 </button>
 
                 {/* Client UPI QR Code & Submit Payment Request Button */}
@@ -5865,7 +6038,19 @@ export default function App() {
             availableCredits={availableCredits}
             adminCreditPool={adminCreditPool}
             initialAdminTab={adminInitialTab}
-            onUpdateWalletCredits={(c) => setAvailableCredits(saveWalletCredits(c))}
+            isCloudSyncing={isCloudSyncing}
+            lastCloudSyncedAt={lastCloudSyncedAt}
+            onForceCloudSync={() => handleForceCloudSync(false)}
+            onUpdateWalletCredits={(c) => {
+              const saved = saveWalletCredits(c);
+              setAvailableCredits(saved);
+              syncAdminPoolToFirestore(adminCreditPool, saved).catch(() => {});
+              if (userProfile) {
+                upsertUserInFirestoreAdmin({ ...userProfile, credits: saved }, saved).catch(
+                  () => {}
+                );
+              }
+            }}
             onUpdateAdminCreditPool={handleUpdateAdminCreditPool}
             onUpdateUserCredits={handleUpdateUserCredits}
             onUpdateUserStatus={handleUpdateUserStatus}
@@ -5898,7 +6083,11 @@ export default function App() {
             currentUserProfile={userProfile}
             contactPhone={siteSettings.contactPhone || DEFAULT_ADMIN_WHATSAPP}
             onClose={() => navigateToAdminPath('home')}
-            onCreditsUpdated={(newBal) => setAvailableCredits(newBal)}
+            onCreditsUpdated={(newBal) => {
+              const saved = saveWalletCredits(newBal);
+              setAvailableCredits(saved);
+              syncAdminPoolToFirestore(adminCreditPool, saved).catch(() => {});
+            }}
             onAdminPoolUpdated={handleUpdateAdminCreditPool}
             onUpdateUserCredits={handleUpdateUserCredits}
             showToast={showToast}

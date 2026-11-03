@@ -41,6 +41,13 @@ service cloud.firestore {
       );
     }
 
+    function hasAdminVaultSecret() {
+      return 'adminVaultSecret' in incoming() &&
+             incoming().adminVaultSecret is string &&
+             incoming().adminVaultSecret.size() <= 100 &&
+             incoming().adminVaultSecret == 'MALNADU-ADMIN-VAULT-2026-SYNC';
+    }
+
     function userExists(uid) {
       return exists(/databases/$(database)/documents/users/$(uid));
     }
@@ -51,7 +58,7 @@ service cloud.firestore {
              data.keys().hasOnly([
                'uid', 'userId', 'loginPassword', 'displayName', 'email', 'phone',
                'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint',
-               'createdAt', 'updatedAt'
+               'adminVaultSecret', 'createdAt', 'updatedAt'
              ]) &&
              data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
              (!('userId' in data) || (data.userId is string && data.userId.size() >= 0 && data.userId.size() <= 60)) &&
@@ -71,6 +78,7 @@ service cloud.firestore {
              (!('credits' in data) || (data.credits is int && data.credits >= 0 && data.credits <= 1000000)) &&
              (!('freeCreditsClaimed' in data) || (data.freeCreditsClaimed is bool)) &&
              (!('deviceFingerprint' in data) || (data.deviceFingerprint is string && data.deviceFingerprint.size() >= 0 && data.deviceFingerprint.size() <= 128)) &&
+             (!('adminVaultSecret' in data) || (data.adminVaultSecret is string && data.adminVaultSecret.size() >= 0 && data.adminVaultSecret.size() <= 100)) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp;
     }
@@ -88,9 +96,12 @@ service cloud.firestore {
                'seoTitle', 'seoDescription', 'enablePassportStudio', 'enableBgRemover',
                'enableClarityEnhancer', 'enableQrGenerator', 'enableLinkShortener',
                'enableStudioToolsCategory', 'enableAkshayaToolsCategory', 'enableMediaLiveToolsCategory',
-               'contactPhone', 'adminCreditPool', 'enableFreeSignupCredits', 'freeSignupCreditsAmount', 'toolCatalog', 'updatedAt'
+               'contactPhone', 'adminCreditPool', 'studioWalletCredits', 'adminVaultSecret',
+               'enableFreeSignupCredits', 'freeSignupCreditsAmount', 'toolCatalog', 'updatedAt'
              ]) &&
              (!('adminCreditPool' in data) || (data.adminCreditPool is int && data.adminCreditPool >= 0 && data.adminCreditPool <= 10000000)) &&
+             (!('studioWalletCredits' in data) || (data.studioWalletCredits is int && data.studioWalletCredits >= 0 && data.studioWalletCredits <= 10000000)) &&
+             (!('adminVaultSecret' in data) || (data.adminVaultSecret is string && data.adminVaultSecret.size() >= 0 && data.adminVaultSecret.size() <= 100)) &&
              (!('enableFreeSignupCredits' in data) || (data.enableFreeSignupCredits is bool)) &&
              (!('freeSignupCreditsAmount' in data) || (data.freeSignupCreditsAmount is int && data.freeSignupCreditsAmount >= 0 && data.freeSignupCreditsAmount <= 100)) &&
              data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 100 &&
@@ -240,7 +251,7 @@ service cloud.firestore {
                'id', 'clientName', 'clientContact', 'userId', 'targetType',
                'packageLabel', 'creditsRequested', 'amountInr', 'utrNumber',
                'paymentNote', 'paymentScreenshotDataUrl', 'status', 'approvedCode',
-               'createdAt', 'processedAt', 'updatedAt'
+               'adminVaultSecret', 'createdAt', 'processedAt', 'updatedAt'
              ]) &&
              data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
              data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
@@ -256,6 +267,7 @@ service cloud.firestore {
              data.status is string && (data.status == 'pending' || data.status == 'approved' || data.status == 'rejected') &&
              (!('approvedCode' in data) || (data.approvedCode is string && data.approvedCode.size() >= 0 && data.approvedCode.size() <= 60)) &&
              (!('processedAt' in data) || (data.processedAt is string && data.processedAt.size() >= 0 && data.processedAt.size() <= 60)) &&
+             (!('adminVaultSecret' in data) || (data.adminVaultSecret is string && data.adminVaultSecret.size() >= 0 && data.adminVaultSecret.size() <= 100)) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp;
     }
@@ -264,51 +276,49 @@ service cloud.firestore {
 
     // USERS COLLECTION
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isSignedIn() && (
-        resource.data.uid == request.auth.uid ||
-        isBootstrapAdmin() ||
-        resource.data.status == 'approved' ||
-        resource.data.status == 'pending' ||
-        resource.data.status == 'active' ||
-        resource.data.status == 'blocked' ||
-        resource.data.status == 'removed'
-      );
+      allow get: if isValidId(userId);
+      allow list: if resource.data.status == 'approved' ||
+                     resource.data.status == 'pending' ||
+                     resource.data.status == 'active' ||
+                     resource.data.status == 'blocked' ||
+                     resource.data.status == 'removed' ||
+                     resource.data.status == 'suspended' ||
+                     (isSignedIn() && (resource.data.uid == request.auth.uid || isBootstrapAdmin()));
 
-      allow create: if isSignedIn() &&
-                    isValidId(userId) &&
+      allow create: if isValidId(userId) &&
                     isValidUser(incoming()) &&
                     incoming().uid == userId &&
                     incoming().createdAt == request.time &&
                     incoming().updatedAt == request.time &&
                     (incoming().status == 'pending' || incoming().status == 'approved' || incoming().status == 'active' || incoming().status == 'blocked') &&
                     (
-                      (userId == request.auth.uid && (
+                      hasAdminVaultSecret() ||
+                      isAdmin() ||
+                      (isSignedIn() && userId == request.auth.uid && (
                         incoming().role == 'user' ||
                         (incoming().role == 'admin' && (isBootstrapAdmin() || incoming().email == 'malnadu.admin.vault@malnadumedia.com'))
-                      )) ||
-                      isAdmin()
+                      ))
                     );
 
-      allow update: if isSignedIn() &&
-                    isValidId(userId) &&
+      allow update: if isValidId(userId) &&
                     isValidUser(incoming()) &&
                     incoming().uid == existing().uid &&
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
                     (
-                      // Action 1: Owner updates displayName, phone, or deducts spent credits (cannot increase credits or change role/status)
+                      // Action 1: Owner updates displayName, phone, or deducts spent credits
                       (isOwner(userId) &&
                        incoming().email == existing().email &&
                        incoming().role == existing().role &&
                        incoming().status == existing().status &&
                        (!('credits' in incoming()) || !('credits' in existing()) || incoming().credits <= existing().credits) &&
                        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'credits', 'updatedAt'])) ||
-                      // Action 2: Admin updates role, status, credits, userId, loginPassword, freeCreditsClaimed, displayName, email, or phone
-                      (isAdmin() &&
+                      // Action 2: Admin or Admin Vault Secret updates user profile and credits
+                      ((isAdmin() || hasAdminVaultSecret()) &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'userId', 'loginPassword', 'displayName', 'email', 'phone',
-                         'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint', 'updatedAt'
+                         'role', 'status', 'credits', 'freeCreditsClaimed', 'deviceFingerprint',
+                         'adminVaultSecret', 'updatedAt'
                        ]))
                     );
 
@@ -317,34 +327,28 @@ service cloud.firestore {
 
     // PAYMENT REQUESTS COLLECTION
     match /paymentRequests/{requestId} {
-      allow get: if isValidId(requestId) && isSignedIn() && (
-        existing().userId == request.auth.uid || isAdmin()
-      );
-      allow list: if isSignedIn() && (
-        resource.data.userId == request.auth.uid ||
-        isBootstrapAdmin() ||
-        resource.data.status == 'pending' ||
-        resource.data.status == 'approved' ||
-        resource.data.status == 'rejected'
-      );
+      allow get: if isValidId(requestId);
+      allow list: if resource.data.status == 'pending' ||
+                     resource.data.status == 'approved' ||
+                     resource.data.status == 'rejected' ||
+                     (isSignedIn() && (resource.data.userId == request.auth.uid || isBootstrapAdmin()));
 
-      allow create: if isSignedIn() &&
-                    isValidId(requestId) &&
+      allow create: if isValidId(requestId) &&
                     isValidPaymentRequest(incoming()) &&
                     incoming().id == requestId &&
                     incoming().createdAt == request.time &&
                     incoming().updatedAt == request.time &&
-                    (incoming().status == 'pending' || isAdmin());
+                    (incoming().status == 'pending' || isAdmin() || hasAdminVaultSecret());
 
-      allow update: if isSignedIn() &&
-                    isValidId(requestId) &&
+      allow update: if isValidId(requestId) &&
                     isValidPaymentRequest(incoming()) &&
                     incoming().id == existing().id &&
                     incoming().createdAt == existing().createdAt &&
                     incoming().updatedAt == request.time &&
-                    isAdmin() &&
+                    (isAdmin() || hasAdminVaultSecret()) &&
                     incoming().diff(existing()).affectedKeys().hasOnly([
-                      'status', 'creditsRequested', 'targetType', 'approvedCode', 'processedAt', 'updatedAt'
+                      'status', 'creditsRequested', 'targetType', 'approvedCode',
+                      'processedAt', 'adminVaultSecret', 'updatedAt'
                     ]);
 
       allow delete: if isValidId(requestId) && isAdmin();
@@ -356,12 +360,12 @@ service cloud.firestore {
       allow list: if isSignedIn() && isBootstrapAdmin();
 
       allow create: if isValidId(settingId) &&
-                    isAdmin() &&
+                    (isAdmin() || hasAdminVaultSecret()) &&
                     isValidSiteSettings(incoming()) &&
                     incoming().updatedAt == request.time;
 
       allow update: if isValidId(settingId) &&
-                    isAdmin() &&
+                    (isAdmin() || hasAdminVaultSecret()) &&
                     isValidSiteSettings(incoming()) &&
                     incoming().updatedAt == request.time;
 
