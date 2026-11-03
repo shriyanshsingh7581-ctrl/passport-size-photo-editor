@@ -6487,6 +6487,8 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     showToast(`Loaded template: ${tpl.name}`);
   };
 
+  const [showOverlayOnAiPoster, setShowOverlayOnAiPoster] = useState<boolean>(false);
+
   // Render full poster to HTML5 Canvas
   const renderPosterCanvas = useCallback(
     (targetCanvas: HTMLCanvasElement, showSelectionHighlight = true) => {
@@ -6499,12 +6501,30 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       // 1. Background, Ornamental Patterns & Borders
       drawTemplateBackgroundAndBorders(ctx, activeTemplate);
 
-      // 1b. If Admin uploaded a Custom Background Image for this template, render it
+      // 1b. If AI Photo-to-Photo Image or Custom Background Image is present, render it with aspect-preserving cover fit
       const customBgImg = customBgImagesRef.current[activeTemplate.id];
+      const isPureAiPhotoToPhoto =
+        Boolean(customBgImg) &&
+        Boolean(activeTemplate.badge?.includes('Photo-to-Photo AI')) &&
+        !showOverlayOnAiPoster;
+
       if (customBgImg) {
         ctx.save();
-        ctx.drawImage(customBgImg, 0, 0, targetCanvas.width, targetCanvas.height);
+        const imgW = customBgImg.naturalWidth || customBgImg.width || targetCanvas.width;
+        const imgH = customBgImg.naturalHeight || customBgImg.height || targetCanvas.height;
+        const scale = Math.max(targetCanvas.width / imgW, targetCanvas.height / imgH);
+        const drawW = imgW * scale;
+        const drawH = imgH * scale;
+        const offsetX = (targetCanvas.width - drawW) / 2;
+        const offsetY = (targetCanvas.height - drawH) / 2;
+        ctx.drawImage(customBgImg, offsetX, offsetY, drawW, drawH);
         ctx.restore();
+      }
+
+      // If this is a pure AI Photo-to-Photo generated poster and user hasn't enabled manual overlay,
+      // show the complete AI-generated Photo-to-Photo poster directly without covering it up!
+      if (isPureAiPhotoToPhoto) {
+        return;
       }
 
       // 2. Render Each Predefined Photo Slot with Clipping, Zoom, Pan, Crop & Rotation
@@ -6563,7 +6583,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         drawWrappedTextField(ctx, field, textOverrides[key]);
       });
     },
-    [activeTemplate, slotTransforms, activeSlotId, textOverrides]
+    [activeTemplate, slotTransforms, activeSlotId, textOverrides, showOverlayOnAiPoster]
   );
 
   useEffect(() => {
@@ -6572,7 +6592,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     }
   }, [renderPosterCanvas]);
 
-  // Upload user photo into the currently active photo slot
+  // Upload user photo into the currently active photo slot AND sync with Photo-to-Photo AI input
   const handleSlotPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeSlotId) return;
@@ -6580,6 +6600,10 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
+      // Also sync as primary Photo-to-Photo reference so AI Generate uses this uploaded photo
+      auraPhoto1ImgRef.current = img;
+      setAuraPhoto1Url(objectUrl);
+
       setSlotTransforms((prev) => ({
         ...prev,
         [activeSlotId]: {
@@ -6601,7 +6625,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           rotation: 0,
         },
       }));
-      showToast('Photo placed into selected template frame! Drag on poster to reposition.');
+      showToast('Photo uploaded & ready for AI Photo-to-Photo generation!');
     };
     img.src = objectUrl;
     e.target.value = '';
@@ -6712,7 +6736,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   };
 
   // =========================================================================
-  // AURA AI + & AURA AI PRO WHITE-LABEL POSTER GENERATOR + CREDIT SYSTEM
+  // AURA AI + & AURA AI PRO PHOTO-TO-PHOTO POSTER GENERATOR + CREDIT SYSTEM
   // =========================================================================
   const [walletCredits, setWalletCredits] = useState<number>(() => loadWalletCredits());
   const paidPosterIdsRef = useRef<Set<string>>(new Set());
@@ -6724,7 +6748,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
   >('center-arch-photo');
   const [isGeneratingAuraPoster, setIsGeneratingAuraPoster] = useState<boolean>(false);
 
-  // Attached photos for Aura AI Poster creation
+  // Attached photos for Aura AI Photo-to-Photo creation
   const [auraPhoto1Url, setAuraPhoto1Url] = useState<string>('');
   const [auraPhoto2Url, setAuraPhoto2Url] = useState<string>('');
   const [auraCustomBgDataUrl, setAuraCustomBgDataUrl] = useState<string>('');
@@ -6764,7 +6788,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       if (slotNumber === 1) {
         auraPhoto1ImgRef.current = img;
         setAuraPhoto1Url(objectUrl);
-        // Also immediately apply to the first photo slot of the active template so user sees their photo right away
         const targetSlot = activeTemplate.photoSlots[0];
         if (targetSlot) {
           setSlotTransforms((prev) => ({
@@ -6784,7 +6807,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           }));
           setActiveSlotId(targetSlot.id);
         }
-        showToast('Photo 1 attached & placed on poster! Ready for Aura AI or template editing.');
+        showToast('Photo 1 attached for AI Photo-to-Photo generation!');
       } else {
         auraPhoto2ImgRef.current = img;
         setAuraPhoto2Url(objectUrl);
@@ -6807,7 +6830,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
             },
           }));
         }
-        showToast('2nd Photo attached for Dual-Frame Poster!');
+        showToast('2nd Photo attached for Dual Photo-to-Photo Poster!');
       }
     };
     img.src = objectUrl;
@@ -6836,12 +6859,32 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
   const [lastAuraSuccessBanner, setLastAuraSuccessBanner] = useState<string>('');
 
-  const handleGeneratePosterWithAuraAi = async (overridePrompt?: string, overrideLayout?: typeof auraPreferredLayout) => {
-    const promptToUse = (overridePrompt !== undefined ? overridePrompt : auraPrompt).trim();
+  const handleGeneratePosterWithAuraAi = async (
+    overridePrompt?: string,
+    overrideLayout?: typeof auraPreferredLayout
+  ) => {
+    const rawPrompt = (overridePrompt !== undefined ? overridePrompt : auraPrompt).trim();
     const engineInfo = AURA_AI_ENGINES[auraEngineId];
 
+    // Check if user has attached a photo either in Photo 1 box or in the active canvas slot
+    const primarySource =
+      auraPhoto1ImgRef.current ||
+      (auraPhoto1Url ? auraPhoto1Url : null);
+    const secondarySource =
+      auraPhoto2ImgRef.current ||
+      (auraPhoto2Url ? auraPhoto2Url : null);
+
+    // If user attached a photo and clicked Generate without typing text, provide a default Photo-to-Photo studio prompt
+    const promptToUse =
+      rawPrompt ||
+      (primarySource
+        ? 'Create a luxury royal Indian studio celebration poster featuring the person in this attached photo with studio portrait lighting, royal golden framing, and festive bokeh background'
+        : '');
+
     if (!promptToUse) {
-      showToast(`Please enter your poster prompt first to create with ${engineInfo.displayName}!`);
+      showToast(
+        `Please attach a photo or enter a poster prompt to generate with ${engineInfo.displayName}!`
+      );
       return;
     }
 
@@ -6862,7 +6905,10 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         prompt: promptToUse,
         engineId: auraEngineId,
         preferredLayout: layoutToUse,
-        hasSecondaryPhoto: Boolean(auraPhoto2ImgRef.current),
+        hasSecondaryPhoto: Boolean(secondarySource),
+        primaryPhotoSource: primarySource,
+        secondaryPhotoSource: secondarySource,
+        runPhotoToPhotoModel: true,
       });
 
       // Deduct 1 Credit from Wallet on successful AI Poster creation
@@ -6871,6 +6917,40 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
 
       const newTplId = `aura-ai-${Date.now()}`;
       paidPosterIdsRef.current.add(newTplId);
+
+      // Determine final background image (AI Photo-to-Photo generated image takes priority, or user custom BG)
+      let finalBgDataUrl = aiDesign.aiGeneratedImageDataUrl || auraCustomBgDataUrl || undefined;
+
+      // Preload AI Photo-to-Photo image into customBgImagesRef & compress for localStorage quota safety
+      if (finalBgDataUrl) {
+        await new Promise<void>((resolve) => {
+          const bgImg = new Image();
+          bgImg.crossOrigin = 'anonymous';
+          bgImg.onload = () => {
+            customBgImagesRef.current[newTplId] = bgImg;
+            try {
+              const compCanvas = document.createElement('canvas');
+              compCanvas.width = 1080;
+              compCanvas.height = 1350;
+              const compCtx = compCanvas.getContext('2d');
+              if (compCtx) {
+                const iw = bgImg.naturalWidth || 1080;
+                const ih = bgImg.naturalHeight || 1350;
+                const sc = Math.max(1080 / iw, 1350 / ih);
+                const dw = iw * sc;
+                const dh = ih * sc;
+                compCtx.drawImage(bgImg, (1080 - dw) / 2, (1350 - dh) / 2, dw, dh);
+                finalBgDataUrl = compCanvas.toDataURL('image/jpeg', 0.82);
+              }
+            } catch {
+              // keep original dataUrl
+            }
+            resolve();
+          };
+          bgImg.onerror = () => resolve();
+          bgImg.src = finalBgDataUrl!;
+        });
+      }
 
       const slotX =
         aiDesign.layoutPreset === 'left-photo-right-text'
@@ -6903,7 +6983,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         category: aiDesign.category,
         categoryLabel: `${aiDesign.engineUsed} · ${aiDesign.categoryLabel}`,
         badge: aiDesign.badge,
-        bgImageDataUrl: auraCustomBgDataUrl || undefined,
+        bgImageDataUrl: finalBgDataUrl,
         bgColors: aiDesign.bgColors,
         primaryAccent: aiDesign.primaryAccent,
         secondaryAccent: aiDesign.secondaryAccent,
@@ -6927,21 +7007,20 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       };
 
       const existingCustom = loadCustomPosterTemplates();
-      const updatedCustomList = [createdCustomTemplate, ...existingCustom].slice(0, 30);
+      const updatedCustomList = [createdCustomTemplate, ...existingCustom].slice(0, 6);
       saveCustomPosterTemplates(updatedCustomList);
       setCustomRawTemplates(updatedCustomList);
 
-      if (auraCustomBgDataUrl) {
-        const bgImg = new Image();
-        bgImg.onload = () => {
-          customBgImagesRef.current[newTplId] = bgImg;
-          setBgLoadTick((t) => t + 1);
-        };
-        bgImg.src = auraCustomBgDataUrl;
+      // If AI Photo-to-Photo generated a full image, show the pure AI Photo-to-Photo poster by default
+      if (aiDesign.aiGeneratedImageDataUrl) {
+        setShowOverlayOnAiPoster(false);
+      } else {
+        setShowOverlayOnAiPoster(true);
       }
 
       const convertedSpec = convertCustomTemplateToSpec(createdCustomTemplate);
       setSelectedTemplateId(newTplId);
+      setBgLoadTick((t) => t + 1);
 
       // Place user's attached photo(s) or sample portraits into the newly generated AI poster slots
       const primaryImg = auraPhoto1ImgRef.current || samplePortraitsRef.current[0] || null;
@@ -6976,7 +7055,9 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       }
 
       setLastAuraSuccessBanner(
-        `✅ ${aiDesign.engineUsed} Poster "${aiDesign.name}" Created! (-1 Credit · ${deduction.remaining} Credits Left)`
+        `✅ ${aiDesign.engineUsed} ${
+          aiDesign.aiGeneratedImageDataUrl ? 'Photo-to-Photo AI Poster' : 'Poster'
+        } "${aiDesign.name}" Created! (-1 Credit · ${deduction.remaining} Credits Left)`
       );
 
       setTimeout(() => {
@@ -6984,7 +7065,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       }, 150);
 
       showToast(
-        `✨ ${aiDesign.engineUsed} Poster Created! (-1 Credit · ${deduction.remaining} Credits Remaining)`
+        `✨ ${aiDesign.engineUsed} Photo-to-Photo Poster Created! (-1 Credit · ${deduction.remaining} Credits Remaining)`
       );
     } catch (err) {
       console.error('Aura AI poster generation error:', err);
@@ -7064,16 +7145,16 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-amber-300">
             <i className="fa-solid fa-wand-magic-sparkles"></i>
-            <span>Aura AI + & Aura AI Pro Poster Creator</span>
+            <span>Aura AI + & Aura AI Pro · Photo-to-Photo Poster Studio</span>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono text-[11px]">
               Credits: {walletCredits}
             </span>
           </div>
           <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white">
-            AI Poster Creator — Aura AI + & Aura AI Pro
+            AI Photo-to-Photo & Poster Creator — Aura AI + & Aura AI Pro
           </h2>
           <p className="text-xs text-slate-300 max-w-3xl">
-            Enter your prompt below, attach your own photo to place directly onto the poster, and generate custom posters using <strong>Aura AI +</strong> or <strong>Aura AI Pro</strong>.
+            Upload your photo, type your prompt, and transform your photo into a complete studio poster using <strong>Aura AI +</strong> or <strong>Aura AI Pro</strong> Photo-to-Photo AI models.
           </p>
         </div>
 
@@ -7116,7 +7197,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
       </div>
 
       {/* =====================================================================
-          AURA AI + & AURA AI PRO PROMPT POSTER STUDIO + PHOTO ATTACHMENT BAR
+          AURA AI + & AURA AI PRO PHOTO-TO-PHOTO STUDIO + PHOTO ATTACHMENT BAR
          ===================================================================== */}
       <div className="bg-gradient-to-br from-[#070a14] via-slate-900 to-[#140b29] text-white rounded-3xl border border-purple-500/40 p-4 sm:p-6 shadow-xl space-y-4">
         {/* Top Row: White-Labeled Engine Switcher (Aura AI + vs Aura AI Pro) + Photo Frame Layout */}
@@ -7124,7 +7205,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-400/40 text-cyan-300 text-xs font-extrabold">
               <i className="fa-solid fa-sparkles text-amber-300"></i>
-              <span>Select AI Poster Engine:</span>
+              <span>Select Photo-to-Photo AI Model:</span>
             </span>
 
             {(['aura-ai-plus', 'aura-ai-pro'] as AuraEngineId[]).map((engKey) => {
@@ -7195,7 +7276,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           <div className="lg:col-span-6 flex flex-col justify-between space-y-2">
             <label className="text-xs font-extrabold text-cyan-300 flex items-center justify-between">
               <span>
-                1. Describe Your Poster (Names, Occasion, Date, Venue, Colors — Hindi / English):
+                1. Describe Photo-to-Photo Transformation or Poster Details (Hindi / English):
               </span>
               {auraPrompt && (
                 <button
@@ -7211,7 +7292,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
               rows={3}
               value={auraPrompt}
               onChange={(e) => setAuraPrompt(e.target.value)}
-              placeholder={`Ask ${AURA_AI_ENGINES[auraEngineId].displayName} to design any poster — e.g. "Royal red & gold Wedding Invitation for Rohan & Priya on Sunday 24th Nov 7:00 PM at Taj Palace Hall"...`}
+              placeholder={`Attach your photo on the right & tell ${AURA_AI_ENGINES[auraEngineId].displayName} how to transform it — e.g. "Transform this photo into a Royal Gold Wedding Invitation Poster for Rohan & Priya on 24 Nov" or "Make a cinematic Birthday Poster from this photo"...`}
               className="w-full flex-1 px-4 py-3 rounded-2xl bg-slate-950/90 border border-cyan-500/40 text-white placeholder-slate-400 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-cyan-400"
             />
           </div>
@@ -7220,7 +7301,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           <div className="lg:col-span-3 bg-white/5 rounded-2xl border border-white/15 p-3 flex flex-col justify-between space-y-2">
             <div className="text-xs font-extrabold text-amber-300 flex items-center gap-1.5">
               <i className="fa-solid fa-camera-retro"></i>
-              <span>2. Attach Photo to Put on Poster:</span>
+              <span>2. Attach Reference Photo (Photo-to-Photo):</span>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
@@ -7241,7 +7322,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                       ? 'border-emerald-400 bg-emerald-950/40 text-emerald-200'
                       : 'border-cyan-400/50 hover:border-cyan-300 bg-slate-900/70 text-cyan-200'
                   }`}
-                  title="Upload Main Photo for Poster"
+                  title="Upload Main Photo for Photo-to-Photo AI"
                 >
                   {auraPhoto1Url ? (
                     <>
@@ -7280,7 +7361,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                       ? 'border-emerald-400 bg-emerald-950/40 text-emerald-200'
                       : 'border-purple-400/50 hover:border-purple-300 bg-slate-900/70 text-purple-200'
                   }`}
-                  title="Upload Optional 2nd Photo for Couple/Dual Poster"
+                  title="Upload Optional 2nd Photo for Couple/Dual Photo-to-Photo Poster"
                 >
                   {auraPhoto2Url ? (
                     <>
@@ -7345,7 +7426,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
             {(auraPhoto1Url || auraPhoto2Url || auraCustomBgDataUrl) && (
               <div className="flex items-center justify-between text-[10px] text-slate-300">
                 <span className="text-emerald-300 font-bold">
-                  ✓ Attached photo will auto-fit on poster
+                  ✓ Photo ready for AI Photo-to-Photo model
                 </span>
                 <button
                   type="button"
@@ -7367,7 +7448,7 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
           {/* Generate AI Poster Action Column */}
           <div className="lg:col-span-3 flex flex-col justify-between gap-2">
             <div className="text-xs font-extrabold text-purple-300 flex items-center justify-between">
-              <span>3. Create with {AURA_AI_ENGINES[auraEngineId].displayName}:</span>
+              <span>3. Run {AURA_AI_ENGINES[auraEngineId].displayName}:</span>
               <span className="font-mono text-[11px] text-amber-300">1 Credit / Poster</span>
             </div>
 
@@ -7391,12 +7472,12 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                 ></i>
                 <span>
                   {isGeneratingAuraPoster
-                    ? `Designing with ${AURA_AI_ENGINES[auraEngineId].displayName}...`
-                    : `Generate with ${AURA_AI_ENGINES[auraEngineId].displayName}`}
+                    ? `Creating Photo-to-Photo with ${AURA_AI_ENGINES[auraEngineId].displayName}...`
+                    : `Generate Photo-to-Photo (${AURA_AI_ENGINES[auraEngineId].displayName})`}
                 </span>
               </div>
               <span className="text-[10px] font-semibold text-white/90">
-                Uses 1 Credit · Places Attached Photo Automatically
+                Uses 1 Credit · Real AI Photo-to-Photo Synthesis
               </span>
             </button>
           </div>
@@ -7489,12 +7570,33 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Drag directly on any photo frame to reposition · Scroll wheel to zoom in/out
+                {activeTemplate.badge?.includes('Photo-to-Photo AI') && !showOverlayOnAiPoster
+                  ? 'Displaying full AI Photo-to-Photo poster · Toggle overlay on the right to add custom text/frames'
+                  : 'Drag directly on any photo frame to reposition · Scroll wheel to zoom in/out'}
               </p>
             </div>
 
-            {/* Active Photo Slot Switcher Buttons */}
+            {/* Active Photo Slot Switcher Buttons + AI Photo-to-Photo Overlay Toggle */}
             <div className="flex items-center gap-1.5 flex-wrap">
+              {activeTemplate.badge?.includes('Photo-to-Photo AI') && (
+                <button
+                  type="button"
+                  onClick={() => setShowOverlayOnAiPoster((prev) => !prev)}
+                  className={`min-h-[34px] px-3 py-1 rounded-xl text-[11px] font-extrabold transition flex items-center gap-1.5 ${
+                    !showOverlayOnAiPoster
+                      ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                      : 'bg-purple-500/30 border border-purple-400/50 text-purple-200'
+                  }`}
+                >
+                  <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
+                  <span>
+                    {!showOverlayOnAiPoster
+                      ? 'Pure AI Photo-to-Photo View'
+                      : 'Custom Frame + Text Overlay ON'}
+                  </span>
+                </button>
+              )}
+
               {activeTemplate.photoSlots.map((slot, idx) => (
                 <button
                   key={slot.id}

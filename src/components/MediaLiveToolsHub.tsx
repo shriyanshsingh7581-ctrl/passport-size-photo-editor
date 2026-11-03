@@ -1429,9 +1429,24 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
   }, []);
 
   const handleGenerateAuraLivePoster = async (overridePrompt?: string) => {
-    const promptToUse = (overridePrompt ?? auraLivePrompt).trim();
+    const rawPrompt = (overridePrompt ?? auraLivePrompt).trim();
+    const attachedSource =
+      subjectImgRef.current ||
+      uploadedThumbImgRef.current ||
+      bgImgRef.current ||
+      subjectPhotoUrl ||
+      uploadedThumbUrl ||
+      customBgUrl ||
+      null;
+
+    const promptToUse =
+      rawPrompt ||
+      (attachedSource
+        ? 'Transform this attached photo into a vibrant 4K Live Broadcast Poster with studio lighting and celebratory typography'
+        : '');
+
     if (!promptToUse) {
-      showToast('Please enter a poster prompt or pick a ready-made prompt first!');
+      showToast('Please attach a photo or enter a poster prompt first!');
       return;
     }
 
@@ -1447,6 +1462,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
       const result = await generateLiveBroadcastCopyWithAuraAi({
         engineId: auraLiveEngine,
         prompt: promptToUse,
+        primaryPhotoSource: attachedSource,
       });
 
       const deducted = deductWalletCredit();
@@ -1457,6 +1473,24 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
         return;
       }
       setWalletCredits(deducted.remaining);
+
+      if (result.aiGeneratedImageDataUrl) {
+        await new Promise<void>((resolve) => {
+          const aiImg = new Image();
+          aiImg.crossOrigin = 'anonymous';
+          aiImg.onload = () => {
+            bgImgRef.current = aiImg;
+            setCustomBgUrl(result.aiGeneratedImageDataUrl!);
+            if (activeSubTool === 'youtube-thumbnail') {
+              uploadedThumbImgRef.current = aiImg;
+              setUploadedThumbUrl(result.aiGeneratedImageDataUrl!);
+            }
+            resolve();
+          };
+          aiImg.onerror = () => resolve();
+          aiImg.src = result.aiGeneratedImageDataUrl!;
+        });
+      }
 
       if (result.accentColor) setAccentColor(result.accentColor);
 
@@ -1496,7 +1530,7 @@ export const MediaLiveToolsHub: React.FC<MediaLiveToolsHubProps> = ({
 
       const engineLabel = AURA_AI_ENGINES[auraLiveEngine]?.displayName || 'Aura AI +';
       showToast(
-        `✨ Poster created with ${engineLabel}! (1 Credit used · ${deducted.remaining} left)`
+        `✨ Photo-to-Photo Poster created with ${engineLabel}! (1 Credit used · ${deducted.remaining} left)`
       );
     } catch (err: any) {
       showToast(err?.message || 'Aura AI server busy. Please try again.');

@@ -1,10 +1,10 @@
 /**
- * Aura AI White-Label Poster & Media Generation Service
- * Powered by https://shri-mitra-backend.onrender.com/api/chat
+ * Aura AI White-Label Photo-to-Photo & Poster Generation Service
+ * Powered by OpenRouter Multimodal Image-to-Image Models & https://shri-mitra-backend.onrender.com/api/chat
  *
  * White-Labeled Engines:
- * - Aura AI +   (Fast Creative Engine)
- * - Aura AI Pro (Ultra Studio Pro Engine)
+ * - Aura AI +   (Fast Photo-to-Photo & Creative Poster Engine)
+ * - Aura AI Pro (Ultra Studio Pro Photo-to-Photo & HD Poster Engine)
  */
 
 export const AURA_BACKEND_BASE_URL = 'https://shri-mitra-backend.onrender.com';
@@ -27,7 +27,8 @@ export interface AuraEngineOption {
   displayName: string; // White-labeled name shown on website (Aura AI + / Aura AI Pro)
   badge: string;
   tagline: string;
-  openRouterModels: string[];
+  imageGenerationModels: string[]; // Real Photo-to-Photo (text+image -> text+image) models on OpenRouter
+  openRouterModels: string[]; // Text/JSON layout models
   primaryModel: string;
   fallbackModels: string[];
 }
@@ -36,8 +37,13 @@ export const AURA_AI_ENGINES: Record<AuraEngineId, AuraEngineOption> = {
   'aura-ai-plus': {
     id: 'aura-ai-plus',
     displayName: 'Aura AI +',
-    badge: 'Fast & Creative',
-    tagline: 'Instant studio poster layout, vibrant color palettes & smart event copy',
+    badge: 'Photo-to-Photo + Fast AI',
+    tagline: 'Instant AI Photo-to-Photo transformation, studio portraits & vibrant poster creation',
+    imageGenerationModels: [
+      'google/gemini-2.5-flash-image',
+      'openai/gpt-5-image-mini',
+      'google/gemini-3.1-flash-image-preview',
+    ],
     openRouterModels: ['openai/gpt-4o-mini', 'openai/gpt-4o', 'google/gemini-2.5-flash-lite'],
     primaryModel: 'chatgpt',
     fallbackModels: ['openai/gpt-4o-mini', 'aura-plus'],
@@ -45,8 +51,13 @@ export const AURA_AI_ENGINES: Record<AuraEngineId, AuraEngineOption> = {
   'aura-ai-pro': {
     id: 'aura-ai-pro',
     displayName: 'Aura AI Pro',
-    badge: 'Ultra Studio Pro',
-    tagline: 'Deep luxury typography, rich cultural motifs & multi-frame poster artistry',
+    badge: 'Ultra Photo-to-Photo Pro',
+    tagline: 'Pro HD Photo-to-Photo synthesis, royal Indian & luxury event poster artistry',
+    imageGenerationModels: [
+      'google/gemini-3.1-flash-image-preview',
+      'google/gemini-2.5-flash-image',
+      'openai/gpt-5-image-mini',
+    ],
     openRouterModels: ['google/gemini-2.5-flash', 'google/gemini-2.5-flash-lite', 'openai/gpt-4o-mini'],
     primaryModel: 'google/gemini-2.5-flash',
     fallbackModels: ['aura-pro', 'chatgpt', 'openai/gpt-4o-mini'],
@@ -57,6 +68,202 @@ export function warmUpAuraBackend(): void {
   fetch(AURA_BACKEND_BASE_URL, { method: 'GET', mode: 'cors' }).catch(() => {
     // Silent warm-up ping for Render free instance
   });
+}
+
+/**
+ * Converts any HTMLImageElement, blob: URL, or data: URL into a clean compressed
+ * base64 JPEG data URL suitable for OpenRouter Photo-to-Photo multimodal input.
+ */
+export async function normalizeImageToBase64DataUrl(
+  source: string | HTMLImageElement | null | undefined,
+  maxDimension = 1024
+): Promise<string> {
+  if (!source) return '';
+
+  const renderElementToDataUrl = (imgEl: HTMLImageElement): string => {
+    const natW = imgEl.naturalWidth || imgEl.width || 800;
+    const natH = imgEl.naturalHeight || imgEl.height || 800;
+    const scale = Math.min(1, maxDimension / Math.max(natW, natH, 1));
+    const targetW = Math.max(1, Math.round(natW * scale));
+    const targetH = Math.max(1, Math.round(natH * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(imgEl, 0, 0, targetW, targetH);
+    return canvas.toDataURL('image/jpeg', 0.9);
+  };
+
+  if (typeof source !== 'string') {
+    try {
+      return renderElementToDataUrl(source);
+    } catch {
+      return '';
+    }
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        resolve(renderElementToDataUrl(img));
+      } catch {
+        resolve(source.startsWith('data:image/') ? source : '');
+      }
+    };
+    img.onerror = () => {
+      resolve(source.startsWith('data:image/') ? source : '');
+    };
+    img.src = source;
+  });
+}
+
+/**
+ * Calls OpenRouter's real Photo-to-Photo / Image Generation models
+ * (`google/gemini-2.5-flash-image`, `google/gemini-3.1-flash-image-preview`, `openai/gpt-5-image-mini`)
+ * with `modalities: ["image", "text"]` and returns the generated base64 image data URL.
+ */
+export async function generatePhotoToPhotoWithAuraAi(params: {
+  prompt: string;
+  engineId: AuraEngineId;
+  primaryPhotoSource?: string | HTMLImageElement | null;
+  secondaryPhotoSource?: string | HTMLImageElement | null;
+  aspectHint?: 'portrait-poster' | 'landscape-banner';
+}): Promise<{
+  imageDataUrl: string;
+  engineDisplayName: string;
+  modelUsed: string;
+}> {
+  const {
+    prompt,
+    engineId,
+    primaryPhotoSource,
+    secondaryPhotoSource,
+    aspectHint = 'portrait-poster',
+  } = params;
+  const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
+
+  const photo1DataUrl = await normalizeImageToBase64DataUrl(primaryPhotoSource, 1024);
+  const photo2DataUrl = await normalizeImageToBase64DataUrl(secondaryPhotoSource, 1024);
+
+  const hasInputPhoto = Boolean(photo1DataUrl);
+
+  const detailedPrompt = hasInputPhoto
+    ? `You are ${engine.displayName}, a professional Studio Photo-to-Photo & Poster Designer.
+Using the attached reference photo${photo2DataUrl ? 's' : ''}, create a stunning high-resolution ${
+        aspectHint === 'landscape-banner' ? '16:9 widescreen broadcast poster' : 'vertical studio poster / photo-to-photo masterpiece'
+      }.
+IMPORTANT PHOTO-TO-PHOTO RULES:
+1. Preserve the exact facial identity, features, and likeness of the person(s) from the uploaded reference photo${photo2DataUrl ? 's' : ''}.
+2. Seamlessly integrate and enhance the subject(s) into a professional studio design matching this request: "${prompt}".
+3. Include rich studio lighting, luxury color grading, ornamental framing, and clear, legible celebratory typography if text/names are mentioned in the request.`
+    : `You are ${engine.displayName}, a professional Studio Poster & Image Designer.
+Create a stunning, high-resolution ${
+        aspectHint === 'landscape-banner' ? '16:9 widescreen broadcast poster' : 'vertical studio poster'
+      } matching this request: "${prompt}".
+Include rich luxury lighting, festive ornamental borders, and clear, legible celebratory typography.`;
+
+  const contentParts: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  > = [{ type: 'text', text: detailedPrompt }];
+
+  if (photo1DataUrl) {
+    contentParts.push({
+      type: 'image_url',
+      image_url: { url: photo1DataUrl },
+    });
+  }
+
+  if (photo2DataUrl) {
+    contentParts.push({
+      type: 'image_url',
+      image_url: { url: photo2DataUrl },
+    });
+  }
+
+  for (const imgModel of engine.imageGenerationModels) {
+    try {
+      const response = await fetch(OPENROUTER_DIRECT_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer':
+            typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
+          'X-Title': 'Aura AI Photo-to-Photo Studio',
+        },
+        body: JSON.stringify({
+          model: imgModel,
+          modalities: ['image', 'text'],
+          messages: [
+            {
+              role: 'user',
+              content: contentParts,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const data = await response.json();
+      const msg = data?.choices?.[0]?.message;
+
+      // 1. Standard OpenRouter multimodal image output array: message.images[0].image_url.url
+      const firstImageObj = msg?.images?.[0];
+      const extractedUrl =
+        firstImageObj?.image_url?.url ||
+        firstImageObj?.url ||
+        (typeof firstImageObj === 'string' ? firstImageObj : '');
+
+      if (typeof extractedUrl === 'string' && extractedUrl.startsWith('data:image/')) {
+        return {
+          imageDataUrl: extractedUrl,
+          engineDisplayName: engine.displayName,
+          modelUsed: imgModel,
+        };
+      }
+
+      // 2. Check if content itself contains a base64 data URL or array part
+      if (Array.isArray(msg?.content)) {
+        for (const part of msg.content) {
+          const partUrl = part?.image_url?.url || part?.url;
+          if (typeof partUrl === 'string' && partUrl.startsWith('data:image/')) {
+            return {
+              imageDataUrl: partUrl,
+              engineDisplayName: engine.displayName,
+              modelUsed: imgModel,
+            };
+          }
+        }
+      } else if (typeof msg?.content === 'string') {
+        const match = msg.content.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
+        if (match?.[0]) {
+          return {
+            imageDataUrl: match[0],
+            engineDisplayName: engine.displayName,
+            modelUsed: imgModel,
+          };
+        }
+      }
+    } catch {
+      // Try next image generation model in list
+    }
+  }
+
+  return {
+    imageDataUrl: '',
+    engineDisplayName: engine.displayName,
+    modelUsed: '',
+  };
 }
 
 export interface ReadyMadeAuraPrompt {
@@ -143,6 +350,7 @@ export interface AuraGeneratedPosterDesign {
   venue: string;
   rsvp: string;
   engineUsed: string;
+  aiGeneratedImageDataUrl?: string;
 }
 
 /**
@@ -152,7 +360,6 @@ function parseAuraBackendStreamOrJson(rawText: string): string {
   const trimmed = rawText.trim();
   if (!trimmed) return '';
 
-  // Check if response is SSE stream ("data: {...}")
   if (trimmed.includes('data:')) {
     const lines = trimmed.split('\n');
     let assembled = '';
@@ -187,7 +394,6 @@ function parseAuraBackendStreamOrJson(rawText: string): string {
     if (assembled.trim()) return assembled.trim();
   }
 
-  // Standard JSON response
   try {
     const json = JSON.parse(trimmed);
     if (typeof json?.reply === 'string') return json.reply;
@@ -221,7 +427,8 @@ export async function requestAuraAiCompletion(
         headers: {
           Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
+          'HTTP-Referer':
+            typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
           'X-Title': 'Aura AI Poster Studio',
         },
         body: JSON.stringify({
@@ -300,7 +507,8 @@ export async function requestAuraAiCompletion(
 }
 
 /**
- * Generates a complete, bespoke Poster Design from a user prompt via Aura AI + or Aura AI Pro
+ * Generates a complete Poster Design AND runs real Photo-to-Photo / Image Generation
+ * via Aura AI + or Aura AI Pro.
  */
 export async function generatePosterDesignWithAuraAi(params: {
   prompt: string;
@@ -311,8 +519,19 @@ export async function generatePosterDesignWithAuraAi(params: {
     | 'top-circle-photo'
     | 'dual-couple-photos';
   hasSecondaryPhoto?: boolean;
+  primaryPhotoSource?: string | HTMLImageElement | null;
+  secondaryPhotoSource?: string | HTMLImageElement | null;
+  runPhotoToPhotoModel?: boolean;
 }): Promise<AuraGeneratedPosterDesign> {
-  const { prompt, engineId, preferredLayout, hasSecondaryPhoto } = params;
+  const {
+    prompt,
+    engineId,
+    preferredLayout,
+    hasSecondaryPhoto,
+    primaryPhotoSource,
+    secondaryPhotoSource,
+    runPhotoToPhotoModel = true,
+  } = params;
   const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
 
   const systemInstruction = `You are "${engine.displayName}", an elite luxury Indian & International Studio Poster Designer.
@@ -341,7 +560,21 @@ Return strictly a JSON object matching these exact keys and allowed values:
   "rsvp": "Bottom RSVP or family compliment line (max 55 chars)"
 }`;
 
-  const { text, engineDisplayName } = await requestAuraAiCompletion(systemInstruction, engineId);
+  // Run both the Photo-to-Photo image model and the structured layout/text model in parallel
+  const [completionRes, photoToPhotoRes] = await Promise.all([
+    requestAuraAiCompletion(systemInstruction, engineId),
+    runPhotoToPhotoModel
+      ? generatePhotoToPhotoWithAuraAi({
+          prompt,
+          engineId,
+          primaryPhotoSource,
+          secondaryPhotoSource,
+          aspectHint: 'portrait-poster',
+        })
+      : Promise.resolve({ imageDataUrl: '', engineDisplayName: engine.displayName, modelUsed: '' }),
+  ]);
+
+  const { text, engineDisplayName } = completionRes;
 
   let parsed: Partial<AuraGeneratedPosterDesign> = {};
   if (text) {
@@ -444,10 +677,12 @@ Return strictly a JSON object matching these exact keys and allowed values:
         : 'center-arch-photo');
 
   return {
-    name: (parsed.name || `${engineDisplayName} Custom Poster`).slice(0, 55),
+    name: (parsed.name || `${engineDisplayName} Photo-to-Photo Poster`).slice(0, 55),
     category: resolvedCategory,
     categoryLabel: (parsed.categoryLabel || `${engineDisplayName} Design`).slice(0, 40),
-    badge: `${engineDisplayName} Generated`,
+    badge: photoToPhotoRes.imageDataUrl
+      ? `${engineDisplayName} Photo-to-Photo AI`
+      : `${engineDisplayName} Generated`,
     bgColors: resolvedColors,
     primaryAccent:
       typeof parsed.primaryAccent === 'string' && parsed.primaryAccent.startsWith('#')
@@ -495,15 +730,17 @@ Return strictly a JSON object matching these exact keys and allowed values:
     venue: (parsed.venue || 'Grand Royal Celebration Venue').slice(0, 75),
     rsvp: (parsed.rsvp || 'With Best Compliments From Family & Friends').slice(0, 65),
     engineUsed: engineDisplayName,
+    aiGeneratedImageDataUrl: photoToPhotoRes.imageDataUrl || undefined,
   };
 }
 
 /**
- * Generates live broadcast / streaming poster copy via Aura AI + or Aura AI Pro
+ * Generates live broadcast / streaming poster copy + optional Photo-to-Photo background via Aura AI + or Aura AI Pro
  */
 export async function generateLiveBroadcastCopyWithAuraAi(params: {
   prompt: string;
   engineId: AuraEngineId;
+  primaryPhotoSource?: string | HTMLImageElement | null;
 }): Promise<{
   title: string;
   dateTime: string;
@@ -512,8 +749,9 @@ export async function generateLiveBroadcastCopyWithAuraAi(params: {
   templateType: 'wedding' | 'church' | 'funeral' | 'general' | 'youtube';
   accentColor: string;
   engineUsed: string;
+  aiGeneratedImageDataUrl?: string;
 }> {
-  const { prompt, engineId } = params;
+  const { prompt, engineId, primaryPhotoSource } = params;
   const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
 
   const sysPrompt = `You are "${engine.displayName}", a Live Broadcast & Streaming Poster Designer.
@@ -530,7 +768,17 @@ JSON Schema:
   "accentColor": "#hexColor"
 }`;
 
-  const { text, engineDisplayName } = await requestAuraAiCompletion(sysPrompt, engineId);
+  const [completionRes, photoToPhotoRes] = await Promise.all([
+    requestAuraAiCompletion(sysPrompt, engineId),
+    generatePhotoToPhotoWithAuraAi({
+      prompt,
+      engineId,
+      primaryPhotoSource,
+      aspectHint: 'landscape-banner',
+    }),
+  ]);
+
+  const { text, engineDisplayName } = completionRes;
   let parsed: any = {};
   if (text) {
     try {
@@ -554,5 +802,6 @@ JSON Schema:
         ? parsed.accentColor
         : '#06b6d4',
     engineUsed: engineDisplayName,
+    aiGeneratedImageDataUrl: photoToPhotoRes.imageDataUrl || undefined,
   };
 }
