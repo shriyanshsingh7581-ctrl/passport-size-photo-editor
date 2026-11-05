@@ -113,11 +113,11 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
   {
     id: 'image-to-pdf',
     category: 'akshaya',
-    name: 'Image to PDF Converter (Lossless HD)',
+    name: 'Image to PDF Converter',
     description:
-      'Convert single or multiple JPG, PNG & WebP images into a lossless print-ready PDF with drag-and-drop reorder, Portrait/Landscape orientation, A4 or Fit-to-Image size, and custom margins.',
-    icon: 'fa-images',
-    badge: 'Lossless HD',
+      'Convert single or multiple images (JPG, PNG, WebP) into high-resolution, print-ready PDF documents with custom paper sizes.',
+    icon: 'fa-file-pdf',
+    badge: 'Lossless HQ · Popular',
     enabled: true,
   },
   {

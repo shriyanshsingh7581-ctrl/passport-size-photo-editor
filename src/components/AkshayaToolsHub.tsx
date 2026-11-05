@@ -64,6 +64,90 @@ interface CompressedImageItem {
   qualityUsed: number;
 }
 
+export type PdfPaperSizeId = 'a4' | 'a3' | 'letter' | 'legal' | '4x6' | '5x7' | 'fit';
+export type PdfOrientationId = 'auto' | 'portrait' | 'landscape';
+export type PdfMarginId = 'none' | '5mm' | '10mm';
+export type PdfScalingId = 'fit-page' | 'fill-page' | 'original-size';
+
+export interface PdfPaperSizeSpec {
+  id: PdfPaperSizeId;
+  label: string;
+  shortLabel: string;
+  widthMm: number;
+  heightMm: number;
+  widthPt: number;
+  heightPt: number;
+}
+
+const MM_TO_PT = 72 / 25.4;
+const INCH_TO_PT = 72;
+
+export const PDF_PAPER_SIZE_OPTIONS: PdfPaperSizeSpec[] = [
+  {
+    id: 'a4',
+    label: 'A4 (Standard Print - 210 x 297 mm) [Default]',
+    shortLabel: 'A4 (210×297mm)',
+    widthMm: 210,
+    heightMm: 297,
+    widthPt: 210 * MM_TO_PT,
+    heightPt: 297 * MM_TO_PT,
+  },
+  {
+    id: 'a3',
+    label: 'A3 (Large Format - 297 x 420 mm)',
+    shortLabel: 'A3 (297×420mm)',
+    widthMm: 297,
+    heightMm: 420,
+    widthPt: 297 * MM_TO_PT,
+    heightPt: 420 * MM_TO_PT,
+  },
+  {
+    id: 'letter',
+    label: 'Letter (8.5 x 11 in)',
+    shortLabel: 'Letter (8.5×11 in)',
+    widthMm: 215.9,
+    heightMm: 279.4,
+    widthPt: 8.5 * INCH_TO_PT,
+    heightPt: 11 * INCH_TO_PT,
+  },
+  {
+    id: 'legal',
+    label: 'Legal (8.5 x 14 in)',
+    shortLabel: 'Legal (8.5×14 in)',
+    widthMm: 215.9,
+    heightMm: 355.6,
+    widthPt: 8.5 * INCH_TO_PT,
+    heightPt: 14 * INCH_TO_PT,
+  },
+  {
+    id: '4x6',
+    label: '4x6 inch (Photo Print / Postcard)',
+    shortLabel: '4×6 in Photo',
+    widthMm: 101.6,
+    heightMm: 152.4,
+    widthPt: 4 * INCH_TO_PT,
+    heightPt: 6 * INCH_TO_PT,
+  },
+  {
+    id: '5x7',
+    label: '5x7 inch (Studio Photo Print)',
+    shortLabel: '5×7 in Studio',
+    widthMm: 127,
+    heightMm: 177.8,
+    widthPt: 5 * INCH_TO_PT,
+    heightPt: 7 * INCH_TO_PT,
+  },
+  {
+    id: 'fit',
+    label: 'Fit to Original Image Size (Auto-detect image dimensions without padding)',
+    shortLabel: 'Fit Original Image',
+    widthMm: 0,
+    heightMm: 0,
+    widthPt: 0,
+    heightPt: 0,
+  },
+];
+
 interface ImageToPdfItem {
   id: string;
   name: string;
@@ -73,6 +157,11 @@ interface ImageToPdfItem {
   height: number;
   dataUrl: string;
   rawBytes: Uint8Array;
+  useCustomPageSettings?: boolean;
+  customPaperSize?: PdfPaperSizeId;
+  customOrientation?: PdfOrientationId;
+  customMargin?: PdfMarginId;
+  customScaling?: PdfScalingId;
 }
 
 const SIGNATURE_PRESETS = [
@@ -144,12 +233,33 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     if (onSelectSubTool) onSelectSubTool(norm);
   };
   const activeSubTool = internalTool;
-  const toolCatalog =
+  const baseCatalog =
     propCatalog && propCatalog.length > 0
       ? propCatalog
       : siteSettings?.toolCatalog && siteSettings.toolCatalog.length > 0
       ? siteSettings.toolCatalog
       : DEFAULT_TOOL_CATALOG;
+
+  // Always guarantee all default Akshaya tools (especially 'image-to-pdf') are present in the catalog
+  const toolCatalog: ToolCatalogItem[] = [
+    ...DEFAULT_TOOL_CATALOG.filter(
+      (defTool) =>
+        defTool.category === 'akshaya' && !baseCatalog.some((t) => t.id === defTool.id)
+    ),
+    ...baseCatalog.map((item) =>
+      item.id === 'image-to-pdf'
+        ? {
+            ...item,
+            name: 'Image to PDF Converter',
+            description:
+              'Convert single or multiple images (JPG, PNG, WebP) into high-resolution, print-ready PDF documents with custom paper sizes.',
+            badge: 'Lossless HQ · Popular',
+            icon: 'fa-file-pdf',
+            enabled: true,
+          }
+        : item
+    ),
+  ];
 
   // =========================================================================
   // 1. PDF MERGE STATE
@@ -1310,19 +1420,18 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
   }, [loadSignatureFromUrl]);
 
   // =========================================================================
-  // 6. HIGH-QUALITY IMAGE TO PDF CONVERTER (LOSSLESS PDF-LIB ENGINE)
+  // 6. HIGH-QUALITY IMAGE TO PDF CONVERTER (300 DPI LOSSLESS PDF-LIB ENGINE)
   // =========================================================================
   const [imgToPdfItems, setImgToPdfItems] = useState<ImageToPdfItem[]>([]);
   const [imgToPdfDragOver, setImgToPdfDragOver] = useState<boolean>(false);
   const [imgToPdfDraggedIdx, setImgToPdfDraggedIdx] = useState<number | null>(null);
-  const [imgToPdfPageSize, setImgToPdfPageSize] = useState<'a4' | 'fit'>('a4');
-  const [imgToPdfOrientation, setImgToPdfOrientation] = useState<
-    'portrait' | 'landscape' | 'auto'
-  >('portrait');
-  const [imgToPdfMargin, setImgToPdfMargin] = useState<'none' | 'small' | 'medium' | 'large'>(
-    'small'
-  );
-  const [imgToPdfFilename, setImgToPdfFilename] = useState<string>('studiopassport-images-hd');
+  const [imgToPdfPageSize, setImgToPdfPageSize] = useState<PdfPaperSizeId>('a4');
+  const [imgToPdfOrientation, setImgToPdfOrientation] = useState<PdfOrientationId>('auto');
+  const [imgToPdfMargin, setImgToPdfMargin] = useState<PdfMarginId>('5mm');
+  const [imgToPdfScaling, setImgToPdfScaling] = useState<PdfScalingId>('fit-page');
+  const [imgToPdfPrintDpi, setImgToPdfPrintDpi] = useState<number>(300);
+  const [imgToPdfExpandedItemId, setImgToPdfExpandedItemId] = useState<string | null>(null);
+  const [imgToPdfFilename, setImgToPdfFilename] = useState<string>('studiopassport-print-300dpi');
   const [isConvertingImgToPdf, setIsConvertingImgToPdf] = useState<boolean>(false);
   const [imgToPdfProgress, setImgToPdfProgress] = useState<number>(0);
   const [imgToPdfStatus, setImgToPdfStatus] = useState<string>('');
@@ -1333,8 +1442,9 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
   const processFilesForImageToPdf = useCallback(
     async (fileList: FileList | File[]) => {
-      const files = Array.from(fileList).filter((f) =>
-        /image\/(jpeg|jpg|png|webp)/i.test(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name)
+      const files = Array.from(fileList).filter(
+        (f) =>
+          /image\/(jpeg|jpg|png|webp)/i.test(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name)
       );
       if (files.length === 0) {
         showToast('Please select JPG, PNG, or WebP images.');
@@ -1355,7 +1465,10 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           const dims = await new Promise<{ w: number; h: number }>((resolve) => {
             const img = new Image();
             img.onload = () =>
-              resolve({ w: img.naturalWidth || img.width || 1200, h: img.naturalHeight || img.height || 1600 });
+              resolve({
+                w: img.naturalWidth || img.width || 1200,
+                h: img.naturalHeight || img.height || 1600,
+              });
             img.onerror = () => resolve({ w: 1200, h: 1600 });
             img.src = dataUrl;
           });
@@ -1363,12 +1476,18 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           loadedItems.push({
             id: `imgpdf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             name: file.name,
-            mimeType: file.type || (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'),
+            mimeType:
+              file.type || (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'),
             sizeBytes: file.size || rawBytes.byteLength,
             width: dims.w,
             height: dims.h,
             dataUrl,
             rawBytes,
+            useCustomPageSettings: false,
+            customPaperSize: 'a4',
+            customOrientation: 'auto',
+            customMargin: '5mm',
+            customScaling: 'fit-page',
           });
         } catch {
           // skip unreadable file
@@ -1377,7 +1496,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
       if (loadedItems.length > 0) {
         setImgToPdfItems((prev) => [...prev, ...loadedItems]);
-        showToast(`Added ${loadedItems.length} high-resolution image(s) for PDF conversion!`);
+        showToast(`Added ${loadedItems.length} high-resolution image(s) for 300 DPI PDF conversion!`);
       }
     },
     [showToast]
@@ -1408,10 +1527,15 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
         height: dims.h,
         dataUrl: dUrl,
         rawBytes: bytes,
+        useCustomPageSettings: false,
+        customPaperSize: 'a4',
+        customOrientation: 'auto',
+        customMargin: '5mm',
+        customScaling: 'fit-page',
       });
     }
     setImgToPdfItems(sampleList);
-    showToast('Loaded 2 sample HD images ready to convert to PDF!');
+    showToast('Loaded 2 sample studio images ready to convert to 300 DPI PDF!');
   }, [showToast]);
 
   const moveImgToPdfItem = (index: number, direction: -1 | 1) => {
@@ -1429,6 +1553,26 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     setImgToPdfItems((prev) => prev.filter((item) => item.id !== id));
   };
 
+  const updateImgToPdfItemSettings = (id: string, patch: Partial<ImageToPdfItem>) => {
+    setImgToPdfItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  };
+
+  const applyGlobalSettingsToAllImgPages = () => {
+    setImgToPdfItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        useCustomPageSettings: false,
+        customPaperSize: imgToPdfPageSize,
+        customOrientation: imgToPdfOrientation,
+        customMargin: imgToPdfMargin,
+        customScaling: imgToPdfScaling,
+      }))
+    );
+    showToast('Applied global Paper Size, Orientation, Margin & Scaling to all pages!');
+  };
+
   const handleConvertAndDownloadPdf = async (autoDownload = true) => {
     if (imgToPdfItems.length === 0) {
       showToast('Please upload at least one image (JPG, PNG, or WebP) first!');
@@ -1437,45 +1581,89 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
 
     setIsConvertingImgToPdf(true);
     setImgToPdfProgress(5);
-    setImgToPdfStatus('Initializing Lossless PDF Document...');
+    setImgToPdfStatus(`Initializing ${imgToPdfPrintDpi} DPI Print-Ready PDF Document...`);
 
     try {
       const pdfDoc = await PDFDocument.create();
-      const marginMap: Record<'none' | 'small' | 'medium' | 'large', number> = {
+      const marginMmMap: Record<PdfMarginId, number> = {
         none: 0,
-        small: 20,
-        medium: 38,
-        large: 56,
+        '5mm': 5,
+        '10mm': 10,
       };
-      const marginPt = marginMap[imgToPdfMargin] ?? 20;
 
       for (let i = 0; i < imgToPdfItems.length; i++) {
         const item = imgToPdfItems[i];
-        setImgToPdfStatus(`Embedding Image ${i + 1} of ${imgToPdfItems.length} (${item.name})...`);
+        const effPaperSize = item.useCustomPageSettings
+          ? item.customPaperSize || imgToPdfPageSize
+          : imgToPdfPageSize;
+        const effOrientation = item.useCustomPageSettings
+          ? item.customOrientation || imgToPdfOrientation
+          : imgToPdfOrientation;
+        const effMargin = item.useCustomPageSettings
+          ? item.customMargin || imgToPdfMargin
+          : imgToPdfMargin;
+        const effScaling = item.useCustomPageSettings
+          ? item.customScaling || imgToPdfScaling
+          : imgToPdfScaling;
+
+        const marginMm = effPaperSize === 'fit' ? 0 : marginMmMap[effMargin] ?? 5;
+        const marginPt = marginMm * MM_TO_PT;
+
+        setImgToPdfStatus(
+          `Processing Page ${i + 1} of ${imgToPdfItems.length} (${item.name} · ${effPaperSize.toUpperCase()})...`
+        );
         setImgToPdfProgress(Math.max(10, Math.round(((i + 0.3) / imgToPdfItems.length) * 90)));
 
-        // Embed image without compression artifacts:
-        // - Direct byte-stream embedding for native PNG and JPEG
-        // - Native resolution lossless PNG conversion for WebP
-        let embeddedImg;
-        const lowerMime = item.mimeType.toLowerCase();
-        try {
-          if (lowerMime.includes('png')) {
-            embeddedImg = await pdfDoc.embedPng(item.rawBytes);
-          } else if (lowerMime.includes('jpeg') || lowerMime.includes('jpg')) {
-            embeddedImg = await pdfDoc.embedJpg(item.rawBytes);
+        // Determine page dimensions in PDF points (72 pt = 1 inch)
+        const rawImgW = item.width || 1200;
+        const rawImgH = item.height || 1600;
+        const isImgLandscape = rawImgW > rawImgH;
+
+        let pageW: number;
+        let pageH: number;
+
+        if (effPaperSize === 'fit') {
+          // Fit to Original Image Size (convert pixel dimensions at selected 300 DPI to PDF points without padding)
+          const imgWidthPt = (rawImgW / imgToPdfPrintDpi) * INCH_TO_PT;
+          const imgHeightPt = (rawImgH / imgToPdfPrintDpi) * INCH_TO_PT;
+          if (effOrientation === 'landscape' && imgHeightPt > imgWidthPt) {
+            pageW = imgHeightPt;
+            pageH = imgWidthPt;
+          } else if (effOrientation === 'portrait' && imgWidthPt > imgHeightPt) {
+            pageW = imgHeightPt;
+            pageH = imgWidthPt;
           } else {
-            throw new Error('Convert WebP to lossless PNG');
+            pageW = imgWidthPt;
+            pageH = imgHeightPt;
           }
-        } catch {
-          // Lossless full-resolution canvas conversion for WebP or non-standard headers
-          const losslessPngBytes = await new Promise<Uint8Array>((resolve, reject) => {
+        } else {
+          const paperSpec =
+            PDF_PAPER_SIZE_OPTIONS.find((p) => p.id === effPaperSize) ||
+            PDF_PAPER_SIZE_OPTIONS[0];
+          const shortSide = Math.min(paperSpec.widthPt, paperSpec.heightPt);
+          const longSide = Math.max(paperSpec.widthPt, paperSpec.heightPt);
+          const useLandscape =
+            effOrientation === 'landscape' ||
+            (effOrientation === 'auto' && isImgLandscape);
+          pageW = useLandscape ? longSide : shortSide;
+          pageH = useLandscape ? shortSide : longSide;
+        }
+
+        const availW = Math.max(10, pageW - marginPt * 2);
+        const availH = Math.max(10, pageH - marginPt * 2);
+
+        // If "Fill page (crop to fill)" is selected, render a 300 DPI crop-filled image so it fills the exact printable box cleanly without overflowing margins
+        let embeddedImg;
+        if (effScaling === 'fill-page' && effPaperSize !== 'fit') {
+          const targetPxW = Math.min(4200, Math.max(600, Math.round((availW / INCH_TO_PT) * imgToPdfPrintDpi)));
+          const targetPxH = Math.min(4200, Math.max(600, Math.round((availH / INCH_TO_PT) * imgToPdfPrintDpi)));
+          const croppedJpgBytes = await new Promise<Uint8Array>((resolve, reject) => {
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.onload = () => {
               const c = document.createElement('canvas');
-              c.width = img.naturalWidth || item.width || 1200;
-              c.height = img.naturalHeight || item.height || 1600;
+              c.width = targetPxW;
+              c.height = targetPxH;
               const ctx = c.getContext('2d');
               if (!ctx) {
                 reject(new Error('Canvas context unavailable'));
@@ -1483,50 +1671,68 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               }
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
-              ctx.drawImage(img, 0, 0, c.width, c.height);
-              const pngDataUrl = c.toDataURL('image/png');
-              const b = dataUrlToBlob(pngDataUrl);
-              b.arrayBuffer().then((ab) => resolve(new Uint8Array(ab))).catch(reject);
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, targetPxW, targetPxH);
+              const coverScale = Math.max(
+                targetPxW / (img.naturalWidth || rawImgW),
+                targetPxH / (img.naturalHeight || rawImgH)
+              );
+              const dW = (img.naturalWidth || rawImgW) * coverScale;
+              const dH = (img.naturalHeight || rawImgH) * coverScale;
+              ctx.drawImage(img, (targetPxW - dW) / 2, (targetPxH - dH) / 2, dW, dH);
+              const dataUrl = c.toDataURL('image/jpeg', 0.98);
+              dataUrlToBlob(dataUrl)
+                .arrayBuffer()
+                .then((ab) => resolve(new Uint8Array(ab)))
+                .catch(reject);
             };
-            img.onerror = () => reject(new Error('Failed to decode image'));
+            img.onerror = () => reject(new Error('Failed to decode image for crop-fill'));
             img.src = item.dataUrl;
           });
-          embeddedImg = await pdfDoc.embedPng(losslessPngBytes);
-        }
-
-        const imgW = embeddedImg.width;
-        const imgH = embeddedImg.height;
-
-        let pageW: number;
-        let pageH: number;
-
-        if (imgToPdfPageSize === 'fit') {
-          // Fit to Image Dimensions (Zero Crop, Native Resolution)
-          const effectiveMargin = marginPt;
-          if (imgToPdfOrientation === 'landscape' && imgH > imgW) {
-            pageW = imgH + effectiveMargin * 2;
-            pageH = imgW + effectiveMargin * 2;
-          } else if (imgToPdfOrientation === 'portrait' && imgW > imgH) {
-            pageW = imgH + effectiveMargin * 2;
-            pageH = imgW + effectiveMargin * 2;
-          } else {
-            pageW = imgW + effectiveMargin * 2;
-            pageH = imgH + effectiveMargin * 2;
-          }
+          embeddedImg = await pdfDoc.embedJpg(croppedJpgBytes);
         } else {
-          // Standard A4 (595.28 × 841.89 pt)
-          const A4_SHORT = 595.28;
-          const A4_LONG = 841.89;
-          const useLandscape =
-            imgToPdfOrientation === 'landscape' ||
-            (imgToPdfOrientation === 'auto' && imgW > imgH);
-          pageW = useLandscape ? A4_LONG : A4_SHORT;
-          pageH = useLandscape ? A4_SHORT : A4_LONG;
+          // Direct lossless byte-stream embedding for native PNG & JPEG, or lossless PNG conversion for WebP
+          const lowerMime = item.mimeType.toLowerCase();
+          try {
+            if (lowerMime.includes('png')) {
+              embeddedImg = await pdfDoc.embedPng(item.rawBytes);
+            } else if (lowerMime.includes('jpeg') || lowerMime.includes('jpg')) {
+              embeddedImg = await pdfDoc.embedJpg(item.rawBytes);
+            } else {
+              throw new Error('Convert WebP to lossless PNG');
+            }
+          } catch {
+            const losslessPngBytes = await new Promise<Uint8Array>((resolve, reject) => {
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.onload = () => {
+                const c = document.createElement('canvas');
+                c.width = img.naturalWidth || item.width || 1200;
+                c.height = img.naturalHeight || item.height || 1600;
+                const ctx = c.getContext('2d');
+                if (!ctx) {
+                  reject(new Error('Canvas context unavailable'));
+                  return;
+                }
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(img, 0, 0, c.width, c.height);
+                const pngDataUrl = c.toDataURL('image/png');
+                dataUrlToBlob(pngDataUrl)
+                  .arrayBuffer()
+                  .then((ab) => resolve(new Uint8Array(ab)))
+                  .catch(reject);
+              };
+              img.onerror = () => reject(new Error('Failed to decode image'));
+              img.src = item.dataUrl;
+            });
+            embeddedImg = await pdfDoc.embedPng(losslessPngBytes);
+          }
         }
 
         const page = pdfDoc.addPage([pageW, pageH]);
 
-        // Crisp white page background
+        // Crisp white paper background
         page.drawRectangle({
           x: 0,
           y: 0,
@@ -1535,13 +1741,31 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
           color: rgb(1, 1, 1),
         });
 
-        const availW = Math.max(20, pageW - marginPt * 2);
-        const availH = Math.max(20, pageH - marginPt * 2);
-        const scale = Math.min(availW / imgW, availH / imgH);
-        const drawW = imgW * scale;
-        const drawH = imgH * scale;
-        const drawX = marginPt + (availW - drawW) / 2;
-        const drawY = marginPt + (availH - drawH) / 2;
+        let drawW = availW;
+        let drawH = availH;
+
+        if (effPaperSize === 'fit') {
+          drawW = pageW;
+          drawH = pageH;
+        } else if (effScaling === 'fill-page') {
+          drawW = availW;
+          drawH = availH;
+        } else if (effScaling === 'original-size') {
+          // True physical size at 300 DPI, centered on the page (clamped to printable area if image exceeds page)
+          const origPtW = (rawImgW / imgToPdfPrintDpi) * INCH_TO_PT;
+          const origPtH = (rawImgH / imgToPdfPrintDpi) * INCH_TO_PT;
+          const clampScale = Math.min(1, availW / origPtW, availH / origPtH);
+          drawW = origPtW * clampScale;
+          drawH = origPtH * clampScale;
+        } else {
+          // 'fit-page': Fit page (maintain aspect ratio)
+          const fitScale = Math.min(availW / embeddedImg.width, availH / embeddedImg.height);
+          drawW = embeddedImg.width * fitScale;
+          drawH = embeddedImg.height * fitScale;
+        }
+
+        const drawX = effPaperSize === 'fit' ? 0 : marginPt + (availW - drawW) / 2;
+        const drawY = effPaperSize === 'fit' ? 0 : marginPt + (availH - drawH) / 2;
 
         page.drawImage(embeddedImg, {
           x: drawX,
@@ -1553,7 +1777,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
         setImgToPdfProgress(Math.round(((i + 1) / imgToPdfItems.length) * 95));
       }
 
-      setImgToPdfStatus('Finalizing Lossless PDF Stream...');
+      setImgToPdfStatus(`Finalizing ${imgToPdfPrintDpi} DPI Print-Ready PDF Stream...`);
       const pdfBytes = await pdfDoc.save();
       const pdfBlob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
 
@@ -1566,16 +1790,18 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       setImgToPdfOutputUrl(nextUrl);
       setImgToPdfProgress(100);
       setImgToPdfStatus(
-        `Converted ${imgToPdfItems.length} image(s) to HD PDF (${formatBytes(pdfBytes.byteLength)})`
+        `Converted ${imgToPdfItems.length} image(s) to ${imgToPdfPrintDpi} DPI PDF (${formatBytes(
+          pdfBytes.byteLength
+        )})`
       );
 
       if (autoDownload) {
         const cleanName =
-          (imgToPdfFilename || 'studiopassport-images-hd').replace(/\.pdf$/i, '').trim() ||
-          'studiopassport-images-hd';
+          (imgToPdfFilename || 'studiopassport-print-300dpi').replace(/\.pdf$/i, '').trim() ||
+          'studiopassport-print-300dpi';
         triggerBlobDownload(pdfBlob, `${cleanName}.pdf`);
         showToast(
-          `✨ Converted & Downloaded HD PDF (${imgToPdfItems.length} ${
+          `✨ Converted & Downloaded ${imgToPdfPrintDpi} DPI PDF (${imgToPdfItems.length} ${
             imgToPdfItems.length === 1 ? 'Page' : 'Pages'
           } · ${formatBytes(pdfBytes.byteLength)})!`
         );
@@ -1589,9 +1815,10 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
     }
   };
 
-  const akshayaToolsList = toolCatalog.filter(
-    (t) => t.category === 'akshaya' && t.enabled
-  );
+  // Put 'image-to-pdf' first in the Akshaya Tools grid so it is immediately visible
+  const akshayaToolsList = toolCatalog
+    .filter((t) => t.category === 'akshaya' && t.enabled)
+    .sort((a, b) => (a.id === 'image-to-pdf' ? -1 : b.id === 'image-to-pdf' ? 1 : 0));
 
   return (
     <div className="max-w-[1680px] w-full mx-auto px-4 sm:px-6 xl:px-10 py-4 sm:py-6 space-y-5">
@@ -1603,10 +1830,10 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               CATEGORY 2 · E-GOVERNANCE & CITIZEN DOCUMENT SUITE
             </div>
             <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight mt-1">
-              Akshaya Tools — High-Quality Image to PDF, PDF Compressor, Target-KB Image Compressor, Merge, Split & Signature
+              Akshaya Tools — Image to PDF Converter (300 DPI), PDF Compressor, Target-KB Image Compressor, Merge, Split & Signature
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Lossless Image-to-PDF Converter (JPG/PNG/WebP), True PDF Page Raster & Stream Compression, Target-KB Image Compression, PDF Merge/Split, and Portal Signature Cleaner.
+              300 DPI Print-Ready Image to PDF Converter (A4/A3/Letter/Legal/4×6/5×7), True PDF Compressor, Target-KB Image Compressor, PDF Merge/Split, and Portal Signature Cleaner.
             </p>
           </div>
           {activeSubTool !== 'overview' && (
@@ -1622,7 +1849,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-2 border-t border-white/10">
           {[
             { id: 'overview', label: 'All Akshaya Tools', icon: 'fa-grip' },
-            { id: 'image-to-pdf', label: 'Image to PDF (Lossless HD)', icon: 'fa-images' },
+            { id: 'image-to-pdf', label: 'Image to PDF (Lossless HQ)', icon: 'fa-file-pdf' },
             { id: 'pdf-compressor', label: 'PDF Compressor (Target KB)', icon: 'fa-file-zipper' },
             { id: 'image-compressor', label: 'Image Compressor (Target KB)', icon: 'fa-compress' },
             { id: 'pdf-merge', label: 'PDF Merge', icon: 'fa-file-pdf' },
@@ -1646,41 +1873,75 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       </div>
 
       {/* =====================================================================
-          VIEW 0: AKSHAYA TOOLS CATEGORY LANDING GRID
+          VIEW 0: AKSHAYA TOOLS CATEGORY LANDING GRID (INCLUDES IMAGE TO PDF CARD)
          ===================================================================== */}
       {activeSubTool === 'overview' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          {akshayaToolsList.map((tool) => (
-            <div
-              key={tool.id}
-              className="bg-white rounded-3xl border border-slate-200 hover:border-cyan-400 p-5 flex flex-col justify-between gap-4 shadow-xs transition group"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="w-12 h-12 rounded-2xl bg-[#070a14] text-amber-400 border border-amber-500/30 flex items-center justify-center text-lg shadow-sm group-hover:scale-105 transition">
-                    <i className={`fa-solid ${tool.icon}`}></i>
-                  </div>
-                  {tool.badge && (
-                    <span className="text-[11px] font-bold text-cyan-700">{tool.badge}</span>
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-900">{tool.name}</h2>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    {tool.description}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setActiveSubTool(tool.id as AkshayaSubToolId)}
-                className="w-full min-h-[44px] py-2.5 px-4 rounded-2xl bg-[#070a14] hover:bg-slate-800 text-cyan-300 font-bold text-xs transition flex items-center justify-center gap-2"
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {akshayaToolsList.map((tool) => {
+            const isImgToPdf = tool.id === 'image-to-pdf';
+            return (
+              <div
+                key={tool.id}
+                className={`bg-white rounded-3xl border p-5 flex flex-col justify-between gap-4 shadow-xs transition group ${
+                  isImgToPdf
+                    ? 'border-cyan-400 ring-1 ring-cyan-400/40 hover:border-cyan-500'
+                    : 'border-slate-200 hover:border-cyan-400'
+                }`}
               >
-                <span>Open {tool.name}</span>
-                <i className="fa-solid fa-arrow-right text-[11px]"></i>
-              </button>
-            </div>
-          ))}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="w-12 h-12 rounded-2xl bg-[#070a14] text-amber-400 border border-amber-500/30 flex items-center justify-center text-lg shadow-sm group-hover:scale-105 transition">
+                      {isImgToPdf ? (
+                        <span className="flex items-center gap-1 text-cyan-300">
+                          <i className="fa-solid fa-images text-sm"></i>
+                          <i className="fa-solid fa-file-pdf text-base text-amber-400"></i>
+                        </span>
+                      ) : (
+                        <i className={`fa-solid ${tool.icon}`}></i>
+                      )}
+                    </div>
+                    {isImgToPdf ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-extrabold uppercase tracking-wider">
+                          Lossless HQ
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-extrabold uppercase tracking-wider">
+                          Popular
+                        </span>
+                      </div>
+                    ) : (
+                      tool.badge && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-cyan-50 border border-cyan-200 text-[11px] font-bold text-cyan-700">
+                          {tool.badge}
+                        </span>
+                      )
+                    )}
+                  </div>
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      {isImgToPdf ? 'Image to PDF Converter' : tool.name}
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      {isImgToPdf
+                        ? 'Convert single or multiple images (JPG, PNG, WebP) into high-resolution, print-ready PDF documents with custom paper sizes.'
+                        : tool.description}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setActiveSubTool(tool.id as AkshayaSubToolId)}
+                  className={`w-full min-h-[44px] py-2.5 px-4 rounded-2xl font-bold text-xs transition flex items-center justify-center gap-2 ${
+                    isImgToPdf
+                      ? 'bg-gradient-to-r from-[#070a14] via-slate-900 to-[#070a14] hover:from-cyan-600 hover:to-blue-600 text-cyan-300 hover:text-white shadow-xs'
+                      : 'bg-[#070a14] hover:bg-slate-800 text-cyan-300'
+                  }`}
+                >
+                  <span>{isImgToPdf ? 'Open Image to PDF →' : `Open ${tool.name} →`}</span>
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -2827,22 +3088,27 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
       )}
 
       {/* =====================================================================
-          TOOL 6: HIGH-QUALITY IMAGE TO PDF CONVERTER (LOSSLESS HD PDF-LIB)
+          TOOL 6: HIGH-QUALITY IMAGE TO PDF CONVERTER (300 DPI STUDIO PRINT & PAPER SIZES)
          ===================================================================== */}
       {activeSubTool === 'image-to-pdf' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* Left Column: Drag & Drop Upload + Page Layout & Margin Settings */}
+          {/* Left Column: Drag & Drop Upload + Paper Size, Orientation, Margin & Scaling Settings */}
           <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                  <i className="fa-solid fa-gem"></i> Zero Compression Artifacts · pdf-lib Engine
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                    <i className="fa-solid fa-print"></i> 300 DPI Studio Print Engine
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                    Lossless HQ
+                  </span>
+                </div>
                 <h2 className="text-lg font-extrabold text-slate-900 mt-1">
-                  High-Quality Image to PDF Converter
+                  Image to PDF Converter
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Upload single or multiple JPG, PNG, or WebP images. Preserves 100% original pixel clarity with custom page sizes, orientation, and margins.
+                  Convert single or multiple images (JPG, PNG, WebP) into high-resolution, print-ready PDF documents with custom paper sizes.
                 </p>
               </div>
               <button
@@ -2889,7 +3155,7 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                   Drag & Drop Images Here, or Click to Browse
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
-                  Supports Single or Multiple <strong>JPG, PNG, and WebP</strong> files (100% Lossless Quality)
+                  Supports Single or Multiple <strong>JPG, PNG, and WebP</strong> files (300 DPI Lossless Print Quality)
                 </div>
               </div>
             </div>
@@ -2907,117 +3173,179 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               className="hidden"
             />
 
-            {/* PDF Page Layout, Orientation & Margin Controls */}
+            {/* Paper Size & Print Configuration Panel */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">
-              <div className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <i className="fa-solid fa-sliders text-cyan-600"></i>
-                <span>PDF Page Setup & Quality Options</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-extrabold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                  <i className="fa-solid fa-sliders text-cyan-600"></i>
+                  <span>Paper Size & Print Selection Options</span>
+                </div>
+                {imgToPdfItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={applyGlobalSettingsToAllImgPages}
+                    className="text-[10px] font-extrabold text-cyan-700 hover:underline"
+                  >
+                    Apply to All Pages
+                  </button>
+                )}
               </div>
 
-              {/* Page Size: A4 vs Fit to Image */}
+              {/* 1. Paper Size Selector (Dropdown) */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Page Size
+                  Paper Size Selector
                 </label>
-                <div className="grid grid-cols-2 gap-2 text-xs font-extrabold">
-                  <button
-                    type="button"
-                    onClick={() => setImgToPdfPageSize('a4')}
-                    className={`p-2.5 rounded-xl border text-left transition ${
-                      imgToPdfPageSize === 'a4'
-                        ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'
-                    }`}
-                  >
-                    <div>A4 Standard</div>
-                    <div className="text-[10px] font-normal opacity-80">210 × 297 mm Print Sheet</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setImgToPdfPageSize('fit')}
-                    className={`p-2.5 rounded-xl border text-left transition ${
-                      imgToPdfPageSize === 'fit'
-                        ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'
-                    }`}
-                  >
-                    <div>Fit to Image</div>
-                    <div className="text-[10px] font-normal opacity-80">Exact Image Dimensions</div>
-                  </button>
-                </div>
+                <select
+                  value={imgToPdfPageSize}
+                  onChange={(e) => setImgToPdfPageSize(e.target.value as PdfPaperSizeId)}
+                  className="w-full min-h-[42px] px-3 py-2 text-xs font-extrabold bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-cyan-500"
+                >
+                  {PDF_PAPER_SIZE_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Page Orientation: Portrait / Landscape / Auto */}
+              {/* 2. Page Orientation (Auto / Portrait / Landscape) */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   Page Orientation
                 </label>
                 <div className="grid grid-cols-3 gap-2 text-xs font-extrabold">
                   {[
-                    { id: 'portrait', label: 'Portrait', icon: 'fa-file' },
-                    { id: 'landscape', label: 'Landscape', icon: 'fa-image' },
-                    { id: 'auto', label: 'Auto-Match', icon: 'fa-wand-magic-sparkles' },
+                    {
+                      id: 'auto',
+                      label: 'Auto',
+                      sub: 'Matches image',
+                      icon: 'fa-wand-magic-sparkles',
+                    },
+                    { id: 'portrait', label: 'Portrait', sub: 'Vertical', icon: 'fa-file' },
+                    { id: 'landscape', label: 'Landscape', sub: 'Horizontal', icon: 'fa-image' },
                   ].map((ori) => (
                     <button
                       key={ori.id}
                       type="button"
-                      onClick={() => setImgToPdfOrientation(ori.id as any)}
-                      className={`py-2 px-2.5 rounded-xl border flex items-center justify-center gap-1.5 transition ${
+                      onClick={() => setImgToPdfOrientation(ori.id as PdfOrientationId)}
+                      className={`py-2 px-2.5 rounded-xl border text-center transition ${
                         imgToPdfOrientation === ori.id
                           ? 'bg-[#070a14] text-amber-300 border-amber-400'
                           : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'
                       }`}
                     >
-                      <i className={`fa-solid ${ori.icon} text-[11px]`}></i>
-                      <span>{ori.label}</span>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <i className={`fa-solid ${ori.icon} text-[11px]`}></i>
+                        <span>{ori.label}</span>
+                      </div>
+                      <div className="text-[9px] font-normal opacity-80 mt-0.5">{ori.sub}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Page Margins: None / Small / Medium / Large */}
+              {/* 3. Image Placement & Margins: Margin Options */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Page Margins
+                  Page Margins {imgToPdfPageSize === 'fit' && '(Disabled in Fit to Image mode)'}
                 </label>
-                <div className="grid grid-cols-4 gap-1.5 text-xs font-extrabold">
+                <div className="grid grid-cols-3 gap-2 text-xs font-extrabold">
                   {[
-                    { id: 'none', label: 'No Margin', sub: '0 pt' },
-                    { id: 'small', label: 'Small', sub: '20 pt' },
-                    { id: 'medium', label: 'Medium', sub: '38 pt' },
-                    { id: 'large', label: 'Large', sub: '56 pt' },
+                    { id: 'none', label: 'No Margin', sub: 'Borderless Full-Bleed' },
+                    { id: '5mm', label: 'Small (5mm)', sub: '5 mm Studio Border' },
+                    { id: '10mm', label: 'Standard (10mm)', sub: '10 mm Document Margin' },
                   ].map((m) => (
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => setImgToPdfMargin(m.id as any)}
-                      className={`py-2 px-2 rounded-xl border text-center transition ${
+                      disabled={imgToPdfPageSize === 'fit'}
+                      onClick={() => setImgToPdfMargin(m.id as PdfMarginId)}
+                      className={`py-2 px-2 rounded-xl border text-center transition disabled:opacity-40 ${
                         imgToPdfMargin === m.id
                           ? 'bg-[#070a14] text-cyan-300 border-cyan-500'
                           : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'
                       }`}
                     >
                       <div>{m.label}</div>
-                      <div className="text-[9px] font-mono opacity-75">{m.sub}</div>
+                      <div className="text-[9px] font-normal opacity-75 mt-0.5">{m.sub}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Output PDF Filename */}
+              {/* 4. Image Scaling Options */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Output PDF Filename
+                  Image Scaling & Placement
                 </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={imgToPdfFilename}
-                    onChange={(e) => setImgToPdfFilename(e.target.value)}
-                    placeholder="studiopassport-images-hd"
-                    className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl"
-                  />
-                  <span className="text-xs font-mono font-bold text-slate-500 shrink-0">.pdf</span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-extrabold">
+                  {[
+                    {
+                      id: 'fit-page',
+                      label: 'Fit page',
+                      sub: 'Maintain aspect ratio',
+                    },
+                    {
+                      id: 'fill-page',
+                      label: 'Fill page',
+                      sub: 'Crop to fill area',
+                    },
+                    {
+                      id: 'original-size',
+                      label: 'Original size',
+                      sub: 'Centered @ 300 DPI',
+                    },
+                  ].map((sc) => (
+                    <button
+                      key={sc.id}
+                      type="button"
+                      onClick={() => setImgToPdfScaling(sc.id as PdfScalingId)}
+                      className={`py-2 px-2.5 rounded-xl border text-left transition ${
+                        imgToPdfScaling === sc.id
+                          ? 'bg-[#070a14] text-emerald-300 border-emerald-500'
+                          : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'
+                      }`}
+                    >
+                      <div>{sc.label}</div>
+                      <div className="text-[9px] font-normal opacity-80 mt-0.5">{sc.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 5. Print Resolution (300 DPI Support) & Output PDF Filename */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Print Resolution (DPI)
+                  </label>
+                  <select
+                    value={imgToPdfPrintDpi}
+                    onChange={(e) => setImgToPdfPrintDpi(parseInt(e.target.value, 10) || 300)}
+                    className="w-full min-h-[38px] px-2.5 py-1.5 text-xs font-extrabold bg-white border border-slate-300 rounded-xl"
+                  >
+                    <option value={300}>300 DPI (Studio Grade Print)</option>
+                    <option value={600}>600 DPI (Ultra Archival Print)</option>
+                    <option value={150}>150 DPI (Standard Office Print)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Output PDF Filename
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={imgToPdfFilename}
+                      onChange={(e) => setImgToPdfFilename(e.target.value)}
+                      placeholder="studiopassport-print-300dpi"
+                      className="w-full min-h-[38px] px-2.5 py-1.5 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl"
+                    />
+                    <span className="text-xs font-mono font-bold text-slate-500 shrink-0">
+                      .pdf
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3048,44 +3376,56 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
               {isConvertingImgToPdf ? (
                 <>
                   <i className="fa-solid fa-spinner fa-spin"></i>
-                  <span>Converting Images to Lossless PDF ({imgToPdfProgress}%)...</span>
+                  <span>
+                    Generating {imgToPdfPrintDpi} DPI Print PDF ({imgToPdfProgress}%)...
+                  </span>
                 </>
               ) : (
                 <>
                   <i className="fa-solid fa-file-pdf"></i>
                   <span>
                     Convert & Download PDF ({imgToPdfItems.length}{' '}
-                    {imgToPdfItems.length === 1 ? 'Image' : 'Images'})
+                    {imgToPdfItems.length === 1 ? 'Page' : 'Pages'} · {imgToPdfPrintDpi} DPI)
                   </span>
                 </>
               )}
             </button>
           </div>
 
-          {/* Right Column: Reorderable Image Queue & Live PDF Preview */}
+          {/* Right Column: Reorderable Multi-Image Queue, Per-Page Paper Overrides & Live PDF Preview */}
           <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  Uploaded Images & Page Order ({imgToPdfItems.length})
+                  Uploaded Photos & Multi-Page Print Queue ({imgToPdfItems.length})
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Drag cards or use the Up / Down arrows to reorder pages before generating your PDF
+                  Drag cards or use Up / Down arrows to reorder pages. Click{' '}
+                  <strong>"Page Setup"</strong> on any photo to customize individual page paper settings.
                 </p>
               </div>
               {imgToPdfItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImgToPdfItems([]);
-                    setImgToPdfOutputUrl('');
-                    setImgToPdfOutputBytes(null);
-                    setImgToPdfProgress(0);
-                  }}
-                  className="text-xs font-bold text-rose-600 hover:underline"
-                >
-                  Clear All
-                </button>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={applyGlobalSettingsToAllImgPages}
+                    className="text-xs font-extrabold text-cyan-700 hover:underline"
+                  >
+                    Use Global Settings for All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImgToPdfItems([]);
+                      setImgToPdfOutputUrl('');
+                      setImgToPdfOutputBytes(null);
+                      setImgToPdfProgress(0);
+                    }}
+                    className="text-xs font-bold text-rose-600 hover:underline"
+                  >
+                    Clear All
+                  </button>
+                </div>
               )}
             </div>
 
@@ -3098,75 +3438,237 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
-                {imgToPdfItems.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    draggable
-                    onDragStart={() => setImgToPdfDraggedIdx(idx)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => {
-                      if (imgToPdfDraggedIdx === null || imgToPdfDraggedIdx === idx) return;
-                      setImgToPdfItems((prev) => {
-                        const copy = [...prev];
-                        const [dragged] = copy.splice(imgToPdfDraggedIdx, 1);
-                        copy.splice(idx, 0, dragged);
-                        return copy;
-                      });
-                      setImgToPdfDraggedIdx(null);
-                    }}
-                    className="p-3 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 flex items-center justify-between gap-3 transition cursor-move"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="w-7 h-7 rounded-lg bg-[#070a14] text-cyan-300 font-mono text-xs font-extrabold flex items-center justify-center shrink-0">
-                        {idx + 1}
-                      </span>
-                      <img
-                        src={item.dataUrl}
-                        alt={item.name}
-                        className="w-14 h-14 object-cover rounded-xl border border-slate-300 bg-white shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-extrabold text-slate-900 truncate">
-                          {item.name}
+              <div className="space-y-2.5 max-h-[440px] overflow-y-auto pr-1">
+                {imgToPdfItems.map((item, idx) => {
+                  const effPaper = item.useCustomPageSettings
+                    ? item.customPaperSize || imgToPdfPageSize
+                    : imgToPdfPageSize;
+                  const effOri = item.useCustomPageSettings
+                    ? item.customOrientation || imgToPdfOrientation
+                    : imgToPdfOrientation;
+                  const effMargin = item.useCustomPageSettings
+                    ? item.customMargin || imgToPdfMargin
+                    : imgToPdfMargin;
+                  const effScale = item.useCustomPageSettings
+                    ? item.customScaling || imgToPdfScaling
+                    : imgToPdfScaling;
+                  const paperSpec =
+                    PDF_PAPER_SIZE_OPTIONS.find((p) => p.id === effPaper) ||
+                    PDF_PAPER_SIZE_OPTIONS[0];
+                  const isExpanded = imgToPdfExpandedItemId === item.id;
+
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={() => setImgToPdfDraggedIdx(idx)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => {
+                        if (imgToPdfDraggedIdx === null || imgToPdfDraggedIdx === idx) return;
+                        setImgToPdfItems((prev) => {
+                          const copy = [...prev];
+                          const [dragged] = copy.splice(imgToPdfDraggedIdx, 1);
+                          copy.splice(idx, 0, dragged);
+                          return copy;
+                        });
+                        setImgToPdfDraggedIdx(null);
+                      }}
+                      className="p-3 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 space-y-3 transition"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="w-7 h-7 rounded-lg bg-[#070a14] text-cyan-300 font-mono text-xs font-extrabold flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </span>
+                          <img
+                            src={item.dataUrl}
+                            alt={item.name}
+                            className="w-14 h-14 object-cover rounded-xl border border-slate-300 bg-white shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold text-slate-900 truncate">
+                              {item.name}
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                              {item.width} × {item.height} px · {formatBytes(item.sizeBytes)}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="px-2 py-0.5 rounded-md bg-cyan-100 text-cyan-900 text-[10px] font-extrabold">
+                                {paperSpec.shortLabel}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 text-[10px] font-bold uppercase">
+                                {effOri} · {effMargin === 'none' ? '0mm Margin' : effMargin} ·{' '}
+                                {effScale}
+                              </span>
+                              {item.useCustomPageSettings && (
+                                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-extrabold">
+                                  Custom Page Setup
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                          {item.width} × {item.height} px · {formatBytes(item.sizeBytes)} ·{' '}
-                          <span className="text-emerald-700 font-bold">Lossless Stream</span>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setImgToPdfExpandedItemId(isExpanded ? null : item.id)
+                            }
+                            className={`px-2.5 h-8 rounded-lg border text-[11px] font-extrabold flex items-center gap-1 transition ${
+                              item.useCustomPageSettings || isExpanded
+                                ? 'bg-[#070a14] text-amber-300 border-amber-400'
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-400'
+                            }`}
+                          >
+                            <i className="fa-solid fa-sliders text-[10px]"></i>
+                            <span>Page Setup</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveImgToPdfItem(idx, -1)}
+                            title="Move Page Up"
+                            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:border-cyan-400 disabled:opacity-40 text-slate-700 text-xs flex items-center justify-center"
+                          >
+                            <i className="fa-solid fa-arrow-up"></i>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === imgToPdfItems.length - 1}
+                            onClick={() => moveImgToPdfItem(idx, 1)}
+                            title="Move Page Down"
+                            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:border-cyan-400 disabled:opacity-40 text-slate-700 text-xs flex items-center justify-center"
+                          >
+                            <i className="fa-solid fa-arrow-down"></i>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeImgToPdfItem(item.id)}
+                            title="Remove Image"
+                            className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 text-xs flex items-center justify-center"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => moveImgToPdfItem(idx, -1)}
-                        title="Move Page Up"
-                        className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:border-cyan-400 disabled:opacity-40 text-slate-700 text-xs flex items-center justify-center"
-                      >
-                        <i className="fa-solid fa-arrow-up"></i>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === imgToPdfItems.length - 1}
-                        onClick={() => moveImgToPdfItem(idx, 1)}
-                        title="Move Page Down"
-                        className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:border-cyan-400 disabled:opacity-40 text-slate-700 text-xs flex items-center justify-center"
-                      >
-                        <i className="fa-solid fa-arrow-down"></i>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeImgToPdfItem(item.id)}
-                        title="Remove Image"
-                        className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 text-xs flex items-center justify-center"
-                      >
-                        <i className="fa-solid fa-trash"></i>
-                      </button>
+                      {/* Per-Page Individual Paper Settings Drawer */}
+                      {isExpanded && (
+                        <div className="p-3 rounded-xl bg-white border border-cyan-200 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 text-xs font-extrabold text-slate-800 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.useCustomPageSettings)}
+                                onChange={(e) =>
+                                  updateImgToPdfItemSettings(item.id, {
+                                    useCustomPageSettings: e.target.checked,
+                                    customPaperSize: item.customPaperSize || imgToPdfPageSize,
+                                    customOrientation:
+                                      item.customOrientation || imgToPdfOrientation,
+                                    customMargin: item.customMargin || imgToPdfMargin,
+                                    customScaling: item.customScaling || imgToPdfScaling,
+                                  })
+                                }
+                                className="w-4 h-4 accent-cyan-600 rounded"
+                              />
+                              <span>Override Global Settings for Page #{idx + 1}</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setImgToPdfExpandedItemId(null)}
+                              className="text-[11px] font-bold text-slate-400 hover:text-slate-700"
+                            >
+                              Done
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                Paper Size
+                              </label>
+                              <select
+                                value={item.customPaperSize || imgToPdfPageSize}
+                                onChange={(e) =>
+                                  updateImgToPdfItemSettings(item.id, {
+                                    useCustomPageSettings: true,
+                                    customPaperSize: e.target.value as PdfPaperSizeId,
+                                  })
+                                }
+                                className="w-full min-h-[34px] px-2 py-1 text-[11px] font-bold bg-slate-50 border border-slate-200 rounded-lg"
+                              >
+                                {PDF_PAPER_SIZE_OPTIONS.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.shortLabel}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                Orientation
+                              </label>
+                              <select
+                                value={item.customOrientation || imgToPdfOrientation}
+                                onChange={(e) =>
+                                  updateImgToPdfItemSettings(item.id, {
+                                    useCustomPageSettings: true,
+                                    customOrientation: e.target.value as PdfOrientationId,
+                                  })
+                                }
+                                className="w-full min-h-[34px] px-2 py-1 text-[11px] font-bold bg-slate-50 border border-slate-200 rounded-lg"
+                              >
+                                <option value="auto">Auto</option>
+                                <option value="portrait">Portrait</option>
+                                <option value="landscape">Landscape</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                Margin
+                              </label>
+                              <select
+                                value={item.customMargin || imgToPdfMargin}
+                                onChange={(e) =>
+                                  updateImgToPdfItemSettings(item.id, {
+                                    useCustomPageSettings: true,
+                                    customMargin: e.target.value as PdfMarginId,
+                                  })
+                                }
+                                className="w-full min-h-[34px] px-2 py-1 text-[11px] font-bold bg-slate-50 border border-slate-200 rounded-lg"
+                              >
+                                <option value="none">No Margin (0mm)</option>
+                                <option value="5mm">Small (5mm)</option>
+                                <option value="10mm">Standard (10mm)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                                Scaling
+                              </label>
+                              <select
+                                value={item.customScaling || imgToPdfScaling}
+                                onChange={(e) =>
+                                  updateImgToPdfItemSettings(item.id, {
+                                    useCustomPageSettings: true,
+                                    customScaling: e.target.value as PdfScalingId,
+                                  })
+                                }
+                                className="w-full min-h-[34px] px-2 py-1 text-[11px] font-bold bg-slate-50 border border-slate-200 rounded-lg"
+                              >
+                                <option value="fit-page">Fit page</option>
+                                <option value="fill-page">Fill page (crop)</option>
+                                <option value="original-size">Original size</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -3178,14 +3680,15 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                     <div className="text-xs font-extrabold text-emerald-950 flex items-center gap-1.5">
                       <i className="fa-solid fa-circle-check text-emerald-600"></i>
                       <span>
-                        HD PDF Ready ({imgToPdfItems.length}{' '}
+                        {imgToPdfPrintDpi} DPI Print-Ready PDF Generated ({imgToPdfItems.length}{' '}
                         {imgToPdfItems.length === 1 ? 'Page' : 'Pages'} ·{' '}
                         {formatBytes(imgToPdfOutputSize)})
                       </span>
                     </div>
                     <div className="text-[11px] text-emerald-800 mt-0.5">
-                      Page Size: {imgToPdfPageSize.toUpperCase()} · Orientation:{' '}
-                      {imgToPdfOrientation.toUpperCase()} · Margin: {imgToPdfMargin.toUpperCase()}
+                      Paper: {imgToPdfPageSize.toUpperCase()} · Orientation:{' '}
+                      {imgToPdfOrientation.toUpperCase()} · Margin: {imgToPdfMargin.toUpperCase()} ·
+                      Scaling: {imgToPdfScaling.toUpperCase()}
                     </div>
                   </div>
                   <button
@@ -3195,9 +3698,9 @@ export const AkshayaToolsHub: React.FC<AkshayaToolsHubProps> = ({
                         type: 'application/pdf',
                       });
                       const cleanName =
-                        (imgToPdfFilename || 'studiopassport-images-hd')
+                        (imgToPdfFilename || 'studiopassport-print-300dpi')
                           .replace(/\.pdf$/i, '')
-                          .trim() || 'studiopassport-images-hd';
+                          .trim() || 'studiopassport-print-300dpi';
                       triggerBlobDownload(blob, `${cleanName}.pdf`);
                       showToast(`Downloaded ${cleanName}.pdf!`);
                     }}

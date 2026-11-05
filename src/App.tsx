@@ -813,9 +813,19 @@ export default function App() {
 
           if (res.siteSettings) {
             setSiteSettings((prev) => {
+              const incomingCatalog = Array.isArray((res.siteSettings as any)?.toolCatalog)
+                ? (res.siteSettings as any).toolCatalog
+                : prev.toolCatalog || DEFAULT_TOOL_CATALOG;
+              const mergedCatalog = [
+                ...incomingCatalog,
+                ...DEFAULT_TOOL_CATALOG.filter(
+                  (defTool) => !incomingCatalog.some((t: any) => t.id === defTool.id)
+                ),
+              ];
               const nextSettings: SiteSettings = {
                 ...prev,
                 ...(res.siteSettings as Partial<SiteSettings>),
+                toolCatalog: mergedCatalog,
                 logoType: res.siteSettings?.logoUrl
                   ? res.siteSettings.logoType || 'url'
                   : prev.logoType,
@@ -928,12 +938,24 @@ export default function App() {
               return curr;
             });
           }
-          setSiteSettings((prev) => ({
-            ...prev,
-            ...data,
-            logoType: data.logoUrl ? (data.logoType || 'url') : prev.logoType,
-            logoUrl: data.logoUrl || prev.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
-          }));
+          setSiteSettings((prev) => {
+            const incomingCatalog = Array.isArray((data as any)?.toolCatalog)
+              ? (data as any).toolCatalog
+              : prev.toolCatalog || DEFAULT_TOOL_CATALOG;
+            const mergedCatalog = [
+              ...incomingCatalog,
+              ...DEFAULT_TOOL_CATALOG.filter(
+                (defTool) => !incomingCatalog.some((t: any) => t.id === defTool.id)
+              ),
+            ];
+            return {
+              ...prev,
+              ...data,
+              toolCatalog: mergedCatalog,
+              logoType: data.logoUrl ? (data.logoType || 'url') : prev.logoType,
+              logoUrl: data.logoUrl || prev.logoUrl || DEFAULT_SITE_SETTINGS.logoUrl,
+            };
+          });
           setLastCloudSyncedAt(new Date().toLocaleTimeString());
         } else {
           // Initialize /siteSettings/global on Firestore so all devices share the same pool
@@ -4229,7 +4251,7 @@ export default function App() {
                     </div>
                     <div>
                       <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400">
-                        Category 2 · 5 Tools
+                        Category 2 · 6 Tools
                       </span>
                       <h2 className="text-sm font-extrabold text-white">2. Akshaya Tools</h2>
                     </div>
@@ -4246,6 +4268,7 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {[
+                    { id: 'image-to-pdf', label: 'Image to PDF (Lossless HQ)' },
                     { id: 'pdf-compressor', label: 'PDF Compressor (Target KB)' },
                     { id: 'batch-image-compressor', label: 'Image Compressor (Target KB)' },
                     { id: 'pdf-merge', label: 'PDF Merge' },
