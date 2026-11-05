@@ -124,7 +124,7 @@ export async function upsertUserInFirestoreAdmin(
     email: string;
     phone?: string;
     role: 'user' | 'admin';
-    status: 'pending' | 'approved' | 'blocked' | 'removed';
+    status: 'pending' | 'approved' | 'active' | 'blocked' | 'removed' | 'suspended';
     credits?: number;
     freeCreditsClaimed?: boolean;
     deviceFingerprint?: string;
@@ -258,20 +258,29 @@ const ALLOWED_SITE_SETTINGS_KEYS = [
   'adminCreditPool',
   'studioWalletCredits',
   'adminVaultSecret',
+  'ownerMasterSecret',
   'enableFreeSignupCredits',
   'freeSignupCreditsAmount',
   'toolCatalog',
   'updatedAt',
 ];
 
+export const OWNER_MASTER_SECRET = 'MALNADU-OWNER-SUPER-VAULT-2026-ONLY';
+
 /**
  * Syncs the Admin Credit Pool balance (and optional Studio Wallet balance) to Firestore `/siteSettings/global`.
+ * 3-LAYER SECURITY LOCK:
+ * - Website Admin (`isOwnerAuthorized === false`) can ONLY deduct or keep equal (`newPoolCredits <= serverPool`).
+ *   Any DevTools/LocalStorage attempt to increase `adminCreditPool` without Owner authorization is blocked and reverted to `serverPool`.
+ * - ONLY the Owner (`shriyanshsingh7581@gmail.com` via `/credit-admin` or signed Owner Code, `isOwnerAuthorized === true`)
+ *   can increase `adminCreditPool`.
  */
 export async function syncAdminPoolToFirestore(
   newPoolCredits: number,
-  studioWalletCredits?: number
-): Promise<void> {
-  const safePool = Math.max(0, Math.floor(Number(newPoolCredits) || 0));
+  studioWalletCredits?: number,
+  isOwnerAuthorized = false
+): Promise<number> {
+  let safePool = Math.max(0, Math.floor(Number(newPoolCredits) || 0));
   const safeStudioWallet =
     typeof studioWalletCredits === 'number'
       ? Math.max(0, Math.floor(Number(studioWalletCredits) || 0))
@@ -280,8 +289,26 @@ export async function syncAdminPoolToFirestore(
   try {
     const adminDb = await ensureAdminVaultSession();
     const settingsRef = doc(adminDb, 'siteSettings', 'global');
-    const snap = await getDoc(settingsRef);
+    let snap;
+    try {
+      snap = await getDocFromServer(settingsRef);
+    } catch {
+      snap = await getDoc(settingsRef);
+    }
     const existingData = snap.exists() ? snap.data() : {};
+    const serverPool =
+      typeof existingData?.adminCreditPool === 'number'
+        ? existingData.adminCreditPool
+        : undefined;
+
+    // Strict 3-Layer Lock: Block any unauthorized increase to adminCreditPool
+    if (typeof serverPool === 'number' && !isOwnerAuthorized && safePool > serverPool) {
+      console.warn(
+        `[3-Layer Credit Lock] Blocked unauthorized Admin Pool increase (${safePool} > ${serverPool}). Reverting to server balance: ${serverPool}.`
+      );
+      return serverPool;
+    }
+
     const rawMerged: Record<string, any> = {
       ...DEFAULT_SITE_SETTINGS,
       ...existingData,
@@ -289,6 +316,13 @@ export async function syncAdminPoolToFirestore(
       adminVaultSecret: ADMIN_VAULT_SECRET,
       updatedAt: serverTimestamp(),
     };
+
+    if (isOwnerAuthorized || !snap.exists()) {
+      rawMerged.ownerMasterSecret = OWNER_MASTER_SECRET;
+    } else {
+      delete rawMerged.ownerMasterSecret;
+    }
+
     if (typeof safeStudioWallet === 'number') {
       rawMerged.studioWalletCredits = safeStudioWallet;
     } else if (typeof existingData?.studioWalletCredits === 'number') {
@@ -304,8 +338,10 @@ export async function syncAdminPoolToFirestore(
     }
 
     await setDoc(settingsRef, cleanPayload);
+    return safePool;
   } catch (err) {
     console.warn('syncAdminPoolToFirestore warning:', err);
+    return safePool;
   }
 }
 
@@ -578,7 +614,7 @@ export async function createFirebaseAccountViaSecondaryApp(
     userId?: string;
     phone?: string;
     role?: 'user' | 'admin';
-    status?: 'pending' | 'approved' | 'blocked' | 'removed';
+    status?: 'pending' | 'approved' | 'active' | 'blocked' | 'removed' | 'suspended';
     credits?: number;
   }
 ): Promise<{ uid: string | null; error?: string }> {

@@ -9,16 +9,11 @@
 
 export const AURA_BACKEND_BASE_URL = 'https://shri-mitra-backend.onrender.com';
 export const AURA_BACKEND_CHAT_URL = `${AURA_BACKEND_BASE_URL}/api/chat`;
-export const OPENROUTER_DIRECT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const AURA_BACKEND_OPENROUTER_URL = `${AURA_BACKEND_BASE_URL}/api/openrouter`;
+export const AURA_BACKEND_CREDITS_URL = `${AURA_BACKEND_BASE_URL}/api/credits`;
+export const OWNER_AUTHORIZED_EMAIL = 'shriyanshsingh7581@gmail.com';
+export const CUSTOMER_ADMIN_EMAIL = 'liveonconnect@gmail.com';
 
-// Assembled at runtime so GitHub push protection does not block repository sync
-const OPENROUTER_DIRECT_KEY = [
-  'sk-or-v1-',
-  'bd462ae62187a41f',
-  'c91714dbc256e611',
-  'aaaf939738895683',
-  '3638c8685bd23257',
-].join('');
 
 export type AuraEngineId = 'aura-ai-plus' | 'aura-ai-pro';
 
@@ -453,91 +448,103 @@ export async function generatePhotoToPhotoWithAuraAi(params: {
     text: photoToPhotoPromptText,
   });
 
-  // Stage 1: True Photo-to-Photo (Image + Text -> Image) across OpenRouter multimodal image models
+  // Stage 1: True Photo-to-Photo (Image + Text -> Image) routed securely through Render Backend (https://shri-mitra-backend.onrender.com)
+  const backendEndpoints = [AURA_BACKEND_OPENROUTER_URL, AURA_BACKEND_CHAT_URL];
+
   for (const imgModel of engine.imageGenerationModels) {
-    try {
-      const response = await fetch(OPENROUTER_DIRECT_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer':
-            typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
-          'X-Title': 'Aura AI Photo-to-Photo Studio',
-        },
-        body: JSON.stringify({
-          model: imgModel,
-          modalities: ['image', 'text'],
-          messages: [
-            {
-              role: 'user',
-              content: contentParts,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        continue;
-      }
-
-      const data = await response.json();
-      const extracted = extractGeneratedImageFromMessage(data?.choices?.[0]?.message);
-      if (extracted) {
-        return {
-          imageDataUrl: extracted,
-          engineDisplayName: engine.displayName,
-          modelUsed: imgModel,
-          isFullPhotoToPhoto: true,
-        };
-      }
-    } catch {
-      // Try next image generation model in list
-    }
-  }
-
-  // Stage 2: If an input photo was provided and all models declined direct face editing,
-  // generate a high-resolution AI studio poster background image from the prompt so the user's photo
-  // is composited seamlessly into a real AI-generated poster artwork.
-  if (hasInputPhoto) {
-    const bgPromptText = `Generate a luxury ${ratioDescription} studio celebration poster artwork background for: "${prompt}". Style: ${styleSpec.aiDirective} Quality: ${qualitySpec.aiQualityDirective} Include ornate golden borders, festive lighting, and royal studio decor. Output an image.`;
-
-    for (const imgModel of engine.imageGenerationModels) {
+    for (const endpointUrl of backendEndpoints) {
       try {
-        const response = await fetch(OPENROUTER_DIRECT_URL, {
+        const response = await fetch(endpointUrl, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer':
-              typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
-            'X-Title': 'Aura AI Photo-to-Photo Studio',
           },
           body: JSON.stringify({
             model: imgModel,
             modalities: ['image', 'text'],
+            stream: false,
             messages: [
               {
                 role: 'user',
-                content: [{ type: 'text', text: bgPromptText }],
+                content: contentParts,
               },
             ],
           }),
         });
 
-        if (!response.ok) continue;
+        if (!response.ok) {
+          continue;
+        }
+
         const data = await response.json();
-        const extracted = extractGeneratedImageFromMessage(data?.choices?.[0]?.message);
+        const extracted =
+          (typeof data?.imageDataUrl === 'string' && data.imageDataUrl.startsWith('data:image/')
+            ? data.imageDataUrl
+            : '') ||
+          extractGeneratedImageFromMessage(data?.choices?.[0]?.message) ||
+          extractGeneratedImageFromMessage(data?.message);
+
         if (extracted) {
           return {
             imageDataUrl: extracted,
             engineDisplayName: engine.displayName,
             modelUsed: imgModel,
-            isFullPhotoToPhoto: false,
+            isFullPhotoToPhoto: true,
           };
         }
       } catch {
-        // continue
+        // Try next endpoint / model in list
+      }
+    }
+  }
+
+  // Stage 2: If an input photo was provided and all models declined direct face editing,
+  // generate a high-resolution AI studio poster background image from the prompt via Render Backend
+  // so the user's photo is composited seamlessly into a real AI-generated poster artwork.
+  if (hasInputPhoto) {
+    const bgPromptText = `Generate a luxury ${ratioDescription} studio celebration poster artwork background for: "${prompt}". Style: ${styleSpec.aiDirective} Quality: ${qualitySpec.aiQualityDirective} Include ornate golden borders, festive lighting, and royal studio decor. Output an image.`;
+
+    for (const imgModel of engine.imageGenerationModels) {
+      for (const endpointUrl of backendEndpoints) {
+        try {
+          const response = await fetch(endpointUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: imgModel,
+              modalities: ['image', 'text'],
+              stream: false,
+              messages: [
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: bgPromptText }],
+                },
+              ],
+            }),
+          });
+
+          if (!response.ok) continue;
+          const data = await response.json();
+          const extracted =
+            (typeof data?.imageDataUrl === 'string' && data.imageDataUrl.startsWith('data:image/')
+              ? data.imageDataUrl
+              : '') ||
+            extractGeneratedImageFromMessage(data?.choices?.[0]?.message) ||
+            extractGeneratedImageFromMessage(data?.message);
+
+          if (extracted) {
+            return {
+              imageDataUrl: extracted,
+              engineDisplayName: engine.displayName,
+              modelUsed: imgModel,
+              isFullPhotoToPhoto: false,
+            };
+          }
+        } catch {
+          // continue
+        }
       }
     }
   }
@@ -695,8 +702,8 @@ function parseAuraBackendStreamOrJson(rawText: string): string {
 }
 
 /**
- * Calls OpenRouter API directly first using the configured OpenRouter key,
- * with automatic fallback to https://shri-mitra-backend.onrender.com/api/chat
+ * Calls Render Backend Proxy (`https://shri-mitra-backend.onrender.com/api/openrouter` and `/api/chat`)
+ * where `OPENROUTER_API_KEY` is securely stored in server environment variables.
  */
 export async function requestAuraAiCompletion(
   promptText: string,
@@ -704,20 +711,17 @@ export async function requestAuraAiCompletion(
 ): Promise<{ text: string; engineDisplayName: string }> {
   const engine = AURA_AI_ENGINES[engineId] || AURA_AI_ENGINES['aura-ai-plus'];
 
-  // 1. Primary: Direct OpenRouter API Call (Instant, Zero Cold-Start)
+  // 1. Primary: Render Backend OpenRouter Proxy (/api/openrouter)
   for (const orModel of engine.openRouterModels) {
     try {
-      const directRes = await fetch(OPENROUTER_DIRECT_URL, {
+      const proxyRes = await fetch(AURA_BACKEND_OPENROUTER_URL, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${OPENROUTER_DIRECT_KEY}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer':
-            typeof window !== 'undefined' ? window.location.origin : 'https://studiopassport.online',
-          'X-Title': 'Aura AI Poster Studio',
         },
         body: JSON.stringify({
           model: orModel,
+          stream: false,
           messages: [
             {
               role: 'user',
@@ -728,9 +732,10 @@ export async function requestAuraAiCompletion(
         }),
       });
 
-      if (directRes.ok) {
-        const data = await directRes.json();
-        const content = data?.choices?.[0]?.message?.content;
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        const content =
+          data?.choices?.[0]?.message?.content || data?.reply || data?.response || data?.content;
         if (typeof content === 'string' && content.trim().length > 5) {
           return {
             text: content.trim(),
@@ -743,8 +748,8 @@ export async function requestAuraAiCompletion(
     }
   }
 
-  // 2. Fallback: Render Backend Proxy (https://shri-mitra-backend.onrender.com/api/chat)
-  const modelsToTry = [engine.primaryModel, ...engine.fallbackModels];
+  // 2. Fallback: Render Backend Chat Endpoint (https://shri-mitra-backend.onrender.com/api/chat)
+  const modelsToTry = [...engine.openRouterModels, engine.primaryModel, ...engine.fallbackModels];
   for (const modelName of modelsToTry) {
     try {
       const response = await fetch(AURA_BACKEND_CHAT_URL, {
@@ -754,6 +759,7 @@ export async function requestAuraAiCompletion(
         },
         body: JSON.stringify({
           model: modelName,
+          stream: false,
           message: promptText,
           messages: [
             {
@@ -761,6 +767,7 @@ export async function requestAuraAiCompletion(
               content: promptText,
             },
           ],
+          temperature: 0.7,
         }),
       });
 
@@ -789,6 +796,95 @@ export async function requestAuraAiCompletion(
     text: '',
     engineDisplayName: engine.displayName,
   };
+}
+
+/**
+ * ============================================================================
+ * 3-LAYER CREDIT SECURITY LOCK — RENDER BACKEND VERIFICATION HELPERS
+ * ============================================================================
+ */
+export async function fetchRenderBackendCreditState(): Promise<{
+  ok: boolean;
+  adminCreditPool?: number;
+  studioWalletCredits?: number;
+}> {
+  try {
+    const res = await fetch(`${AURA_BACKEND_CREDITS_URL}/state`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) return { ok: false };
+    const data = await res.json();
+    return {
+      ok: Boolean(data?.ok),
+      adminCreditPool:
+        typeof data?.adminCreditPool === 'number' ? data.adminCreditPool : undefined,
+      studioWalletCredits:
+        typeof data?.studioWalletCredits === 'number' ? data.studioWalletCredits : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function ownerUpdatePoolViaRenderBackend(params: {
+  ownerEmail: string;
+  masterPassword: string;
+  action: 'add' | 'set';
+  amount: number;
+  currentPool?: number;
+}): Promise<{ ok: boolean; adminCreditPool?: number; error?: string }> {
+  try {
+    const res = await fetch(`${AURA_BACKEND_CREDITS_URL}/owner-add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { ok: false, error: errData?.error || 'Backend rejected credit update.' };
+    }
+    const data = await res.json();
+    return {
+      ok: Boolean(data?.ok),
+      adminCreditPool:
+        typeof data?.adminCreditPool === 'number' ? data.adminCreditPool : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function adminDeductPoolViaRenderBackend(params: {
+  adminEmail: string;
+  deductAmount: number;
+  currentPool: number;
+  targetUserUid?: string;
+}): Promise<{ ok: boolean; adminCreditPool?: number; error?: string }> {
+  try {
+    const res = await fetch(`${AURA_BACKEND_CREDITS_URL}/admin-deduct`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return {
+        ok: false,
+        adminCreditPool:
+          typeof errData?.adminCreditPool === 'number' ? errData.adminCreditPool : undefined,
+        error: errData?.error || 'Backend rejected unauthorized pool change.',
+      };
+    }
+    const data = await res.json();
+    return {
+      ok: Boolean(data?.ok),
+      adminCreditPool:
+        typeof data?.adminCreditPool === 'number' ? data.adminCreditPool : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /**

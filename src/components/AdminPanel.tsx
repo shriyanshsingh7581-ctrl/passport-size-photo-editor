@@ -38,6 +38,7 @@ import {
   loadFreeCreditGuardState,
   FreeCreditGuardState,
 } from '../creditWallet';
+import { adminDeductPoolViaRenderBackend } from '../auraAiService';
 
 export type AdminTab =
   | 'credits'
@@ -63,7 +64,10 @@ interface AdminPanelProps {
   onForceCloudSync?: () => Promise<void> | void;
   onAdminGoogleSignIn?: () => Promise<void> | void;
   onUpdateWalletCredits: (newCredits: number) => void;
-  onUpdateAdminCreditPool: (newPoolCredits: number) => void;
+  onUpdateAdminCreditPool: (
+    newPoolCredits: number,
+    isOwnerAuthorized?: boolean
+  ) => void | Promise<number>;
   onUpdateUserCredits: (
     uid: string,
     newCredits: number
@@ -180,10 +184,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     text: string;
   } | null>(null);
 
-  // Simple 1-Click Credit Transfer & Pool Top-Up Box State
+  // Simple 1-Click Credit Transfer Box State
   const [quickTargetUid, setQuickTargetUid] = useState<string>('');
   const [quickCreditAmount, setQuickCreditAmount] = useState<string>('50');
-  const [quickAdminTopUpAmount, setQuickAdminTopUpAmount] = useState<string>('500');
   const [isTransferringCredits, setIsTransferringCredits] = useState(false);
 
   useEffect(() => {
@@ -403,8 +406,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     const nextPool = saveAdminCreditPool(adminCreditPool - addAmt);
     const nextWallet = saveWalletCredits(availableCredits + addAmt);
-    onUpdateAdminCreditPool(nextPool);
+    onUpdateAdminCreditPool(nextPool, false);
     onUpdateWalletCredits(nextWallet);
+    adminDeductPoolViaRenderBackend({
+      adminEmail: unlockedAdminEmail || PRIMARY_CUSTOMER_ADMIN_EMAIL,
+      deductAmount: addAmt,
+      currentPool: adminCreditPool,
+      targetUserUid: 'studio-wallet',
+    }).catch(() => {});
 
     const updatedLogs = appendCreditRechargeLog({
       targetName: 'Studio Wallet (From Admin Pool)',
@@ -435,10 +444,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return;
     }
 
-    const nextPool = saveAdminCreditPool(adminCreditPool - delta);
+    // 3-Layer Security Lock: Website Admin can NEVER increase adminCreditPool (newPool <= currentPool)
+    const nextPool = delta > 0 ? saveAdminCreditPool(adminCreditPool - delta) : adminCreditPool;
     const nextWallet = saveWalletCredits(target);
-    onUpdateAdminCreditPool(nextPool);
+    onUpdateAdminCreditPool(nextPool, false);
     onUpdateWalletCredits(nextWallet);
+    if (delta > 0) {
+      adminDeductPoolViaRenderBackend({
+        adminEmail: unlockedAdminEmail || PRIMARY_CUSTOMER_ADMIN_EMAIL,
+        deductAmount: delta,
+        currentPool: adminCreditPool,
+        targetUserUid: 'studio-wallet',
+      }).catch(() => {});
+    }
 
     const updatedLogs = appendCreditRechargeLog({
       targetName: 'Studio Wallet (Pool Adjusted)',
@@ -453,38 +471,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       text:
         delta > 0
           ? `Allocated +${delta} Credits from Admin Pool to Studio Wallet. Remaining Pool: ${nextPool} Photos.`
-          : `Reclaimed ${Math.abs(delta)} Credits back into Website Admin Pool. New Pool: ${nextPool} Photos.`,
+          : `Studio Wallet balance set to ${nextWallet} Photos. (Admin Pool remains ${nextPool} Photos under 3-Layer Owner Lock).`,
     });
     showToast(`Studio Balance Set to ${nextWallet} (Admin Pool: ${nextPool})`);
   };
 
   /**
-   * Direct 1-Click Top-Up for Admin Credit Pool so Admin can easily add credits to the pool anytime.
-   */
-  const handleQuickTopUpAdminPool = (addAmount: number) => {
-    if (!isCreditVaultUnlocked) return;
-    const safeAdd = Math.max(1, Math.floor(Number(addAmount) || 0));
-    const nextPool = saveAdminCreditPool(adminCreditPool + safeAdd);
-    onUpdateAdminCreditPool(nextPool);
-    const updatedLogs = appendCreditRechargeLog({
-      targetName: 'Admin Credit Pool (Direct Top-Up)',
-      targetEmail: `Pool Increased by +${safeAdd} · New Pool: ${nextPool}`,
-      action: 'add',
-      amount: safeAdd,
-      balanceAfter: nextPool,
-    });
-    setCreditLogs(updatedLogs);
-    setPoolActionNotice({
-      type: 'ok',
-      text: `Added +${safeAdd} Credits directly to your Admin Credit Pool! New Distributable Pool Balance: ${nextPool} Credits.`,
-    });
-    showToast(`+${safeAdd} Credits Added to Admin Pool (Total: ${nextPool})`);
-  };
-
-  /**
-   * Distributes credits to a Registered User strictly from the Website Admin's Credit Pool,
-   * verifies the write in Firebase Realtime/Firestore Database, and AUTOMATICALLY REFUNDS
-   * the Admin Pool if the transfer to the user fails for any reason.
+   * Distributes credits to a Registered User strictly from the Website Admin's Credit Pool (`newPool <= currentPool`),
+   * verifies the write in Firebase Realtime/Firestore Database + Render Backend, and AUTOMATICALLY REFUNDS
+   * the deducted amount if the transfer to the user fails for any reason.
    */
   const handleAdjustUserCredits = async (
     user: UserProfile,
@@ -520,24 +515,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (deltaNeeded === 0) return;
 
     if (deltaNeeded > 0 && deltaNeeded > adminCreditPool) {
-      const msg = `Insufficient Website Admin Credit Pool! Giving +${deltaNeeded} credits to ${user.displayName} requires ${deltaNeeded} credits, but your Admin Pool only has ${adminCreditPool} credits left. Click "+ Add Pool Credits" above to top up.`;
+      const msg = `Insufficient Website Admin Credit Pool! Giving +${deltaNeeded} credits to ${user.displayName} requires ${deltaNeeded} credits, but your Admin Pool only has ${adminCreditPool} credits left. Contact the Owner (${ADMIN_ACCOUNT_HOLDER}) to recharge your Admin Pool.`;
       setPoolActionNotice({ type: 'err', text: msg });
       showToast(`Insufficient Admin Pool! Only ${adminCreditPool} Credits available.`);
       return;
     }
 
     const previousPool = adminCreditPool;
-    const tentativePool = saveAdminCreditPool(previousPool - deltaNeeded);
-    onUpdateAdminCreditPool(tentativePool);
+    // 3-Layer Security Lock: Website Admin can NEVER increase adminCreditPool (tentativePool <= previousPool)
+    const tentativePool =
+      deltaNeeded > 0 ? saveAdminCreditPool(previousPool - deltaNeeded) : previousPool;
+    onUpdateAdminCreditPool(tentativePool, false);
     setIsTransferringCredits(true);
 
     try {
+      if (deltaNeeded > 0) {
+        adminDeductPoolViaRenderBackend({
+          adminEmail: unlockedAdminEmail || PRIMARY_CUSTOMER_ADMIN_EMAIL,
+          deductAmount: deltaNeeded,
+          currentPool: previousPool,
+          targetUserUid: user.uid,
+        }).catch(() => {});
+      }
+
       const syncRes = await onUpdateUserCredits(user.uid, nextUserCredits);
 
-      // If Firebase transfer failed or could not be verified, AUTOMATICALLY RETURN credits to Admin Pool!
+      // If Firebase transfer failed or could not be verified, AUTOMATICALLY RETURN deducted credits to Admin Pool!
       if (syncRes && syncRes.ok === false) {
         const refundedPool = saveAdminCreditPool(previousPool);
-        onUpdateAdminCreditPool(refundedPool);
+        onUpdateAdminCreditPool(refundedPool, false);
         const rollbackLogs = appendCreditRechargeLog({
           targetName: `AUTO-REFUND TO ADMIN POOL (${user.displayName})`,
           targetEmail: `${user.email} · Transfer Failed — Returned to Pool (${refundedPool})`,
@@ -561,7 +567,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       const updatedLogs = appendCreditRechargeLog({
         targetName: `${user.displayName || 'User'} (${
-          deltaNeeded > 0 ? 'Transferred & Verified' : 'Returned to Admin Pool'
+          deltaNeeded > 0 ? 'Transferred & Verified' : 'Balance Reduced'
         })`,
         targetEmail: `${user.userId ? `ID: ${user.userId} · ` : ''}${user.email} · Pool Left: ${tentativePool}`,
         action: deltaNeeded > 0 ? 'add' : 'deduct',
@@ -570,29 +576,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
       setCreditLogs(updatedLogs);
 
-      if (deltaNeeded > 0) {
-        setPoolActionNotice({
-          type: 'ok',
-          text: `✓ Live Firebase Sync Complete: Transferred +${deltaNeeded} Credits to ${user.displayName} (ID: ${
-            user.userId || user.email.split('@')[0]
-          }). User's Live Balance is now ${verifiedBalance} Credits. Remaining Admin Pool: ${tentativePool} Credits.`,
-        });
-        showToast(
-          `Transferred +${deltaNeeded} Credits to ${user.displayName} (Live Balance: ${verifiedBalance})`
-        );
-      } else {
-        setPoolActionNotice({
-          type: 'ok',
-          text: `✓ Returned ${Math.abs(deltaNeeded)} Credits from ${user.displayName} back into your Website Admin Pool! New Admin Pool: ${tentativePool} Credits (User Balance: ${verifiedBalance}).`,
-        });
-        showToast(
-          `Returned ${Math.abs(deltaNeeded)} Credits back to Admin Pool! (Pool: ${tentativePool})`
-        );
-      }
+      setPoolActionNotice({
+        type: 'ok',
+        text: `✓ Live Firebase Sync Complete: ${
+          deltaNeeded > 0
+            ? `Transferred +${deltaNeeded} Credits to ${user.displayName}`
+            : `Updated ${user.displayName}'s balance`
+        } (ID: ${
+          user.userId || user.email.split('@')[0]
+        }). User's Live Balance is now ${verifiedBalance} Credits. Remaining Admin Pool: ${tentativePool} Credits.`,
+      });
+      showToast(
+        `Transferred +${Math.max(0, deltaNeeded)} Credits to ${user.displayName} (Live Balance: ${verifiedBalance})`
+      );
     } catch (err: any) {
       // Automatic Rollback on unexpected exception
       const refundedPool = saveAdminCreditPool(previousPool);
-      onUpdateAdminCreditPool(refundedPool);
+      onUpdateAdminCreditPool(refundedPool, false);
       setPoolActionNotice({
         type: 'err',
         text: `Unexpected error during transfer (${err?.message || 'Network error'}). Deducted ${Math.abs(
@@ -614,7 +614,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setPoolActionNotice({ type: 'err', text: res.error || 'Invalid Owner Activation Code.' });
       return;
     }
-    onUpdateAdminCreditPool(res.newPoolBalance);
+    // Valid cryptographically signed Owner Recharge Code is Owner-authorized
+    onUpdateAdminCreditPool(res.newPoolBalance, true);
     setCreditLogs(loadCreditRechargeLogs());
     setAdminPoolCouponInput('');
     setPoolActionNotice({
@@ -1458,63 +1459,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span className="px-2.5 py-0.5 rounded-md bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-mono text-[11px] font-extrabold tabular-nums">
                   Admin Pool: {adminCreditPool} Credits
                 </span>
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
+                  <i className="fa-solid fa-lock mr-1"></i>
+                  3-Layer Owner Lock Active · Self Top-Up Disabled
+                </span>
               </div>
               <h2 className="text-sm sm:text-base font-extrabold text-white mt-1">
-                Simple 1-Click Credit Add &amp; User Credit Transfer (Real-Time Firebase Sync)
+                User Credit Distribution Bar (Deducts from Your Admin Pool: {adminCreditPool} Credits)
               </h2>
               <p className="text-[11px] sm:text-xs text-slate-300">
-                Select any user below to transfer credits immediately. If a transfer ever fails to reach the user, deducted credits automatically return to your Admin Pool.
+                Select any user below to distribute credits from your available Admin Pool. Only the Owner can add credits to the Admin Pool.
               </p>
             </div>
           </div>
 
-          {/* Quick Top-Up Admin Pool Bar + 1-Click Realtime Sync Button */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-white/5 border border-white/10 p-2 rounded-2xl">
+          {/* 3-Layer Security Status + 1-Click Realtime Sync Button (Self Top-Up Removed) */}
+          <div className="flex flex-wrap items-center gap-2 bg-white/5 border border-white/10 p-2.5 rounded-2xl">
+            <div className="px-3 py-1.5 rounded-xl bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[11px] font-extrabold flex items-center gap-1.5">
+              <i className="fa-solid fa-shield-halved text-amber-400"></i>
+              <span>Pool Balance Controlled by Owner</span>
+            </div>
             {onForceCloudSync && (
               <button
                 type="button"
                 onClick={() => onForceCloudSync()}
                 disabled={isCloudSyncing}
-                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5 active:scale-95 shadow-sm"
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition flex items-center gap-1.5 active:scale-95 shadow-sm"
                 title="Click to sync all credits and users across all devices from Firebase Realtime Database"
               >
                 <i className={`fa-solid fa-rotate ${isCloudSyncing ? 'fa-spin' : ''}`}></i>
                 <span>{isCloudSyncing ? 'Syncing...' : 'Sync Credits Now'}</span>
               </button>
             )}
-            <span className="text-[11px] font-extrabold text-amber-300 px-1.5">
-              + Add to Admin Pool:
-            </span>
-            {[100, 500, 1000].map((poolAmt) => (
-              <button
-                key={poolAmt}
-                type="button"
-                onClick={() => handleQuickTopUpAdminPool(poolAmt)}
-                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono text-xs font-extrabold transition active:scale-95"
-              >
-                +{poolAmt}
-              </button>
-            ))}
-            <div className="flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-xl px-2 py-1">
-              <input
-                type="number"
-                min={1}
-                max={100000}
-                value={quickAdminTopUpAmount}
-                onChange={(e) => setQuickAdminTopUpAmount(e.target.value)}
-                className="w-16 text-xs font-mono font-bold text-white bg-transparent focus:outline-none tabular-nums"
-                placeholder="500"
-              />
-              <button
-                type="button"
-                onClick={() =>
-                  handleQuickTopUpAdminPool(Math.max(1, parseInt(quickAdminTopUpAmount, 10) || 500))
-                }
-                className="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[11px] font-extrabold"
-              >
-                Add Pool
-              </button>
-            </div>
           </div>
         </div>
 
@@ -1614,7 +1590,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               />
               <button
                 type="button"
-                disabled={!selectedQuickUser || isTransferringCredits}
+                disabled={
+                  !selectedQuickUser ||
+                  isTransferringCredits ||
+                  adminCreditPool < Math.max(1, parseInt(quickCreditAmount, 10) || 50)
+                }
                 onClick={() => {
                   if (selectedQuickUser) {
                     const amt = Math.max(1, parseInt(quickCreditAmount, 10) || 50);
@@ -1631,21 +1611,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span>{isTransferringCredits ? 'Syncing...' : `Send +${quickCreditAmount || 0}`}</span>
               </button>
             </div>
-
-            {selectedQuickUser && (selectedQuickUser.credits ?? 0) > 0 && (
-              <button
-                type="button"
-                disabled={isTransferringCredits}
-                onClick={() => handleAdjustUserCredits(selectedQuickUser, 'set', 0)}
-                className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-300 text-[11px] font-extrabold transition flex items-center justify-center gap-1.5"
-                title="Pull all credits from this user back into your Admin Pool"
-              >
-                <i className="fa-solid fa-rotate-left"></i>
-                <span>
-                  Return User&apos;s {selectedQuickUser.credits} Credits to Admin Pool
-                </span>
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -2425,35 +2390,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </button>
                       ))}
 
-                      {userCredits > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleAdjustUserCredits(u, 'deduct', Math.min(25, userCredits))
-                          }
-                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-mono text-xs font-extrabold transition"
-                          title="Reclaim Credits from user back to Admin Pool"
-                        >
-                          -{Math.min(25, userCredits)}
-                        </button>
-                      )}
-
-                      {userCredits > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => handleAdjustUserCredits(u, 'set', 0)}
-                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-[11px] font-extrabold transition"
-                          title="Return all credits of this user back into Admin Pool"
-                        >
-                          Return All ({userCredits}) to Pool
-                        </button>
-                      )}
-
                       <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5">
                         <input
                           type="number"
-                          min={0}
-                          max={100000}
+                          min={1}
+                          max={Math.max(1, adminCreditPool)}
                           value={customVal}
                           onChange={(e) =>
                             setUserCustomCreditInputs((prev) => ({
@@ -2465,6 +2406,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         />
                         <button
                           type="button"
+                          disabled={adminCreditPool < Math.max(1, parseInt(customVal, 10) || 50)}
                           onClick={() =>
                             handleAdjustUserCredits(
                               u,
@@ -2472,22 +2414,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               Math.max(1, parseInt(customVal, 10) || 50)
                             )
                           }
-                          className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-extrabold"
+                          className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-[11px] font-extrabold"
                         >
-                          Give
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleAdjustUserCredits(
-                              u,
-                              'set',
-                              Math.max(0, parseInt(customVal, 10) || 0)
-                            )
-                          }
-                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold"
-                        >
-                          Set
+                          + Give
                         </button>
                       </div>
                     </div>

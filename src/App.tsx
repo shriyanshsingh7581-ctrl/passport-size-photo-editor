@@ -3097,8 +3097,22 @@ export default function App() {
     showToast('User account permanently removed');
   };
 
-  const handleUpdateAdminCreditPool = async (newPoolCredits: number) => {
-    const safePool = saveAdminCreditPool(newPoolCredits);
+  const handleUpdateAdminCreditPool = async (
+    newPoolCredits: number,
+    isOwnerAuthorized = false
+  ): Promise<number> => {
+    const requestedPool = Math.max(0, Math.floor(Number(newPoolCredits) || 0));
+    // Layer 1 Lock: If not Owner-authorized, block any increase above the current pool
+    const boundedPool =
+      !isOwnerAuthorized && requestedPool > adminCreditPool ? adminCreditPool : requestedPool;
+
+    // Layer 2 & 3 Lock: Verify & sync with Firestore server (which rejects unauthorized pool increases)
+    const serverVerifiedPool = await syncAdminPoolToFirestore(
+      boundedPool,
+      undefined,
+      isOwnerAuthorized
+    );
+    const safePool = saveAdminCreditPool(serverVerifiedPool);
     setAdminCreditPool(safePool);
     setSiteSettings((prev) => {
       const updated = { ...prev, adminCreditPool: safePool };
@@ -3109,7 +3123,7 @@ export default function App() {
       }
       return updated;
     });
-    await syncAdminPoolToFirestore(safePool);
+    return safePool;
   };
 
   const handleCreateManagedUser = async (
@@ -3251,12 +3265,14 @@ export default function App() {
   };
 
   const handleSaveSiteSettings = async (newSettings: SiteSettings) => {
+    // 3-Layer Security Lock: Saving site settings from Admin Panel can NEVER increase adminCreditPool
+    const lockedPool =
+      typeof newSettings.adminCreditPool === 'number' && newSettings.adminCreditPool <= adminCreditPool
+        ? newSettings.adminCreditPool
+        : adminCreditPool;
     const mergedSettings: SiteSettings = {
       ...newSettings,
-      adminCreditPool:
-        typeof newSettings.adminCreditPool === 'number'
-          ? newSettings.adminCreditPool
-          : adminCreditPool,
+      adminCreditPool: lockedPool,
       studioWalletCredits:
         typeof newSettings.studioWalletCredits === 'number'
           ? newSettings.studioWalletCredits

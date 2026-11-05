@@ -35,6 +35,12 @@ service cloud.firestore {
               request.auth.token.email == 'Liveonconnect@gmail.com');
     }
 
+    function isOwnerSuperAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.email == 'shriyanshsingh7581@gmail.com';
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         isBootstrapAdmin() ||
@@ -48,6 +54,13 @@ service cloud.firestore {
              incoming().adminVaultSecret is string &&
              incoming().adminVaultSecret.size() <= 100 &&
              incoming().adminVaultSecret == 'MALNADU-ADMIN-VAULT-2026-SYNC';
+    }
+
+    function hasOwnerMasterSecret() {
+      return 'ownerMasterSecret' in incoming() &&
+             incoming().ownerMasterSecret is string &&
+             incoming().ownerMasterSecret.size() <= 100 &&
+             incoming().ownerMasterSecret == 'MALNADU-OWNER-SUPER-VAULT-2026-ONLY';
     }
 
     function userExists(uid) {
@@ -98,12 +111,13 @@ service cloud.firestore {
                'seoTitle', 'seoDescription', 'enablePassportStudio', 'enableBgRemover',
                'enableClarityEnhancer', 'enableQrGenerator', 'enableLinkShortener',
                'enableStudioToolsCategory', 'enableAkshayaToolsCategory', 'enableMediaLiveToolsCategory',
-               'contactPhone', 'adminCreditPool', 'studioWalletCredits', 'adminVaultSecret',
+               'contactPhone', 'adminCreditPool', 'studioWalletCredits', 'adminVaultSecret', 'ownerMasterSecret',
                'enableFreeSignupCredits', 'freeSignupCreditsAmount', 'toolCatalog', 'customPosterTemplates', 'updatedAt'
              ]) &&
              (!('adminCreditPool' in data) || (data.adminCreditPool is int && data.adminCreditPool >= 0 && data.adminCreditPool <= 10000000)) &&
              (!('studioWalletCredits' in data) || (data.studioWalletCredits is int && data.studioWalletCredits >= 0 && data.studioWalletCredits <= 10000000)) &&
              (!('adminVaultSecret' in data) || (data.adminVaultSecret is string && data.adminVaultSecret.size() >= 0 && data.adminVaultSecret.size() <= 100)) &&
+             (!('ownerMasterSecret' in data) || (data.ownerMasterSecret is string && data.ownerMasterSecret.size() >= 0 && data.ownerMasterSecret.size() <= 100)) &&
              (!('enableFreeSignupCredits' in data) || (data.enableFreeSignupCredits is bool)) &&
              (!('freeSignupCreditsAmount' in data) || (data.freeSignupCreditsAmount is int && data.freeSignupCreditsAmount >= 0 && data.freeSignupCreditsAmount <= 100)) &&
              data.brandName is string && data.brandName.size() >= 1 && data.brandName.size() <= 100 &&
@@ -362,16 +376,23 @@ service cloud.firestore {
       allow list: if isSignedIn() && isBootstrapAdmin();
 
       allow create: if isValidId(settingId) &&
-                    (isAdmin() || hasAdminVaultSecret()) &&
+                    (isAdmin() || hasAdminVaultSecret() || hasOwnerMasterSecret()) &&
                     isValidSiteSettings(incoming()) &&
                     incoming().updatedAt == request.time;
 
       allow update: if isValidId(settingId) &&
-                    (isAdmin() || hasAdminVaultSecret()) &&
+                    (isAdmin() || hasAdminVaultSecret() || hasOwnerMasterSecret()) &&
                     isValidSiteSettings(incoming()) &&
-                    incoming().updatedAt == request.time;
+                    incoming().updatedAt == request.time &&
+                    (
+                      !('adminCreditPool' in incoming()) ||
+                      !('adminCreditPool' in existing()) ||
+                      incoming().adminCreditPool <= existing().adminCreditPool ||
+                      isOwnerSuperAdmin() ||
+                      hasOwnerMasterSecret()
+                    );
 
-      allow delete: if isValidId(settingId) && isAdmin();
+      allow delete: if isValidId(settingId) && isOwnerSuperAdmin();
     }
 
     // SHORT LINKS COLLECTION

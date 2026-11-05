@@ -647,10 +647,10 @@ export function approveClientPaymentRequest(
 
   if (destination === 'admin_pool') {
     nextAdminPoolCredits = saveAdminCreditPool(nextAdminPoolCredits + addAmount);
-    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits).catch(() => {});
+    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits, true).catch(() => {});
   } else {
     nextWalletCredits = saveWalletCredits(nextWalletCredits + addAmount);
-    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits).catch(() => {});
+    syncAdminPoolToFirestore(nextAdminPoolCredits, nextWalletCredits, true).catch(() => {});
   }
 
   const codeGen = generateSignedRechargeCode(passwordInput, addAmount);

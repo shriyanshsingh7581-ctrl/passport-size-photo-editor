@@ -8428,16 +8428,17 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
                 }));
 
                 if (patch.text !== undefined) {
+                  const newText: string = patch.text;
                   setCustomRawTemplates((prevList) => {
                     const idx = prevList.findIndex((t) => t.id === activeTemplate.id);
                     if (idx === -1) return prevList;
                     const updatedItem = { ...prevList[idx] };
-                    if (field.id === 'headline') updatedItem.headlineText = patch.text;
-                    else if (field.id === 'mainNames') updatedItem.namesText = patch.text;
-                    else if (field.id === 'subMessage') updatedItem.subText = patch.text;
-                    else if (field.id === 'eventDate') updatedItem.dateTimeText = patch.text;
-                    else if (field.id === 'venue') updatedItem.venueText = patch.text;
-                    else if (field.id === 'rsvp') updatedItem.footerMessageText = patch.text;
+                    if (field.id === 'headline') updatedItem.headlineText = newText;
+                    else if (field.id === 'mainNames') updatedItem.namesText = newText;
+                    else if (field.id === 'subMessage') updatedItem.subText = newText;
+                    else if (field.id === 'eventDate') updatedItem.dateTimeText = newText;
+                    else if (field.id === 'venue') updatedItem.venueText = newText;
+                    else if (field.id === 'rsvp') updatedItem.footerMessageText = newText;
                     const nextList = [...prevList];
                     nextList[idx] = updatedItem;
                     saveCustomPosterTemplates(nextList);

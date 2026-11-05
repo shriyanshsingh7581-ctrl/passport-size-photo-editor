@@ -416,9 +416,11 @@ export interface SiteSettings {
   enableMediaLiveToolsCategory: boolean;
   contactPhone?: string;
   adminCreditPool?: number;
+  studioWalletCredits?: number;
   enableFreeSignupCredits?: boolean;
   freeSignupCreditsAmount?: number;
   toolCatalog?: ToolCatalogItem[];
+  customPosterTemplate?: CustomPosterTemplate[];
   customPosterTemplates?: CustomPosterTemplate[];
   updatedAt?: any;
 }
