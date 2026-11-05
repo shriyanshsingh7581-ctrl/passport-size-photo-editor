@@ -581,13 +581,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         text: `✓ Live Firebase Sync Complete: ${
           deltaNeeded > 0
             ? `Transferred +${deltaNeeded} Credits to ${user.displayName}`
-            : `Updated ${user.displayName}'s balance`
+            : `Deducted -${Math.abs(deltaNeeded)} Credits from ${user.displayName}`
         } (ID: ${
           user.userId || user.email.split('@')[0]
         }). User's Live Balance is now ${verifiedBalance} Credits. Remaining Admin Pool: ${tentativePool} Credits.`,
       });
       showToast(
-        `Transferred +${Math.max(0, deltaNeeded)} Credits to ${user.displayName} (Live Balance: ${verifiedBalance})`
+        deltaNeeded > 0
+          ? `Transferred +${deltaNeeded} Credits to ${user.displayName} (Live Balance: ${verifiedBalance})`
+          : `Reduced -${Math.abs(deltaNeeded)} Credits from ${user.displayName} (Live Balance: ${verifiedBalance})`
       );
     } catch (err: any) {
       // Automatic Rollback on unexpected exception
@@ -1551,42 +1553,79 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </select>
           </div>
 
-          {/* Step 2: 1-Click Preset Credit Buttons */}
-          <div className="lg:col-span-4">
-            <label className="block text-[11px] font-extrabold text-emerald-300 mb-1.5">
-              2. Tap Preset Credits to Send Immediately
-            </label>
+          {/* Step 2: 1-Click Preset Add (+) & Deduct (-) Credit Buttons */}
+          <div className="lg:col-span-4 space-y-2">
+            <div>
+              <label className="block text-[11px] font-extrabold text-emerald-300 mb-1">
+                2. Quick Add (+) or Deduct (-) User Credits
+              </label>
+              <div className="grid grid-cols-6 gap-1.5">
+                {[5, 10, 25, 50, 100, 250].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    disabled={!selectedQuickUser || isTransferringCredits || adminCreditPool < amt}
+                    onClick={() => {
+                      if (selectedQuickUser) {
+                        setQuickCreditAmount(String(amt));
+                        handleAdjustUserCredits(selectedQuickUser, 'add', amt);
+                      }
+                    }}
+                    className="min-h-[38px] rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-mono text-xs font-extrabold transition active:scale-95 flex items-center justify-center shadow-xs tabular-nums"
+                  >
+                    +{amt}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-6 gap-1.5">
-              {[5, 10, 25, 50, 100, 250].map((amt) => (
+              {[5, 10, 25, 50, 100].map((amt) => (
                 <button
-                  key={amt}
+                  key={`quick-ded-${amt}`}
                   type="button"
-                  disabled={!selectedQuickUser || isTransferringCredits || adminCreditPool < amt}
+                  disabled={!selectedQuickUser || isTransferringCredits}
                   onClick={() => {
                     if (selectedQuickUser) {
                       setQuickCreditAmount(String(amt));
-                      handleAdjustUserCredits(selectedQuickUser, 'add', amt);
+                      handleAdjustUserCredits(selectedQuickUser, 'deduct', amt);
                     }
                   }}
-                  className="min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-mono text-xs font-extrabold transition active:scale-95 flex items-center justify-center shadow-xs tabular-nums"
+                  className="min-h-[34px] rounded-xl bg-rose-500/25 hover:bg-rose-500/40 border border-rose-400/50 disabled:opacity-40 text-rose-200 font-mono text-xs font-extrabold transition active:scale-95 flex items-center justify-center tabular-nums"
+                  title={`Deduct -${amt} Credits from Selected User`}
                 >
-                  +{amt}
+                  -{amt}
                 </button>
               ))}
+              <button
+                type="button"
+                disabled={!selectedQuickUser || isTransferringCredits}
+                onClick={() => {
+                  if (selectedQuickUser) {
+                    handleAdjustUserCredits(selectedQuickUser, 'set', 0);
+                  }
+                }}
+                className="min-h-[34px] rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-mono text-[11px] font-extrabold transition active:scale-95 flex items-center justify-center"
+                title="Reset Selected User Credits to 0"
+              >
+                0 Cr
+              </button>
             </div>
           </div>
 
-          {/* Step 3: Custom Credit Input + Send & Return to Pool Buttons */}
-          <div className="lg:col-span-3 flex flex-col sm:flex-row lg:flex-col gap-2">
+          {/* Step 3: Custom Credit Input + Add (+), Deduct (-), & Set Exact Buttons */}
+          <div className="lg:col-span-3 flex flex-col gap-2">
+            <label className="block text-[11px] font-extrabold text-amber-300">
+              3. Custom Add (+) / Deduct (-) / Set User Credits
+            </label>
             <div className="flex items-center gap-1.5">
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={100000}
                 value={quickCreditAmount}
                 onChange={(e) => setQuickCreditAmount(e.target.value)}
                 placeholder="Credits"
-                className="w-24 min-h-[44px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm font-extrabold focus:outline-none focus:border-emerald-400 tabular-nums"
+                className="w-20 min-h-[42px] px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-xs font-extrabold focus:outline-none focus:border-emerald-400 tabular-nums"
               />
               <button
                 type="button"
@@ -1601,14 +1640,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     handleAdjustUserCredits(selectedQuickUser, 'add', amt);
                   }
                 }}
-                className="flex-1 min-h-[44px] px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-50 text-slate-950 text-xs font-extrabold transition active:scale-95 flex items-center justify-center gap-1.5 shadow-md"
+                className="flex-1 min-h-[42px] px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-50 text-slate-950 text-xs font-extrabold transition active:scale-95 flex items-center justify-center gap-1 shadow-md"
               >
-                <i
-                  className={`fa-solid ${
-                    isTransferringCredits ? 'fa-spinner fa-spin' : 'fa-paper-plane'
-                  }`}
-                ></i>
-                <span>{isTransferringCredits ? 'Syncing...' : `Send +${quickCreditAmount || 0}`}</span>
+                <span>+{quickCreditAmount || 0}</span>
+              </button>
+              <button
+                type="button"
+                disabled={!selectedQuickUser || isTransferringCredits}
+                onClick={() => {
+                  if (selectedQuickUser) {
+                    const amt = Math.max(1, parseInt(quickCreditAmount, 10) || 50);
+                    handleAdjustUserCredits(selectedQuickUser, 'deduct', amt);
+                  }
+                }}
+                className="flex-1 min-h-[42px] px-2.5 py-1.5 rounded-xl bg-rose-500/25 hover:bg-rose-500/40 border border-rose-400/50 disabled:opacity-50 text-rose-200 text-xs font-extrabold transition active:scale-95 flex items-center justify-center gap-1"
+              >
+                <span>-{quickCreditAmount || 0}</span>
+              </button>
+              <button
+                type="button"
+                disabled={!selectedQuickUser || isTransferringCredits}
+                onClick={() => {
+                  if (selectedQuickUser) {
+                    const target = Math.max(0, parseInt(quickCreditAmount, 10) || 0);
+                    handleAdjustUserCredits(selectedQuickUser, 'set', target);
+                  }
+                }}
+                className="min-h-[42px] px-2.5 py-1.5 rounded-xl bg-amber-500/25 hover:bg-amber-500/40 border border-amber-400/50 disabled:opacity-50 text-amber-200 text-xs font-extrabold transition active:scale-95"
+                title="Set Exact Credit Balance for Selected User"
+              >
+                Set
               </button>
             </div>
           </div>
@@ -2390,11 +2451,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </button>
                       ))}
 
-                      <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5">
+                      {[10, 25, 50, 100].map((deductAmt) => (
+                        <button
+                          key={`deduct-user-${deductAmt}`}
+                          type="button"
+                          disabled={userCredits <= 0}
+                          onClick={() => handleAdjustUserCredits(u, 'deduct', deductAmt)}
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-40 text-rose-700 font-mono text-xs font-extrabold transition"
+                          title={`Deduct -${deductAmt} Credits from ${u.displayName}`}
+                        >
+                          -{deductAmt}
+                        </button>
+                      ))}
+
+                      <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5">
                         <input
                           type="number"
-                          min={1}
-                          max={Math.max(1, adminCreditPool)}
+                          min={0}
+                          max={100000}
                           value={customVal}
                           onChange={(e) =>
                             setUserCustomCreditInputs((prev) => ({
@@ -2414,9 +2488,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               Math.max(1, parseInt(customVal, 10) || 50)
                             )
                           }
-                          className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-[11px] font-extrabold"
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-[11px] font-extrabold"
                         >
-                          + Give
+                          + Add
+                        </button>
+                        <button
+                          type="button"
+                          disabled={userCredits <= 0}
+                          onClick={() =>
+                            handleAdjustUserCredits(
+                              u,
+                              'deduct',
+                              Math.max(1, parseInt(customVal, 10) || 50)
+                            )
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-[11px] font-extrabold"
+                        >
+                          - Deduct
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleAdjustUserCredits(
+                              u,
+                              'set',
+                              Math.max(0, parseInt(customVal, 10) || 0)
+                            )
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 text-[11px] font-extrabold"
+                          title="Set Exact Credit Balance"
+                        >
+                          Set
+                        </button>
+                        <button
+                          type="button"
+                          disabled={userCredits <= 0}
+                          onClick={() => handleAdjustUserCredits(u, 'set', 0)}
+                          className="px-2 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 disabled:opacity-40 text-[11px] font-extrabold"
+                          title="Reset User Credits to 0"
+                        >
+                          Reset 0
                         </button>
                       </div>
                     </div>
@@ -3099,7 +3210,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         title="Give +25 Credits from Website Admin Pool"
                       >
                         <i className="fa-solid fa-plus text-[10px]"></i>
-                        <span>Give 25</span>
+                        <span>+25</span>
                       </button>
 
                       <button
@@ -3110,7 +3221,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         title="Give +100 Credits from Website Admin Pool"
                       >
                         <i className="fa-solid fa-plus text-[10px]"></i>
-                        <span>Give 100</span>
+                        <span>+100</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={(typeof u.credits === 'number' ? u.credits : 5) <= 0}
+                        onClick={() => handleAdjustUserCredits(u, 'deduct', 25)}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 disabled:opacity-40 text-xs font-extrabold transition flex items-center gap-1"
+                        title="Deduct -25 Credits from User"
+                      >
+                        <i className="fa-solid fa-minus text-[10px]"></i>
+                        <span>-25</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={(typeof u.credits === 'number' ? u.credits : 5) <= 0}
+                        onClick={() => handleAdjustUserCredits(u, 'deduct', 100)}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 disabled:opacity-40 text-xs font-extrabold transition flex items-center gap-1"
+                        title="Deduct -100 Credits from User"
+                      >
+                        <i className="fa-solid fa-minus text-[10px]"></i>
+                        <span>-100</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={(typeof u.credits === 'number' ? u.credits : 5) <= 0}
+                        onClick={() => handleAdjustUserCredits(u, 'set', 0)}
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-40 text-xs font-extrabold transition flex items-center gap-1"
+                        title="Reset User Credits to 0"
+                      >
+                        <span>0 Cr</span>
                       </button>
 
                       <button
@@ -3119,7 +3262,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         title="Open Full Credit Pool Distributor"
                       >
                         <i className="fa-solid fa-coins"></i>
-                        <span>Custom Credits</span>
+                        <span>Custom + / -</span>
                       </button>
 
                       {u.status !== 'approved' && (
