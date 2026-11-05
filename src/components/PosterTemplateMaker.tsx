@@ -16,6 +16,7 @@ import {
   POSTER_QUALITY_OPTIONS,
   PosterQualityLevel,
   generatePosterDesignWithAuraAi,
+  validateAndDeductServerSideCredit,
   warmUpAuraBackend,
 } from '../auraAiService';
 
@@ -7119,6 +7120,20 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
     setIsGeneratingAuraPoster(true);
     setLastAuraSuccessBanner('');
     try {
+      // Enforce strict Server-Side Credit Validation before triggering AI generation API
+      const serverCreditCheck = await validateAndDeductServerSideCredit(1);
+      if (!serverCreditCheck.authorized) {
+        triggerOpenAddCreditsModal();
+        showToast(
+          serverCreditCheck.error ||
+            `0 Credits Remaining! Please scan UPI QR to add credits before generating with ${engineInfo.displayName}.`
+        );
+        setIsGeneratingAuraPoster(false);
+        return;
+      }
+      setWalletCredits(serverCreditCheck.remainingCredits);
+      const deduction = { remaining: serverCreditCheck.remainingCredits };
+
       const layoutToUse = overrideLayout || auraPreferredLayout;
       const aiDesign = await generatePosterDesignWithAuraAi({
         prompt: promptToUse,
@@ -7132,10 +7147,6 @@ export const PosterTemplateMaker: React.FC<PosterTemplateMakerProps> = ({
         photoStyleId: auraPhotoStyle,
         qualityLevel: auraQualityLevel,
       });
-
-      // Deduct 1 Credit from Wallet on successful AI Poster creation
-      const deduction = deductWalletCredit();
-      setWalletCredits(deduction.remaining);
 
       const newTplId = `aura-ai-${Date.now()}`;
       paidPosterIdsRef.current.add(newTplId);

@@ -241,8 +241,13 @@ export default function App() {
             typeof parsed.freeSignupCreditsAmount === 'number'
               ? parsed.freeSignupCreditsAmount
               : 5,
-          toolCatalog: parsed.toolCatalog?.length
-            ? parsed.toolCatalog
+          toolCatalog: Array.isArray(parsed.toolCatalog) && parsed.toolCatalog.length
+            ? [
+                ...parsed.toolCatalog,
+                ...DEFAULT_TOOL_CATALOG.filter(
+                  (defTool) => !parsed.toolCatalog.some((t: any) => t.id === defTool.id)
+                ),
+              ]
             : DEFAULT_TOOL_CATALOG,
         };
       }

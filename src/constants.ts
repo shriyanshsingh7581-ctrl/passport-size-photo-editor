@@ -111,6 +111,16 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
 
   // CATEGORY 2: AKSHAYA TOOLS
   {
+    id: 'image-to-pdf',
+    category: 'akshaya',
+    name: 'Image to PDF Converter (Lossless HD)',
+    description:
+      'Convert single or multiple JPG, PNG & WebP images into a lossless print-ready PDF with drag-and-drop reorder, Portrait/Landscape orientation, A4 or Fit-to-Image size, and custom margins.',
+    icon: 'fa-images',
+    badge: 'Lossless HD',
+    enabled: true,
+  },
+  {
     id: 'pdf-merge',
     category: 'akshaya',
     name: 'PDF Merge',
@@ -176,10 +186,10 @@ export const DEFAULT_TOOL_CATALOG: ToolCatalogItem[] = [
   {
     id: 'youtube-thumbnail',
     category: 'media-live',
-    name: 'Thumbnail Upload & Redesign Studio',
-    description: 'Upload any existing thumbnail to redesign with color grading, layouts & overlays, or create 1280×720 HD YouTube thumbnails.',
+    name: 'AI Thumbnail Studio & Redesign (16:9 HD / 1080p)',
+    description: 'Generate ultra-sharp 16:9 (1920×1080 & 1280×720) YouTube thumbnails with Studio Rim Lighting, High-Contrast AI Prompt Engineering, Negative Prompts & Server-Side Credit Verification.',
     icon: 'fa-brands fa-youtube',
-    badge: 'Upload & Redesign',
+    badge: '16:9 AI Pro',
     enabled: true,
   },
   {
